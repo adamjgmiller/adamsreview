@@ -8,11 +8,11 @@ If you are a Claude Code session starting fresh (after compaction or on a new da
 
 ## Current state
 
-**As of 2026-04-17 — Stage 2 IN PROGRESS (C1–C12 landed + two audit rounds of fixes).** Stage 1 is done; Stage 2 has all 12 code/fragment commits plus post-audit fix commits. `test/smoke.sh` passes 33 assertions. Remaining: one more independent audit pass (Codex + CodeRabbit + Opus deduped), then C13 real-repo smoke + close-out.
+**As of 2026-04-18 — Stage 2 COMPLETE.** All 12 fragment/code commits (C1–C12) landed, three independent audit rounds closed (rounds 2, 3, 4 with Opus + CodeRabbit + Codex deduped), and C13 real-repo smoke passed end-to-end on `ray-finance` `feat/import-apple` (43 files / 4270 lines, 25-min wall clock, 978k tokens, 4 confirmed_auto findings → PR comment `4274059620` posted). `test/smoke.sh` passes 39 assertions. Next: plan Stage 3 (`/adams-review-fix`).
 
 - Design doc: `DESIGN.md` (rev 8 + §21.2 exit-code footnote + §5.2.1 `pending_validation` clarification + §12.1 example fix)
 - Stage 1 plan: `plans/stage-1-foundation.md` (user-approved; closed out)
-- Stage 2 plan: `plans/stage-2-review.md` (user-approved; C1–C12 done, C13 pending real-repo smoke)
+- Stage 2 plan: `plans/stage-2-review.md` (user-approved; closed out)
 - Symlink `~/.claude/commands/_shared → commands/_shared` is live
 - `uv` (`/opt/homebrew/bin/uv 0.7.15`) supplies `jsonschema` to Python scripts via PEP 723 inline-script shebangs
 
@@ -52,7 +52,7 @@ bd6b610      Bootstrap repo with design doc (rev 8) and build journal
 | # | Name | Status | Plan | Close-out notes |
 |---|------|--------|------|-----------------|
 | 1 | Foundation (data layer + shared helpers) | **done** | `plans/stage-1-foundation.md` | [Stage 1 section](#stage-1--foundation) |
-| 2 | `/adams-review` end-to-end (Phases 0–6) | in progress | `plans/stage-2-review.md` | [Stage 2 section](#stage-2--adams-review) |
+| 2 | `/adams-review` end-to-end (Phases 0–6) | **done** | `plans/stage-2-review.md` | [Stage 2 section](#stage-2--adams-review) |
 | 3 | `/adams-review-fix` (Phases 7–9 + terminal cleanup) | not started | `plans/stage-3-fix.md` | — |
 
 ### Stage 1 — Foundation
@@ -129,9 +129,31 @@ bd6b610      Bootstrap repo with design doc (rev 8) and build journal
 - **`sources[]` per-finding lens vocabulary** — `L1-diff-local` / `L2-structural` / `L3-claude-md` / `L4-comments` / `L5-ux` / `L6-security` (matches DESIGN §6 example).
 - **`counts_by_state` key rename** — `artifact-read.sh --summary` now emits `counts_by_state` (was `counts_by_current_state`) so phases.jsonl aggregators in 07-finalize don't produce `null` keys.
 
-**Pending close-out (C13):**
-- Real-repo smoke on `/Users/adammiller/Projects/ray/ray-finance` branch `feat/import-apple` (user-driven — approved in Stage 2 plan §10).
-- Final BUILD.md close-out + grant-probe deferred items record.
+**C13 real-repo smoke — PASSED (2026-04-18).**
+
+First end-to-end execution of `/adams-review` on `ray-finance` `feat/import-apple`:
+
+| Phase | Elapsed | Outcome |
+|---|---|---|
+| 0 preflight | 1849s | user-prompt-heavy (dirty-tree gate, prior-artifact prompt, sensitive-file permission prompts); mode=pr, PR #8 draft, 43 files / 4270 lines |
+| 1 detection | 737s | 6 lenses parallel; 38 candidates |
+| 1.5 ensemble | — | skipped (no `--ensemble`) |
+| 2 dedup | 5s | 5 merged → 33 survivors |
+| 3 scoring-gate | 30s | 15 gate-fail → `below_gate`; 18 advanced → `pending_validation` |
+| 4 validation | 420s | 4 `confirmed_auto`, 4 `uncertain`, 10 `disproven` |
+| 5 cross-cutting | 15s | 0 groups (4 deep-lane actionables, no cross-file dependencies surfaced) |
+| 6 finalize | <1s | artifact.md 15,671 bytes; PR comment `4274059620` posted |
+
+- **Token spend:** 978,924 total / 19 invocations (Opus 450k, Sonnet 415k, Haiku 114k)
+- **Trace failures:** none
+- **Reviewer_sources recompute:** `["internal"]` (correct — no ensemble)
+- **comment_id persisted:** yes; next run on this PR will PATCH rather than POST
+
+**The 4 confirmed_auto findings were all real bugs** (F011 SQL filter drops accounts with zero liability balance; F013 parallel-path disagreement between `showAccounts` and `runRemove` manual-detection; F014 `useAgent.submit()` dead-input during onboarding; F017 LOAN_PAYMENTS prefix mismatch polluting recap totals). 4 uncertain findings recorded for human review.
+
+**Round-2/3/4 audit fixes exercised and held:** `pending_validation` state machine transitions cleanly; `pr_state` transform produced `"draft"` on first try; `counts_by_state` correctly populated in phases.jsonl; `validation_result` extraction path would have fired on any deep-lane confirmed finding (did on F011/F013/F014/F017 — all schema-valid). No Phase 5 extraction code path fired because the sub-agent returned `[]` groups for this diff.
+
+**Hot-fix landed mid-smoke:** first attempt hit Phase 0 step 0.15 `review_id` fallback format bug — `rev_<ts>_<rand>` contained an underscore after `rev_` which the schema regex rejected. Fix at commit `e0df35d` + smoke assertion Vbis; a fresh `uv run --with ulid-py` path works too (26-char Crockford base32 is pure alphanumeric).
 
 ### Stage 3 — `/adams-review-fix`
 
@@ -213,6 +235,8 @@ Bias is toward **making DESIGN track reality**, not defending the rev-8 wording.
 - **2026-04-17 (close-out) — DESIGN §21.2 exit codes codified.** Footnoted into DESIGN.md §21.2 in this commit: 0 success / 1 validation / 2 invalid-transition / 3 dry-run-invalid / 4 unexpected / 5 missing-dep / 64 usage. Also applies to `artifact-validate.sh` (0/1/64) and `artifact-render.py` (0/1/4/64). Observed during smoke: step 12 (`--set current_state=bogus --dry-run` on a finding in `resolved` terminal state) exits 2 (transition-check catches "bogus" as not in the empty allowed-next set for terminal states) rather than 1 or 3. The smoke assertion checks non-zero + unchanged sha, not a specific code — robust to this layering.
 
 - **2026-04-17 — Stage 2 audit rounds 1 + 2 closed.** Two independent fresh-context audits flagged compounding issues: R1 `pr_state` uppercase-from-gh didn't match schema enum; R2 Phase 4 filter excluded `below_gate` findings but Phase 3 left gate-in candidates there too (the schema-required-non-null disposition forced reuse of `below_gate` as a parking state — a round-1 fix that round-2 caught as a Phase-4 no-op); R3 `validation_result` prompt shape mismatched the schema's nested-non-null objects; R4 empty `claude_md_paths` produced `[""]` via `jq -R`; R5 `evidence_snippet` candidate field survived into the finding write under `additionalProperties:false`; R6 `counts_by_state` phases.jsonl key was silently null because the helper emitted `counts_by_current_state`. All six + 8 of the 14 yellow flags fixed in round-2 commit(s); smoke grew from 29 to 33 assertions covering the new invariants. **Cleanest architectural change:** introducing `pending_validation` as a distinct §5.2.1 disposition enum value for Phase-3 gate-in findings, restoring Phase 4's dispatch set without overloading `below_gate`.
+
+- **2026-04-18 — Claude Code sensitive-file gate fires on every write to `~/.claude/reviews/...`.** Observed during C13 real-repo smoke: every `printf >> trace.md`, every `artifact-patch.py --set*` write, every `log-phase.sh --record` invocation under the review dir prompted the user for permission ("Claude requested permissions to edit ... which is a sensitive file"). The `allowed-tools` grants at `adams-review.md` do NOT bypass this — Claude Code runs a separate sensitivity check on any file under `.claude/` regardless of tool-use grants. Mid-run workaround: user picked "Yes, and always allow access to `rev_<id>/` from this project" — scope-approves the rest of that run but does NOT persist to future review_ids (each run picks up a new `rev_` directory). **Fix options for Stage 3 planning:** (a) set `ADAMS_REVIEW_REVIEWS_ROOT` to a path outside `~/.claude/` (e.g. `~/adams-reviews`) — cleanest, but means DESIGN §9.1's "canonical layout under `~/.claude/reviews/`" becomes an opt-in default rather than a hard rule; (b) document a project-level `.claude/settings.json` additionalDirectories entry that whitelists the reviews root; (c) hope Claude Code grows a glob-pattern permission for reviews dirs. Option (a) is simplest and user-visible. Either way, the current Stage 2 shipping state leaks this UX issue onto the user — flag in release notes and likely resolve before Stage 3 ships.
 
 - **2026-04-17 — Stage 2 audit rounds 3 + 4 closed.** Two more independent fresh-context audit rounds (Opus general-purpose + Codex CLI + CodeRabbit CLI in parallel, deduped) — each round found a single red flag that the previous rounds missed. **Round 3** caught two prose-level regressions that would have failed real runs: (a) Wave 2 `--add-finding` at 05-validation step 4.5 used singular `source_family` which the schema rejects under `additionalProperties:false`; (b) the sub-agent response wrapper for `validation_result` contains `{validation_result: ..., score_phase4, decision, ...}` but the orchestrator was feeding the whole envelope to `--set-json validation_result=@file` — every Phase-4 confirmed write would have hit the nested-object schema check. Round 3 fix: orchestrator extracts `.validation_result` with `jq -c '.validation_result // .'` before the write. **Round 4** caught the same wrapper-extraction bug in Phase 5's `cross_cutting_groups` write (same jq extraction applied), plus a subtler interaction: round-3's "score_phase4 beats decision when they disagree" precedence rule made the validation_result gate (keyed on `decision == "confirmed"`) wrong — a validator returning `{decision: disproven, score: 70}` would be routed to `confirmed_auto` by the table but skip the validation_result write. Round-4 fix: gate the write on the resolved disposition, not the raw decision label. Round 4 also added deterministic reconciliation rules to Phase-2 dedup (origin_confidence / validation_lane / actionability union by highest-rank-wins). Smoke grew 33 → 38 assertions. **Theme across rounds 2–4:** every red flag was prose ambiguity in the orchestrator fragments, not a schema or helper-script bug. The schema + helper surface was solid from Stage 1; the fragments needed three passes to reach consistent orchestrator-visible behavior. Recommendation from all three round-4 auditors: proceed with real-repo smoke.
 
