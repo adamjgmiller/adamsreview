@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://adams-review/schema-v1.json",
   "title": "adams-review artifact (v1)",
-  "description": "Canonical machine-state artifact produced by /adams-review and mutated by /adams-review-fix. Codifies DESIGN.md §5 (state model) and §6 (artifact schema). Rev 8.",
+  "description": "Canonical machine-state artifact produced by /adams-review and mutated by /adams-review-fix. Codifies docs/DESIGN.md §5 (state model) and §6 (artifact schema). Rev 8.",
   "type": "object",
   "additionalProperties": false,
   "required": [

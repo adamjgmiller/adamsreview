@@ -4,28 +4,32 @@ This directory is consumed by the `/adams-review` and `/adams-review-fix` slash 
 
 ## Layout
 
-- `schema-v1.json` — JSON Schema for `artifact.json`. See DESIGN §6.
+- `schema-v1.json` — JSON Schema for `artifact.json`. See `docs/DESIGN.md` §6.
 - `tools/` — helper scripts invoked by the command orchestrator and (in a read-only subset) by sub-agents.
-- Phase fragment files (`00-preflight.md`, …, `10-post-fix-and-commit.md`) and lens reference files (`lens-ux-reference.md`, `lens-security-reference.md`) are added in Stages 2 and 3.
+- Phase fragment files (`00-preflight.md` … `10-post-fix-and-commit.md`) and lens reference files (`lens-ux-reference.md`, `lens-security-reference.md`).
 
 ## Helper scripts (`tools/`)
 
-See DESIGN §8 for the full scripts contract and DESIGN §21 for algorithmic sketches. Stage 1 delivers:
+See `docs/DESIGN.md` §8 for the full scripts contract and §21 for per-helper algorithmic sketches.
 
 | Script | Language | Purpose |
 |---|---|---|
 | `_common.py` | Python | Shared helpers: schema-validate, atomic write, error-as-prompt, path resolution |
-| `artifact-patch.py` | Python | Finding-level mutations, state-transition whitelist, append-only guards |
-| `artifact-render.py` | Python | `artifact.json` → `artifact.md` (DESIGN §7) |
+| `artifact-patch.py` | Python | Finding-level mutations, state-transition whitelist, append-only guards, batched apply-* modes |
+| `artifact-render.py` | Python | `artifact.json` → `artifact.md` (§7) |
 | `artifact-validate.sh` | Bash | Thin wrapper around the Python validator |
 | `artifact-read.sh` | Bash | `jq` wrapper: `--filter`, `--finding-id`, `--summary` |
 | `artifact-publish.sh` | Bash | PR comment post/patch; local-mode no-op |
+| `assign-finding-ids.sh` | Bash | Detection-pool ID assignment (§13.12) |
 | `claude-md-paths.sh` | Bash | Walk-up `CLAUDE.md` finder |
-| `staleness.sh` | Bash | `git diff` intersection classifier |
+| `comment-freshness.sh` | Bash | PR-comment code-locality filter (§13.13 / §21.10) |
+| `external-scrape.sh` | Bash | Phase 1.5 PR-comment fetch + bot filter (§21.8) |
+| `group-fixes.py` | Python | Phase 8 fix-group union-find (§21.5) |
 | `log-phase.sh` | Bash | `trace.md` + `phases.jsonl` appender |
 | `log-tokens.sh` | Bash | `tokens.jsonl` appender |
-
-Stage 2 adds `external-scrape.sh`; Stage 3 adds `group-fixes.py`.
+| `origin-crosscheck.sh` | Bash | Blame-based origin classifier (§13.11 / §21.9) |
+| `repo-slug.sh` | Bash | Canonical `<repo-slug>` derivation (§9.2) |
+| `staleness.sh` | Bash | `git diff` intersection classifier (§21.4) |
 
 ## Conventions
 

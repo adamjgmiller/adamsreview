@@ -6,8 +6,8 @@ inline-script itself — callers supply the uv shebang + dep spec. When
 `uv run --script caller.py` runs, Python prepends the caller's directory
 to sys.path, so `import _common` just works.
 
-See DESIGN.md §8 (helper scripts contract), §21.2 (artifact-patch), §24
-(error recovery), and BUILD.md cross-stage notes (uv deviation).
+See docs/DESIGN.md §8 (helper scripts contract), §21.2 (artifact-patch), §24
+(error recovery), and docs/BUILD.md cross-stage notes (uv deviation).
 """
 
 import difflib

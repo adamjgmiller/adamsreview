@@ -9,9 +9,10 @@ Both commands live under `commands/_shared/` and are consumed from `~/.claude/co
 
 ## Documents
 
-- **`DESIGN.md`** — normative design (rev 8). Read sections relevant to the stage you're working on; skim the rest.
-- **`BUILD.md`** — running build journal. Read this first when starting a fresh session. "Current state" at the top tells you where we are; the stage index shows status of each stage.
-- **`plans/`** — per-stage plan files, drafted in plan mode before each stage executes.
+- **`CLAUDE.md`** — operational guide for Claude Code sessions working in this repo. Read first on a fresh session.
+- **`docs/DESIGN.md`** — normative design (rev 8). The spec for schema, phase behavior, and helper contracts. Consult by section (e.g., `§13.1`) when tweaking pipeline behavior.
+- **`docs/BUILD.md`** — historical build journal covering Stages 1–3 + 2.5/2.6/2.7/2.8. Archive; consult for rationale on past decisions.
+- **`plans/`** — per-stage plan files. Stages 1–3 + 2.5/2.6/2.7/2.8 are closed. `stage-4-fragment-shrink.md` is the one live plan.
 
 ## Dependencies
 
@@ -67,9 +68,11 @@ PEP 668 (Python 3.12+ with Homebrew) marks system and user site-packages as exte
 
 ```
 ~/Projects/adams-review/              ← this repo
-├── DESIGN.md                         ← normative design
-├── BUILD.md                          ← running journal (read first)
+├── CLAUDE.md                         ← operational guide (read first)
 ├── README.md                         ← this file
+├── docs/
+│   ├── DESIGN.md                     ← normative design (rev 8)
+│   └── BUILD.md                      ← historical build journal (Stages 1–3 + hardening)
 ├── plans/                            ← per-stage plans
 ├── test/                             ← smoke harness + fixtures (Stage 1)
 └── commands/
@@ -93,4 +96,4 @@ The top-level command files (`~/.claude/commands/adams-review.md`, `adams-review
 
 ## Status
 
-Stage 1 (Foundation) in progress. See `BUILD.md` for current state.
+`/adams-review` and `/adams-review-fix` are built and in use. Stages 1, 2, 2.5, 2.6, 2.7, 2.8, and 3 closed between 2026-04-17 and 2026-04-18; see `docs/BUILD.md` for the full history. The only unexecuted scope is Stage 4 (fragment shrink — `plans/stage-4-fragment-shrink.md`), still pending plan approval.
