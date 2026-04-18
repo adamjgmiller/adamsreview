@@ -176,6 +176,7 @@ ACTIONABLE_DISPOSITIONS = frozenset({"confirmed_auto", "partial", "regression"})
 
 DISPOSITION_VALUES = (
     "below_gate",
+    "pending_validation",
     "disproven",
     "uncertain",
     "confirmed_auto",

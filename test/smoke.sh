@@ -400,6 +400,51 @@ else
     fail "G: expected ids [2], got $ids" "out=$out"
 fi
 
+# N. pending_validation is a valid disposition enum (R2 fix)
+cp "$ART" "$WORK/art-pv.json"
+if "$TOOLS/artifact-patch.py" --path "$WORK/art-pv.json" --finding-id F099 \
+        --set disposition=pending_validation --set is_actionable=false >/dev/null 2>&1; then
+    actual=$(jq -r '.findings[] | select(.id=="F099") | .disposition' "$WORK/art-pv.json")
+    if [[ "$actual" == "pending_validation" ]]; then
+        pass "N: pending_validation accepted as disposition (R2 parking state)"
+    else
+        fail "N: disposition after set = $actual"
+    fi
+else
+    fail "N: --set disposition=pending_validation exit non-zero"
+fi
+
+# O. artifact-read.sh --summary emits counts_by_state (R6 rename)
+if "$TOOLS/artifact-read.sh" --path "$ART" --summary | jq -e '.counts_by_state' >/dev/null; then
+    # Also confirm the deprecated key is gone
+    if "$TOOLS/artifact-read.sh" --path "$ART" --summary | jq -e '.counts_by_current_state' >/dev/null 2>&1; then
+        fail "O: counts_by_current_state still present; rename incomplete"
+    else
+        pass "O: --summary emits counts_by_state (DESIGN §12.1 naming)"
+    fi
+else
+    fail "O: --summary does not emit counts_by_state"
+fi
+
+# P. empty-string list → [] via jq -Rn inputs|select(length>0) (R4 fix pattern)
+# (Exercises the exact jq expression used in 00-preflight.md:306-307.)
+empty_out=$(printf '%s' "" | jq -Rn '[inputs | select(length>0)]')
+if [[ "$empty_out" == "[]" ]]; then
+    pass "P: jq -Rn 'inputs|select(length>0)' returns [] on empty input (R4)"
+else
+    fail "P: expected [] got $empty_out"
+fi
+
+# Q. --set disposition=pending_validation + is_actionable=true → coupling reject
+# (pending_validation is not in ACTIONABLE_DISPOSITIONS.)
+stderr=$("$TOOLS/artifact-patch.py" --path "$WORK/art-pv.json" --finding-id F099 \
+        --set disposition=pending_validation --set is_actionable=true 2>&1 >/dev/null); code=$?
+if [[ "$code" != "0" ]] && echo "$stderr" | grep -q "is_actionable"; then
+    pass "Q: pending_validation + is_actionable=true rejected (coupling invariant)"
+else
+    fail "Q: expected coupling error; got code=$code stderr=$stderr"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

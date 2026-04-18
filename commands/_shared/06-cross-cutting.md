@@ -8,6 +8,9 @@ findings skip Phase 5 entirely.
 This phase is pure reasoning over serialized JSON. The sub-agent needs
 no tool access beyond what's in its prompt.
 
+Capture `phase_5_start_epoch=$(date +%s)` as the first action of this
+phase — step 5.4 logs the elapsed time.
+
 ### 5.1. Check for eligibility
 
 Read the candidates that qualify for cross-cutting analysis:

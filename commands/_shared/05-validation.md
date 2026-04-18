@@ -12,14 +12,19 @@ candidate; if any Wave 1 output references further candidates via
 those at the orchestrator level and dispatches Wave 2. Hard cap at
 two waves.
 
+Capture `phase_4_start_epoch=$(date +%s)` as the first action of this
+phase — step 4.7 logs the elapsed time.
+
 ### 4.1. Partition candidates into lanes
 
-Read the phase-3 survivors:
+Read the phase-3 survivors (findings parked at `pending_validation`;
+gate-fail `below_gate` and pre-existing `pre_existing_report` findings
+are excluded by the positive filter):
 
 ```bash
 ~/.claude/commands/_shared/tools/artifact-read.sh \
   --path "$artifact_path" \
-  --filter '[.findings[] | select(.disposition != "below_gate" and .disposition != "pre_existing_report") | {id, impact_type, validation_lane}]'
+  --filter '[.findings[] | select(.disposition == "pending_validation") | {id, impact_type, validation_lane}]'
 ```
 
 If `trivial_mode == true`: force ALL candidates into the light lane.
@@ -76,18 +81,30 @@ Prompt essence (per §19.5):
 >    with a one-line rationale. Do NOT investigate it yourself — Wave 2
 >    will.
 >
-> Return JSON:
+> Return JSON (shape matches the `validation_result` schema):
 > ```
 > {
 >   "validation_result": {
->     "evidence": "concrete trace or disproof",
->     "blast_radius": [{"file":"...", "role":"writer|consumer|parallel|test", "note":"..."}, ...],
->     "fix_proposal": {"files_to_modify": [{"file":"...", "what":"...", "why":"..."}, ...]} | null,
+>     "evidence": [
+>       "one sentence per piece of concrete evidence (e.g. file:line — observation)"
+>     ],
+>     "blast_radius": {
+>       "writers": ["file:line — who writes this"],
+>       "consumers": ["file:line — who reads this"],
+>       "parallel_paths": ["file:line — adjacent paths with the same invariant"],
+>       "invariants_at_stake": ["one sentence per invariant the diff stresses"]
+>     },
+>     "fix_proposal": {
+>       "approach": "one or two sentences — the overall strategy",
+>       "files_to_modify": [
+>         {"file":"src/path.ts", "what":"concrete change", "why":"reason it's required"}
+>       ]
+>     },
 >     "verification_context": {
 >       "how_to_verify_fix": ["grep ...", "read ..."],
 >       "edge_cases_to_preserve": ["..."],
 >       "what_would_break_if_incomplete": ["..."]
->     } | null
+>     }
 >   },
 >   "score_phase4": <0-100>,
 >   "decision": "confirmed" | "disproven" | "uncertain",
@@ -97,6 +114,13 @@ Prompt essence (per §19.5):
 >   ]
 > }
 > ```
+>
+> **Every nested array must exist** (can be empty — `[]`) — the schema
+> rejects missing keys. `fix_proposal` and `verification_context` are
+> only required when `decision == "confirmed"`; when `decision` is
+> `"disproven"` or `"uncertain"`, omit the `validation_result` object
+> entirely (set it to `null` in the outer return). The orchestrator
+> only persists `validation_result` for confirmed findings.
 
 ### 4.3. Wave 1 — light lane (Sonnet per candidate)
 
@@ -169,12 +193,20 @@ Apply via one `artifact-patch.py` call per finding. Example for
   --set reason=null
 ```
 
-For deep-lane candidates, ALSO persist `validation_result`:
+For deep-lane candidates whose `decision == "confirmed"`, ALSO persist
+`validation_result`:
 
 ```bash
-~/.claude/commands/_shared/tools/artifact-patch.py \
-  --path "$artifact_path" --finding-id "$id" \
-  --set-json "validation_result=@/tmp/val-$id.json"
+# Only confirmed findings get validation_result — disproven/uncertain
+# skip the write (their reason line is enough). Schema requires every
+# nested field of validation_result to be non-null, so writing a
+# partial object for uncertain findings would fail validation.
+if [[ "$decision" == "confirmed" ]]; then
+    ~/.claude/commands/_shared/tools/artifact-patch.py \
+      --path "$artifact_path" --finding-id "$id" \
+      --set-json "validation_result=@/tmp/val-$id.json"
+fi
+rm -f "/tmp/val-$id.json"
 ```
 
 (Write the validation_result JSON to a temp file first; the `@file`

@@ -4,6 +4,10 @@ Per-candidate Sonnet scoring against the §20 rubric (err-up), followed
 by the §13.1 Phase-3 gate that decides which candidates move on to
 expensive Phase 4 validation.
 
+Capture `phase_3_start_epoch=$(date +%s)` as the first action of this
+phase — §13.5 observability requires an elapsed time on the phases.jsonl
+record and step 3.5 below references this variable.
+
 ### 3.1. Pre-existing override (highest priority — §13.1)
 
 Before scoring runs, sweep the findings list for pre-existing candidates
@@ -120,14 +124,13 @@ For each sub-agent result:
 
 ### 3.4. Apply the Phase-3 gate (§13.1)
 
-For every finding that still has `disposition == null` (i.e., not
-pre-existing-overridden and now has a score):
+For every finding still at the Phase-1 parking disposition:
 
 ```bash
 ~/.claude/commands/_shared/tools/artifact-read.sh \
   --path "$artifact_path" \
   --filter '[.findings[]
-    | select(.disposition == null or .disposition == "below_gate")
+    | select(.disposition == "pending_validation")
     | {id, score: .score_phase3, families: .source_families}]'
 ```
 
@@ -136,9 +139,9 @@ For each returned entry, compute:
 - `advances_to_phase_4 = (score >= 45) OR (count(distinct source_families) >= 2)`
 
 If `advances_to_phase_4 == true`: leave the candidate's disposition as
-`below_gate` (the Phase-1 parking value). Phase 4 will overwrite with
-the real verdict. Erase the Phase-3 rationale from `reason` so it
-doesn't bleed into the Phase-4 record:
+`pending_validation` (the §5.2.1 gate-in parking value). Phase 4 will
+overwrite with the real verdict. Erase the Phase-3 rationale from
+`reason` so it doesn't bleed into the Phase-4 record:
 
 ```bash
 ~/.claude/commands/_shared/tools/artifact-patch.py \
@@ -147,14 +150,13 @@ doesn't bleed into the Phase-4 record:
 ```
 
 **Schema note.** `schema-v1.json` requires `disposition` to be a
-specific enum value, not null. `below_gate` serves as the pre-Phase-4
-parking state through both Phase 1 detection and Phase 3 gate-in.
-Phase 4 overwrites with the §13.1 Phase-4 table verdict. The
-`below_gate` → Phase-4-verdict transition is not a schema violation —
-`below_gate` is just a parking value, the final disposition is what
-matters to the report. Leave one `trace.md` line at Phase 3 exit:
-"below_gate is the pre-Phase-4 parking state for gate-in candidates;
-Phase 4 overwrites."
+specific enum value, not null. `pending_validation` is the §5.2.1
+enum value that distinguishes gate-in findings (awaiting Phase 4)
+from gate-out findings (`below_gate`, locked). Phase 4 overwrites
+`pending_validation` with the Phase-4 table verdict
+(`confirmed_*` / `disproven` / `uncertain`). Pre-existing high-
+confidence findings are already at `pre_existing_report` from step
+3.1 and skip this read.
 
 If `advances_to_phase_4 == false`: lock in the gate-out state:
 
@@ -173,7 +175,7 @@ phase_3_elapsed=$(( $(date +%s) - phase_3_start_epoch ))
 
 gate_pass=$(~/.claude/commands/_shared/tools/artifact-read.sh \
   --path "$artifact_path" \
-  --filter '[.findings[] | select(.disposition != "below_gate" and .disposition != "pre_existing_report")] | length')
+  --filter '[.findings[] | select(.disposition == "pending_validation")] | length')
 gate_fail=$(~/.claude/commands/_shared/tools/artifact-read.sh \
   --path "$artifact_path" \
   --filter '[.findings[] | select(.disposition == "below_gate")] | length')
@@ -203,7 +205,7 @@ by_disp=$(~/.claude/commands/_shared/tools/artifact-read.sh \
 - Every finding has `score_phase3` set (null only on parse failure).
 - Pre-existing high-confidence findings have `disposition=pre_existing_report`.
 - Sub-threshold findings have `disposition=below_gate`, `is_actionable=false`.
-- Gate-passing findings still have `disposition=below_gate` as parking
-  state (see §3.4 schema note); Phase 4 overwrites.
+- Gate-passing findings have `disposition=pending_validation` (the
+  §5.2.1 gate-in parking state); Phase 4 overwrites.
 - `tokens.jsonl` + one entry per scored finding.
 - `phases.jsonl` + Phase 3 record with `counts_by_disposition`.

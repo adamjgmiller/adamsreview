@@ -8,10 +8,11 @@ If you are a Claude Code session starting fresh (after compaction or on a new da
 
 ## Current state
 
-**As of 2026-04-17 — Stage 1 COMPLETE.** All 17 commits landed on `main`; `test/smoke.sh` passes (19 assertions). Next: plan Stage 2 (`/adams-review` end-to-end, Phases 0–6).
+**As of 2026-04-17 — Stage 2 IN PROGRESS (C1–C12 landed + two audit rounds of fixes).** Stage 1 is done; Stage 2 has all 12 code/fragment commits plus post-audit fix commits. `test/smoke.sh` passes 33 assertions. Remaining: one more independent audit pass (Codex + CodeRabbit + Opus deduped), then C13 real-repo smoke + close-out.
 
-- Design doc: `DESIGN.md` (rev 8 + §21.2 exit-code footnote)
+- Design doc: `DESIGN.md` (rev 8 + §21.2 exit-code footnote + §5.2.1 `pending_validation` clarification + §12.1 example fix)
 - Stage 1 plan: `plans/stage-1-foundation.md` (user-approved; closed out)
+- Stage 2 plan: `plans/stage-2-review.md` (user-approved; C1–C12 done, C13 pending real-repo smoke)
 - Symlink `~/.claude/commands/_shared → commands/_shared` is live
 - `uv` (`/opt/homebrew/bin/uv 0.7.15`) supplies `jsonschema` to Python scripts via PEP 723 inline-script shebangs
 
@@ -51,7 +52,7 @@ bd6b610      Bootstrap repo with design doc (rev 8) and build journal
 | # | Name | Status | Plan | Close-out notes |
 |---|------|--------|------|-----------------|
 | 1 | Foundation (data layer + shared helpers) | **done** | `plans/stage-1-foundation.md` | [Stage 1 section](#stage-1--foundation) |
-| 2 | `/adams-review` end-to-end (Phases 0–6) | not started | `plans/stage-2-review.md` | — |
+| 2 | `/adams-review` end-to-end (Phases 0–6) | in progress | `plans/stage-2-review.md` | [Stage 2 section](#stage-2--adams-review) |
 | 3 | `/adams-review-fix` (Phases 7–9 + terminal cleanup) | not started | `plans/stage-3-fix.md` | — |
 
 ### Stage 1 — Foundation
@@ -100,7 +101,37 @@ bd6b610      Bootstrap repo with design doc (rev 8) and build journal
 
 **Done when:** `/adams-review` run on a real repo produces a valid artifact; PR mode posts/edits the comment; local mode is a no-op on publish.
 
-**Status:** not started. Will plan after Stage 1 closes.
+**Status:** in progress. C1–C12 landed; audit rounds 1–3 closed; C13 pending.
+
+**Files landed (C1–C12 + audit fixes):**
+- `commands/adams-review.md` — top-level slash command with full `allowed-tools` block and preprocessor-include wiring for fragments.
+- `commands/_shared/00-preflight.md` (Phase 0) — argument parsing, branch/base/repo resolution, PR-mode detect with `gh pr view` lowercase transform, `review_started_at` capture, diff surface enumeration, CLAUDE.md path walk, dirty-tree / unpushed-commit / trivial / prior-artifact gates, `review_id` + `review_dir` creation, artifact seed + `latest.txt` atomic write.
+- `commands/_shared/01-detection.md` (Phase 1) — six-way parallel lens fan-out (L1 Haiku, L2 Opus, L3/L4/L6 Sonnet, L5 Sonnet conditional on `user_facing && !trivial`), partial→full finding builder stripping candidate-only fields (`source_family`, `evidence_snippet`) and forcing `validation_lane=light` under trivial mode.
+- `commands/_shared/02-ensemble-adapter.md` (Phase 1.5) — `--ensemble`-gated CodeRabbit + Codex CLI dispatch in background Bash, PR-comment scrape via `external-scrape.sh`, single Sonnet normalizer, scratch directory under `/tmp/adams-review-$review_id/` for ephemeral CLI I/O.
+- `commands/_shared/03-dedup.md` (Phase 2) — single-Sonnet-pass grouping, keeper selection, `--set-json` union of `sources` + `source_families`, `--delete-finding` for dupes.
+- `commands/_shared/04-scoring-gate.md` (Phase 3) — pre-existing override sweep, per-finding Sonnet scoring against §20 rubric with err-up, Phase-3 gate that transitions findings to `pending_validation` (advance) or `below_gate` (gate-fail).
+- `commands/_shared/05-validation.md` (Phase 4) — lane partition (`pending_validation` survivors only), per-candidate Opus (deep) or Sonnet (light) validators, chain-wave retry capped at 2 waves, Phase-4 decision table, schema-aligned `validation_result` writes (confirmed only), pre-existing re-assertion.
+- `commands/_shared/06-cross-cutting.md` (Phase 5) — single Opus pass over deep-lane actionable findings, `cross_cutting_groups` emission with schema-enforced `^G[0-9]+$` + `finding_ids.length >= 2`.
+- `commands/_shared/07-finalize.md` (Phase 6) — validate, tally `subagent_tokens` + `metrics`, recompute `reviewer_sources` from actual `findings[].sources[]` union (DESIGN §6), render `artifact.md`, re-assert `latest.txt`, publish (PR mode) or local no-op, mirror report to chat, stash pop.
+- `commands/_shared/lens-ux-reference.md` / `lens-security-reference.md` — DESIGN §22.1 / §22.2 inlined verbatim for L5 / L6 prompt preprocessor includes.
+- `commands/_shared/tools/external-scrape.sh` — DESIGN §21.8 implementation; parallel `gh api` fetch of 3 endpoints, bot filter + allow/deny config, `--fixtures-dir` replay mode.
+- `commands/_shared/tools/artifact-publish.sh` — extended with `--repo-slug` / `--branch` / `--dry-run`; three-tier md-path resolution (`--md-path` > `--review-dir` > `latest.txt`).
+- `commands/_shared/tools/artifact-patch.py` — extended with `--delete-finding` and `--set-json` (whitelisted fields: `sources`, `source_families`, `validation_result`, `cross_cutting_groups`, `subagent_tokens`, `metrics`, `reviewer_sources`).
+- `commands/_shared/tools/log-phase.sh` — accepts both numeric and string-bucket phases (e.g., `1_5`).
+- `commands/_shared/tools/artifact-read.sh` — `--summary` emits `counts_by_state` key to match DESIGN §12.1 naming.
+- `commands/_shared/schema-v1.json` — disposition enum extended with `pending_validation` (gate-in parking state).
+- `test/smoke.sh` — grew from 19 to 33 assertions covering publish tiers (B3–B5), external-scrape fixture (G), delete-finding + set-json (H–M), numeric + string phase logging (E), pending_validation enum (N), counts_by_state rename (O), empty-list jq safety (P), disposition/is_actionable coupling (Q).
+
+**Open deviations / clarifications (inherited from audit rounds):**
+- **DESIGN §5.2.1 `pending_validation` enum** — gap that the two consecutive audits surfaced: schema forbids null `disposition`, but `below_gate` semantically means "gate-failed"; gate-in needed its own parking value. Added as a clarification-level DESIGN + schema + `_common.py` change, mirrored into 01-detection / 04-scoring-gate / 05-validation.
+- **`validation_result` schema alignment** — 05-validation step 4.2 prompt now returns the exact shape `schema-v1.json` validates, and step 4.4 only writes `validation_result` for confirmed findings (disproven/uncertain get no nested object — schema's non-null nested requirement would otherwise reject them).
+- **`reviewer_sources` Phase-6 recompute** — seed at Phase 0 is `["internal"]`; Phase 6 step 6.3a unions over `findings[].sources[]` for the final list per DESIGN §6.
+- **`sources[]` per-finding lens vocabulary** — `L1-diff-local` / `L2-structural` / `L3-claude-md` / `L4-comments` / `L5-ux` / `L6-security` (matches DESIGN §6 example).
+- **`counts_by_state` key rename** — `artifact-read.sh --summary` now emits `counts_by_state` (was `counts_by_current_state`) so phases.jsonl aggregators in 07-finalize don't produce `null` keys.
+
+**Pending close-out (C13):**
+- Real-repo smoke on `/Users/adammiller/Projects/ray/ray-finance` branch `feat/import-apple` (user-driven — approved in Stage 2 plan §10).
+- Final BUILD.md close-out + grant-probe deferred items record.
 
 ### Stage 3 — `/adams-review-fix`
 
@@ -180,6 +211,8 @@ Bias is toward **making DESIGN track reality**, not defending the rev-8 wording.
 - **2026-04-17 (close-out) — `staleness.sh` unreachable-SHA handling.** §21.4 specifies HEAD / changed-files intersection but doesn't say what to do when the reviewed SHA isn't in local history (shallow clone, force-push that discarded the SHA). Stage 1 chose: `git rev-parse --verify <sha>^{commit}` + `git merge-base --is-ancestor <sha> HEAD`; on failure exit 1 with a message explaining likely causes and action ("re-run /adams-review"). Treated same as unsafe — the safest default.
 
 - **2026-04-17 (close-out) — DESIGN §21.2 exit codes codified.** Footnoted into DESIGN.md §21.2 in this commit: 0 success / 1 validation / 2 invalid-transition / 3 dry-run-invalid / 4 unexpected / 5 missing-dep / 64 usage. Also applies to `artifact-validate.sh` (0/1/64) and `artifact-render.py` (0/1/4/64). Observed during smoke: step 12 (`--set current_state=bogus --dry-run` on a finding in `resolved` terminal state) exits 2 (transition-check catches "bogus" as not in the empty allowed-next set for terminal states) rather than 1 or 3. The smoke assertion checks non-zero + unchanged sha, not a specific code — robust to this layering.
+
+- **2026-04-17 — Stage 2 audit rounds 1 + 2 closed.** Two independent fresh-context audits flagged compounding issues: R1 `pr_state` uppercase-from-gh didn't match schema enum; R2 Phase 4 filter excluded `below_gate` findings but Phase 3 left gate-in candidates there too (the schema-required-non-null disposition forced reuse of `below_gate` as a parking state — a round-1 fix that round-2 caught as a Phase-4 no-op); R3 `validation_result` prompt shape mismatched the schema's nested-non-null objects; R4 empty `claude_md_paths` produced `[""]` via `jq -R`; R5 `evidence_snippet` candidate field survived into the finding write under `additionalProperties:false`; R6 `counts_by_state` phases.jsonl key was silently null because the helper emitted `counts_by_current_state`. All six + 8 of the 14 yellow flags fixed in round-2 commit(s); smoke grew from 29 to 33 assertions covering the new invariants. **Cleanest architectural change:** introducing `pending_validation` as a distinct §5.2.1 disposition enum value for Phase-3 gate-in findings, restoring Phase 4's dispatch set without overloading `below_gate`.
 
 - **2026-04-17 — §8.7 grant probe: PASSED.** Confirmed on macOS (`darwin 25.3.0`, Claude Code `default` mode): a frontmatter grant declared as `Bash(/Users/adammiller/.claude/commands/_shared/tools/probe.sh:*)` resolves cleanly when `~/.claude/commands/_shared` is a symlink to the dev repo — no permission prompt, script executed, stdout captured as expected. Verified in a separate Claude Code session invoking `/_shared-probe` (throwaway command + probe.sh). **Implication for Stage 2:** the full `/adams-review` `allowed-tools` block can use absolute paths under `~/.claude/commands/_shared/tools/...` per DESIGN §8.7's "canonical invocation path" rule; no need for the relative-name + `PATH` fallback. Probe files (`commands/_shared/tools/probe.sh` + `~/.claude/commands/_shared-probe.md`) torn down after verification; neither was committed.
 

@@ -208,6 +208,9 @@ For each sub-agent result, in the order it returns:
 
    `<lens-name>` is one of `lens_1_diff_local`, `lens_2_structural`,
    `lens_3_claude_md`, `lens_4_comments`, `lens_5_ux`, `lens_6_security`.
+   The paired per-finding `sources[]` entry — used in the jq builder at
+   step 3 — is the shorter lens tag: `L1-diff-local`, `L2-structural`,
+   `L3-claude-md`, `L4-comments`, `L5-ux`, `L6-security` (DESIGN §6).
 
 2. **Light JSON repair** if the output isn't a parseable array — strip code
    fences, extract the JSON block. If still unparseable, retry once with
@@ -231,7 +234,7 @@ For each sub-agent result, in the order it returns:
    ```
    {
      "id":                        "F###",
-     "sources":                   ["detection"],                 # internal lens family
+     "sources":                   ["<lens-tag>"],                # lens-specific per DESIGN §6: L1-diff-local | L2-structural | L3-claude-md | L4-comments | L5-ux | L6-security
      "source_families":           ["<lens's source_family>"],    # singular → array; Phase 2 may union
      "impact_type":               "<from lens output>",
      "origin":                    "<from lens, default introduced_by_pr>",
@@ -242,7 +245,7 @@ For each sub-agent result, in the order it returns:
      "validation_lane":           "deep" if impact_type ∈ {correctness, security} AND trivial_mode != true
                                   else "light",
      "current_state":             "open",
-     "disposition":               "below_gate",                  # parking state; Phase 3/4 overwrite
+     "disposition":               "pending_validation",          # parking state; Phase 3 gate-fail → below_gate, Phase 4 → confirmed_* / disproven / uncertain / pre_existing_report
      "is_actionable":             false,                         # must agree with disposition per §5.2.1
      "reason":                    null,
      "confirmed_strength":        null,
@@ -266,18 +269,22 @@ For each sub-agent result, in the order it returns:
    ```bash
    full_finding=$(jq -n \
      --arg id "F$(printf '%03d' $finding_counter)" \
+     --arg lens_tag "$lens_source_tag" \
      --arg sf "$lens_source_family_singular" \
+     --argjson trivial "$trivial_mode" \
      --argjson lens "$candidate_from_lens" \
      '$lens + {
        id: $id,
-       sources: ["detection"],
+       sources: [$lens_tag],
        source_families: [$sf],
        actionability: (if ($lens.impact_type == "correctness" or $lens.impact_type == "security") then "auto_fixable"
                       elif ($lens.impact_type == "architecture") then "report_only"
                       else "manual" end),
-       validation_lane: (if ($lens.impact_type == "correctness" or $lens.impact_type == "security") then "deep" else "light" end),
+       validation_lane: (if $trivial then "light"
+                         elif ($lens.impact_type == "correctness" or $lens.impact_type == "security") then "deep"
+                         else "light" end),
        current_state: "open",
-       disposition: "below_gate",
+       disposition: "pending_validation",
        is_actionable: false,
        reason: null,
        confirmed_strength: null,
@@ -289,12 +296,13 @@ For each sub-agent result, in the order it returns:
        introduced_in_sha: null,
        suggested_follow_up: null,
        related_parent_finding_id: null
-     } | del(.source_family)')   # strip the singular — only plural is in schema
+     } | del(.source_family, .evidence_snippet)')   # strip candidate-only fields — schema additionalProperties:false
    ```
 
-   For trivial-mode runs (`trivial_mode=true`), force `validation_lane`
-   to `light` even for correctness/security — Phase 4b handles every
-   candidate under trivial mode per §19.6.
+   For trivial-mode runs (`trivial_mode=true`), the jq builder above
+   forces `validation_lane="light"` for every candidate — Phase 4b
+   handles the whole pool per §19.6. The `$trivial` argjson binding
+   drives that branch so the stored lane is honest.
 
    Then append:
 
@@ -308,12 +316,14 @@ For each sub-agent result, in the order it returns:
    lens returning `line_range` as `null` instead of `[N, N]` — default
    to `[1, 1]` with a `trace.md` note when that happens.
 
-   **`below_gate` is a parking disposition** for pre-Phase-3 state.
+   **`pending_validation` is the Phase-1 parking disposition.**
    Schema requires `disposition` non-null, so we can't leave it unset.
-   `is_actionable: false` + `disposition: "below_gate"` keeps the §5.2.1
-   coupling happy. Phase 3's gate either moves this candidate out of
-   `below_gate` (via Phase 4's verdict eventually) or locks it in with
-   the real "below validation gate (score X)" reason.
+   `is_actionable: false` + `disposition: "pending_validation"` keeps the
+   §5.2.1 coupling happy. Phase 3's gate either locks a gate-fail finding
+   into `below_gate` with the "below validation gate (score X)" reason,
+   or leaves it at `pending_validation` for Phase 4 to overwrite with
+   the final verdict. Pre-existing overrides set `pre_existing_report`
+   at Phase 3.1 before any of that runs.
 
 ### 1.5. Log Phase 1 summary
 

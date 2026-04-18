@@ -96,6 +96,7 @@
     "disposition_enum": {
       "enum": [
         "below_gate",
+        "pending_validation",
         "disproven",
         "uncertain",
         "confirmed_auto",

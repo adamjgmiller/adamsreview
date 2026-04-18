@@ -4,6 +4,11 @@ A single Sonnet sub-agent groups near-duplicate candidates so one
 underlying issue doesn't surface as multiple findings downstream.
 No structural fingerprinting — one LLM pass, pennies of cost.
 
+Capture `phase_2_start_epoch=$(date +%s)` and `pre_dedup_count=$(
+~/.claude/commands/_shared/tools/artifact-read.sh --path "$artifact_path" \
+  --filter '.findings | length')` as the first actions of this phase —
+step 2.4 references both.
+
 ### 2.1. Build the dedup input
 
 Read the current findings list:
@@ -11,12 +16,15 @@ Read the current findings list:
 ```bash
 ~/.claude/commands/_shared/tools/artifact-read.sh \
   --path "$artifact_path" \
-  --filter '[.findings[] | {id, file, line_range, claim, evidence_snippet, source_families, sources}]'
+  --filter '[.findings[] | {id, file, line_range, claim, source_families, sources}]'
 ```
 
 (No singular `source_family` field exists on stored findings — Phase 1
 already transformed lens output into the plural `source_families` array
-before writing.)
+before writing. `evidence_snippet` is a candidate-only field that
+Phase 1 strips before `--add-finding`; dedup works from
+`claim + file + line_range`, which is sufficient for near-duplicate
+grouping.)
 
 Capture as `candidate_list_json`.
 
@@ -50,7 +58,21 @@ Launch one `Agent` tool-use with `model: sonnet`. Prompt essence:
 >
 > Return JSON: `{"groups": [[id, id, ...], [id, ...], ...]}`.
 
-Log tokens: `log-tokens.sh --phase phase_2 --agent-role dedup --model sonnet`.
+Log tokens with every required arg spelled out (the helper's argparse
+refuses short forms):
+
+```bash
+~/.claude/commands/_shared/tools/log-tokens.sh \
+  --review-dir "$review_dir" \
+  --phase phase_2 \
+  --agent-role dedup \
+  --agent-id "$dedup_agent_id" \
+  --model sonnet \
+  --tokens "$dedup_tokens_or_null"
+```
+
+Capture `dedup_agent_id` from the Agent tool result; `dedup_tokens_or_null`
+is the parsed token count or the literal word `null` on parse failure.
 
 ### 2.3. Merge each group in the artifact
 

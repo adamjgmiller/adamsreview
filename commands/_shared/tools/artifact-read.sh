@@ -95,11 +95,13 @@ case "$MODE" in
     summary)
         # Counts per routing key. disposition is the primary (§5.2.1);
         # current_state, impact_type, validation_lane for at-a-glance.
+        # Key names match DESIGN §12.1 so phases.jsonl aggregators and
+        # the --summary consumer read the same shape.
         jq '{
             findings_total: (.findings | length),
-            counts_by_current_state: (.findings | group_by(.current_state) | map({key: (.[0].current_state // "null"), value: length}) | from_entries),
-            counts_by_disposition:   (.findings | group_by(.disposition)   | map({key: (.[0].disposition   // "null"), value: length}) | from_entries),
-            counts_by_impact_type:   (.findings | group_by(.impact_type)   | map({key: (.[0].impact_type   // "null"), value: length}) | from_entries),
+            counts_by_state:        (.findings | group_by(.current_state) | map({key: (.[0].current_state // "null"), value: length}) | from_entries),
+            counts_by_disposition:  (.findings | group_by(.disposition)   | map({key: (.[0].disposition   // "null"), value: length}) | from_entries),
+            counts_by_impact_type:  (.findings | group_by(.impact_type)   | map({key: (.[0].impact_type   // "null"), value: length}) | from_entries),
             counts_by_validation_lane: (.findings | group_by(.validation_lane) | map({key: (.[0].validation_lane // "null"), value: length}) | from_entries)
         }' "$ARTIFACT"
         ;;

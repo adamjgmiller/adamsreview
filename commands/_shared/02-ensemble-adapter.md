@@ -123,14 +123,19 @@ If `codex_available == false`, skip.
 
 ### 1.5.3. PR comment scrape (PR mode only)
 
-While the CLI reviewers are running, synchronously scrape bot comments:
+While the CLI reviewers are running, synchronously scrape bot comments.
+Guard the exit-code capture with `||` so `set -e` orchestrator context
+doesn't abort on non-zero — we deliberately want to read the code and
+continue per §24.2:
 
 ```bash
 if [[ "$mode" == "pr" ]]; then
     ~/.claude/commands/_shared/tools/external-scrape.sh \
         --pr "$pr_number" --since "$review_started_at" \
-        > "$scratch_dir/pr-scrape.json" 2> "$scratch_dir/pr-scrape.err"
-    scrape_exit=$?
+        > "$scratch_dir/pr-scrape.json" \
+        2> "$scratch_dir/pr-scrape.err" \
+        || scrape_exit=$?
+    scrape_exit=${scrape_exit:-0}
 else
     echo "[]" > "$scratch_dir/pr-scrape.json"
     scrape_exit=0
@@ -143,20 +148,36 @@ reviewer outputs only. Do not abort.
 
 ### 1.5.4. Collect CLI reviewer outputs
 
-Poll each background shell using the Monitor tool (or wait for completion
-via BashOutput / the output file). Do not wait serially — poll both
-concurrently so one slow reviewer doesn't hold up the other.
+Poll each background shell via the `BashOutput` tool — it's the only
+non-blocking read-current-output mechanism granted in
+`adams-review.md`'s `allowed-tools` block. Do not wait serially — check
+both concurrently so one slow reviewer doesn't hold up the other.
 
 Apply a reasonable timeout (e.g., 10 minutes — ensemble reviewers can be
 slow on large diffs). On timeout, capture whatever output exists, mark the
 reviewer as `timed_out`, and continue.
 
-After each reviewer returns:
+After each reviewer returns, capture its status explicitly — the Phase-
+1.5 summary record at step 1.5.7 references these variables by name:
 
-- If the exit was non-zero or the stdout is empty/unparseable: log to
-  `trace.md` with tag `phase_1_5_coderabbit_failed` (or `_codex_failed`);
-  drop that source.
-- Otherwise capture stdout for the normalizer.
+```bash
+# After CodeRabbit resolves (success / failure / timeout):
+if [[ "$coderabbit_available" == "false" ]]; then
+    coderabbit_status=skipped
+elif [[ "$coderabbit_timed_out" == "true" ]]; then
+    coderabbit_status=timed_out
+elif [[ "$coderabbit_exit_code" -ne 0 ]] || [[ ! -s "$scratch_dir/coderabbit.out" ]]; then
+    coderabbit_status=failed
+else
+    coderabbit_status=success
+fi
+
+# (Same shape for codex_status with $codex_* variables.)
+```
+
+On failed / timed_out, log to `trace.md` with tag
+`phase_1_5_coderabbit_failed` (or `_codex_failed`); drop that source
+from the normalizer input. On success, pass stdout to the normalizer.
 
 Clean up the Codex prompt file:
 
@@ -242,6 +263,23 @@ For each normalized candidate, call `artifact-patch.py --add-finding` with
 the same field defaults as Phase 1.4 step 3 — monotonically continuing the
 finding-id sequence (if Phase 1 produced F001-F030, external starts at F031).
 `origin_confidence` stays `"low"` per the normalizer's output.
+
+**Schema guard for missing location info.** The normalizer prompt
+allows `file: null` / `line_range: null` for candidates whose body text
+didn't specify a location. Schema (`schema-v1.json`) requires `file`
+non-null with `minLength:1` and `line_range` as `[int,int]` with both
+items `>=1`. Repair before `--add-finding` — default to a sentinel so
+the finding is still stored (Phase 2 dedup + Phase 4 validation may
+still match it against an internal finding with proper location):
+
+```bash
+# Before --add-finding, if candidate.file is null: set to "(unknown)"
+# and line_range to [1,1]. Leave a one-line trace.md note per finding
+# so the user knows where the ambiguity came from.
+file=$(echo "$candidate" | jq -r '.file // "(unknown)"')
+line_range_json=$(echo "$candidate" | jq -c '(.line_range // [1,1])')
+# Merge back into the candidate before building the full finding.
+```
 
 ### 1.5.6b. Clean up scratch_dir
 

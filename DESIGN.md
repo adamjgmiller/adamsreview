@@ -527,6 +527,7 @@ Three extra fields do the work that extra states used to do:
 | disposition | Meaning | `current_state` | `is_actionable` | Typical phase that sets it |
 |---|---|---|---|---|
 | `below_gate` | `score_phase3 < 45` and single source family | `open` | `false` | Phase 3 |
+| `pending_validation` | Phase 3 gate-in parking state; awaiting Phase 4 validation | `open` | `false` | Phase 3 |
 | `disproven` | `score_phase4 < 45` (Phase 4 actively disproved) | `open` | `false` | Phase 4 |
 | `uncertain` | `score_phase4 45–59` (Phase 4 inconclusive) | `open` | `false` | Phase 4 |
 | `confirmed_auto` | `score_phase4 ≥ 60`, deep lane, `actionability == auto_fixable` | `open` | `true` | Phase 4 |
@@ -1065,7 +1066,7 @@ One line per completed phase, JSON object. Each record carries `counts_by_state`
 ```jsonl
 {"phase":1,"name":"detection","elapsed_sec":45,"counts_by_state":{"open":47},"counts_by_disposition":{"unassigned":47},"delta":"+47 open","ts":"..."}
 {"phase":2,"name":"dedup","elapsed_sec":8,"counts_by_state":{"open":38},"counts_by_disposition":{"unassigned":38},"delta":"-9 merged","ts":"..."}
-{"phase":3,"name":"scoring-gate","elapsed_sec":22,"counts_by_state":{"open":38},"counts_by_disposition":{"below_gate":14,"unassigned":24},"delta":"14 gated below validation, 24 advanced","ts":"..."}
+{"phase":3,"name":"scoring-gate","elapsed_sec":22,"counts_by_state":{"open":38},"counts_by_disposition":{"below_gate":14,"pending_validation":24},"delta":"14 gated below validation, 24 advanced","ts":"..."}
 {"phase":4,"name":"validation","elapsed_sec":612,"counts_by_state":{"open":38},"counts_by_disposition":{"below_gate":14,"disproven":5,"uncertain":4,"confirmed_auto":9,"confirmed_manual":4,"confirmed_report":1,"pre_existing_report":1},"delta":"24 validated: 9 auto, 4 manual, 1 report, 5 disproven, 4 uncertain, 1 pre-existing","ts":"..."}
 {"phase":9,"name":"post-fix-review","elapsed_sec":187,"counts_by_state":{"open":32,"resolved":6},"counts_by_disposition":{"below_gate":14,"disproven":5,"uncertain":4,"confirmed_manual":4,"confirmed_report":1,"pre_existing_report":1,"partial":2,"regression":1,"resolved":6},"delta":"6 verified, 2 partial, 1 regression (group FG-3 reverted)","ts":"..."}
 ```

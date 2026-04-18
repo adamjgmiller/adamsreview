@@ -61,11 +61,37 @@ Capture as `repo_slug`.
 Run `gh pr view --json number,state,isDraft,url,author,headRefName,baseRefName`
 (no PR arg — picks up the PR for the current branch if any).
 
-- If the command succeeds and returns a PR: capture `pr_number`, `pr_state`,
-  `pr_author`, and verify `headRefName == head_branch` (otherwise stop — you
-  may have checked out the wrong branch for the PR number you're reviewing).
-  - If `state == "CLOSED"` or `"MERGED"`, stop with a user-visible message.
-    Draft (`isDraft: true`) is valid — continue.
+- If the command succeeds and returns a PR: capture `pr_number`,
+  `pr_author`, and verify `headRefName == head_branch` (otherwise stop
+  — you may have checked out the wrong branch for the PR number you're
+  reviewing).
+  - The `gh` CLI returns `state` as uppercase enum
+    (`OPEN` | `CLOSED` | `MERGED`) and `isDraft` as a separate boolean.
+    Schema (`schema-v1.json`) requires `pr_state` to be lowercase
+    `"draft"` | `"open"` | `null`. Transform the two fields into a
+    single `pr_state`:
+    - `isDraft == true`                → `pr_state="draft"`
+    - `state == "OPEN" && !isDraft`    → `pr_state="open"`
+    - `state == "CLOSED"` or `"MERGED"`→ stop with a user-visible message (closed/merged PRs are not reviewed)
+  - Example:
+    ```bash
+    pr_json=$(gh pr view --json number,state,isDraft,url,author,headRefName,baseRefName)
+    pr_number=$(jq -r '.number' <<<"$pr_json")
+    pr_author=$(jq -r '.author.login' <<<"$pr_json")
+    pr_raw_state=$(jq -r '.state' <<<"$pr_json")
+    pr_is_draft=$(jq -r '.isDraft' <<<"$pr_json")
+    if [[ "$pr_raw_state" == "CLOSED" || "$pr_raw_state" == "MERGED" ]]; then
+        echo "Skipping review: PR #$pr_number is $pr_raw_state." >&2
+        exit 0
+    fi
+    if [[ "$pr_is_draft" == "true" ]]; then
+        pr_state="draft"
+    elif [[ "$pr_raw_state" == "OPEN" ]]; then
+        pr_state="open"
+    else
+        pr_state=""   # unexpected enum value; treated as null downstream
+    fi
+    ```
   - Set `mode=pr`.
 - If it exits non-zero with "no pull requests found for branch" (or similar):
   set `mode=local`, `pr_number=null`, `pr_state=null`, `pr_author=null`.
@@ -303,8 +329,8 @@ jq -n \
   --argjson comment_id "${existing_comment_id:-null}" \
   --argjson trivial_mode "$trivial_mode" \
   --argjson ensemble "$ensemble_mode" \
-  --argjson reviewed_files_all "$(printf '%s\n' $reviewed_files_all | jq -R . | jq -s .)" \
-  --argjson claude_md_paths "$(printf '%s\n' $claude_md_paths | jq -R . | jq -s .)" \
+  --argjson reviewed_files_all "$(printf '%s' "$reviewed_files_all" | jq -Rn '[inputs | select(length>0)]')" \
+  --argjson claude_md_paths "$(printf '%s' "$claude_md_paths" | jq -Rn '[inputs | select(length>0)]')" \
   --argjson files_changed "$num_files" \
   --argjson lines_changed "$lines_changed" \
   '{
@@ -320,7 +346,7 @@ jq -n \
     pr_number: $pr_number,
     comment_id: $comment_id,
     trivial_mode: $trivial_mode,
-    reviewer_sources: (if $ensemble then ["detection","external"] else ["detection"] end),
+    reviewer_sources: ["internal"],
     reviewed_files_all: $reviewed_files_all,
     claude_md_paths: $claude_md_paths,
     findings: [],

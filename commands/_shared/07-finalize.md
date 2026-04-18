@@ -43,6 +43,41 @@ The jq expression handles `tokens: null` entries gracefully (coerces to
 0 for totals). Parse-failure entries (§11 fallback) don't inflate or
 deflate the aggregate by much.
 
+### 6.3a. Recompute `reviewer_sources` from actual findings
+
+DESIGN §6 defines top-level `reviewer_sources` as the union of
+providers that produced at least one candidate. Compute it from
+`findings[].sources[]`:
+
+- `internal` — present when any lens produced a candidate (any
+  `sources[]` entry matches `L[1-6]-.*`).
+- adapter names (`codex`, `coderabbit`) — present when any entry
+  matches exactly.
+- `external-pr:<bot-login>` — present when any entry starts with
+  `external-pr:`.
+
+```bash
+reviewer_sources=$(jq -c '
+  [.findings[] | .sources[]]
+  | map(
+      if test("^L[1-6]-") then "internal"
+      elif . == "codex" or . == "coderabbit" then .
+      elif startswith("external-pr:") then .
+      else empty end
+    )
+  | unique
+' "$artifact_path")
+
+echo "$reviewer_sources" > "/tmp/adams-review-rs-$review_id.json"
+~/.claude/commands/_shared/tools/artifact-patch.py \
+  --path "$artifact_path" \
+  --set-json "reviewer_sources=@/tmp/adams-review-rs-$review_id.json"
+rm -f "/tmp/adams-review-rs-$review_id.json"
+```
+
+If `findings[]` is empty (no candidates detected), the union is `[]` —
+the schema accepts an empty array.
+
 ### 6.3. Populate `metrics`
 
 ```bash
