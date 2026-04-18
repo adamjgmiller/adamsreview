@@ -1,5 +1,12 @@
 # Code review command redesign — plan
 
+> **Reference manual — do not read end-to-end.** This file is ~2400 lines and is consulted by anchor, not by reading from the top. Entry point for routine work is `CLAUDE.md`; the `commands/_shared/` fragments cite specific sections (e.g. "per §13.1") when behavior depends on them. To navigate:
+> ```bash
+> grep -n '^## '       docs/DESIGN.md     # ~30-line section index
+> grep -n '^### 13\.1 ' docs/DESIGN.md    # jump to §13.1
+> ```
+> The revision notes below are history; current behavior lives in the numbered sections.
+
 **Author:** Adam (with Claude)
 **Date:** 2026-04-17 (rev 8 — implementation-language split)
 **Status:** Draft for review
