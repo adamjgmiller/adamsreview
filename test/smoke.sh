@@ -273,15 +273,25 @@ else
 fi
 
 # E. log-phase.sh --record + log-tokens.sh produce valid JSONL
+# Covers both numeric and string-bucket phase values (e.g. "1_5" for
+# Phase 1.5 per §11 conventions).
 mkdir -p "$WORK/rev"
 "$TOOLS/log-phase.sh" --review-dir "$WORK/rev" --phase 6 --name detection --summary "smoke" --elapsed 5
 "$TOOLS/log-phase.sh" --review-dir "$WORK/rev" --phase 6 --record '{"name":"detection","elapsed_sec":5}'
+"$TOOLS/log-phase.sh" --review-dir "$WORK/rev" --phase 1_5 --record '{"name":"ensemble-adapter","elapsed_sec":7}'
 "$TOOLS/log-tokens.sh" --review-dir "$WORK/rev" --phase phase_3 --agent-role validator --agent-id ag_abc --model opus --tokens 12345 --finding-id F001
-if jq -e . "$WORK/rev/phases.jsonl" >/dev/null && jq -e . "$WORK/rev/tokens.jsonl" >/dev/null \
-        && grep -q "## Phase 6 — detection" "$WORK/rev/trace.md"; then
-    pass "E: log-phase + log-tokens emit valid JSONL and trace.md line"
+# Verify both records landed; the 1_5 entry should keep phase as the
+# literal string.
+phase_1_5_phase=$(jq -r 'select(.name == "ensemble-adapter") | .phase' "$WORK/rev/phases.jsonl" | head -1)
+phase_6_phase=$(jq -r 'select(.name == "detection") | .phase' "$WORK/rev/phases.jsonl" | head -1)
+if jq -e . "$WORK/rev/phases.jsonl" >/dev/null \
+        && jq -e . "$WORK/rev/tokens.jsonl" >/dev/null \
+        && grep -q "## Phase 6 — detection" "$WORK/rev/trace.md" \
+        && [[ "$phase_1_5_phase" == "1_5" ]] \
+        && [[ "$phase_6_phase" == "6" ]]; then
+    pass "E: log-phase accepts numeric + string phases; tokens/phases JSONL valid"
 else
-    fail "E: log helpers output invalid"
+    fail "E: phase_1_5=$phase_1_5_phase phase_6=$phase_6_phase; check $WORK/rev/phases.jsonl"
 fi
 
 # F. Schema-invalid fixture rejected by artifact-validate.sh

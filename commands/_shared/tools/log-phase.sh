@@ -67,10 +67,12 @@ if [[ -n "$RECORD" ]]; then
     [[ -z "$NAME" && -z "$SUMMARY" && -z "$ELAPSED" ]] \
         || die_usage "--record cannot combine with --name / --summary / --elapsed"
 
-    # Validate JSON object and inject phase + ts if absent.
+    # Validate JSON object and inject phase + ts if absent. --phase may be
+    # numeric ("3") or a string bucket key ("1_5", "phase_4a" — see §11
+    # conventions). tonumber? with string fallback handles both.
     if ! enriched=$(printf '%s' "$RECORD" \
         | jq -c --arg phase "$PHASE" --arg ts "$TS" \
-            '(if type != "object" then error("record must be a JSON object") else . end) | (.phase //= ($phase|tonumber)) | (.ts //= $ts)' \
+            '(if type != "object" then error("record must be a JSON object") else . end) | (.phase //= ($phase|tonumber? // $phase)) | (.ts //= $ts)' \
         2>&1); then
         echo "ERROR: --record is not a valid JSON object: $enriched" >&2
         echo "Action: pass a JSON object like '{\"name\":\"detection\",\"elapsed_sec\":45,...}'." >&2
