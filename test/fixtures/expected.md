@@ -20,7 +20,7 @@ Found 7 findings across all lanes:
 
 | # | Score | Impact | File | Issue | Status |
 |---|-------|--------|------|-------|--------|
-| F001 | 85 | correctness | `src/auth/session.ts:42-58` | Null leak to callers assuming non-null | ✓ verified (`fedcba9`) |
+| F001 | 85 | correctness | `src/auth/session.ts:42-58` | Null leak to callers assuming non-null | ✓ fixed and verified (`fedcba9`) |
 
 <details><summary>Details and fix proposals</summary>
 
@@ -29,7 +29,7 @@ Found 7 findings across all lanes:
 **File:** `src/auth/session.ts:42-58`
 **Score:** 85 (strong)
 
-**Latest fix attempt (fixrun_stage1smoke):** verified
+**Latest fix attempt (fixrun_stage1smoke):** fixed and verified
 
 </details>
 
@@ -67,12 +67,12 @@ Shown only when `origin_confidence: high`. Never auto-fixed in v1 (§13.1 pre-ex
 
 ### Run `fixrun_stage1smoke` — 2026-04-17T21:30:00Z
 
-- Outcomes: 1 verified
+- Outcomes: 1 fixed and verified
 - Commits: `fedcba9`
 
 | Finding | Group | Outcome | phase_9_finding |
 |---------|-------|---------|-----------------|
-| F001 | FG-1 | ✓ verified |  |
+| F001 | FG-1 | ✓ fixed and verified |  |
 
 ---
 

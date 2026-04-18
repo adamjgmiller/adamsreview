@@ -1462,7 +1462,7 @@ else
 fi
 
 # Assertion FX-RF-2: outcome summary line captures all three labels.
-if grep -Fq '1 verified, 1 partial, 1 regression' "$WORK/rf.md"; then
+if grep -Fq '1 fixed and verified, 1 partial, 1 regression' "$WORK/rf.md"; then
     pass "FX-RF-2 (§7): outcome summary shows verified + partial + regression counts"
 else
     fail "FX-RF-2: expected mixed-outcome summary line, got:
@@ -1470,8 +1470,8 @@ $(grep -A1 'Outcomes:' "$WORK/rf.md")"
 fi
 
 # Assertion FX-RF-3: per-finding table renders each outcome label correctly
-# (✓ verified / ⚠ partial / ✗ regression) plus the phase_9_finding text.
-if grep -Fq '| F001 | FG-1 | ✓ verified |' "$WORK/rf.md" \
+# (✓ fixed and verified / ⚠ partial / ✗ regression) plus the phase_9_finding text.
+if grep -Fq '| F001 | FG-1 | ✓ fixed and verified |' "$WORK/rf.md" \
     && grep -Fq '| F002 | FG-1 | ⚠ partial | missed q.ts:5 |' "$WORK/rf.md" \
     && grep -Fq '| F003 | FG-2 | ✗ regression (reverted) | new 401 in z.ts |' "$WORK/rf.md"; then
     pass "FX-RF-3 (§7): per-finding table renders verified/partial/regression with phase_9_finding"

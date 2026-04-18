@@ -84,7 +84,7 @@ def status_cell(finding):
     sha = att.get("output_sha")
     sha_link = f"`{sha[:7]}`" if sha else "(no commit)"
     if outcome == "verified":
-        return f"✓ verified ({sha_link})"
+        return f"✓ fixed and verified ({sha_link})"
     if outcome == "partial":
         return f"⚠ partial ({sha_link})"
     if outcome == "regression":
@@ -317,7 +317,8 @@ def _finding_detail(f):
     att = latest_attempt(f)
     if att:
         lines.append("")
-        outcome = att.get("phase_9_outcome") or "(not classified)"
+        raw = att.get("phase_9_outcome")
+        outcome = "fixed and verified" if raw == "verified" else (raw or "(not classified)")
         run_id = att.get("run_id", "?")
         lines.append(f"**Latest fix attempt ({run_id}):** {outcome}")
         if att.get("phase_9_finding"):
@@ -402,7 +403,7 @@ def render_pre_existing(buckets):
 
 
 _OUTCOME_LABEL = {
-    "verified":    "✓ verified",
+    "verified":    "✓ fixed and verified",
     "partial":     "⚠ partial",
     "regression":  "✗ regression (reverted)",
     # phase_9_outcome=null is the overlap-abort case (§4 Phase 9.pre):
@@ -457,7 +458,7 @@ def render_fix_runs(artifact):
         # Human-readable outcome summary ordered by the label precedence
         # we want to emphasize first: verified → partial → regression → overlap.
         summary_parts = []
-        for key, label in (("verified", "verified"),
+        for key, label in (("verified", "fixed and verified"),
                            ("partial", "partial"),
                            ("regression", "regression"),
                            (None, "overlap-abort")):
