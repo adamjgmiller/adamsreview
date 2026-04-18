@@ -112,28 +112,62 @@ Launch with `run_in_background: true`; capture shell id as
 
 ### 1.5.3. PR comment scrape (PR mode only; dispatched from 01 step 1.3)
 
-While the CLI reviewers are running, synchronously scrape bot comments.
-Guard the exit-code capture with `||` so `set -e` orchestrator context
+While the CLI reviewers are running, synchronously scrape bot comments
+and run the §13.13 code-locality filter. The scrape (`external-scrape.sh`
+§21.8) fetches every bot-authored comment on the PR; the freshness
+filter (`comment-freshness.sh` §21.10) drops records whose referenced
+code has changed between when the comment was posted and HEAD. Guard
+the exit-code captures with `||` so `set -e` orchestrator context
 doesn't abort on non-zero — we deliberately want to read the code and
 continue per §24.2:
 
 ```bash
 if [[ "$mode" == "pr" ]]; then
     ~/.claude/commands/_shared/tools/external-scrape.sh \
-        --pr "$pr_number" --since "$review_started_at" \
-        > "$scratch_dir/pr-scrape.json" \
+        --pr "$pr_number" \
+        > "$scratch_dir/pr-scrape.raw.json" \
         2> "$scratch_dir/pr-scrape.err" \
         || scrape_exit=$?
     scrape_exit=${scrape_exit:-0}
+
+    if [[ $scrape_exit -eq 0 ]]; then
+        reviewed_files_csv=$(printf '%s\n' "$reviewed_files_all" \
+            | awk 'NF' | paste -sd, -)
+
+        # Pipe through comment-freshness.sh. Audit lines (`comment_freshness: …`)
+        # flow into trace.md via `tee -a` — mirrors origin-crosscheck.sh
+        # dispatch at 01-detection.md step 1.4 step 2a.
+        if ! ~/.claude/commands/_shared/tools/comment-freshness.sh \
+                --pr "$pr_number" \
+                --reviewed-files "$reviewed_files_csv" \
+                --comments "$scratch_dir/pr-scrape.raw.json" \
+                > "$scratch_dir/pr-scrape.json" \
+                2> >(tee -a "$trace_log_path" >&2); then
+            # Freshness helper itself failed (rare — its own errors log to
+            # stderr with a `comment_freshness_api_failed` prefix). Degrade
+            # gracefully: use the raw scrape. Log the tag so a reader can
+            # explain why stale-but-pre-existing comments made it through.
+            printf 'phase_1_5_freshness_helper_failed: using raw scrape\n' \
+                >> "$trace_log_path"
+            cp "$scratch_dir/pr-scrape.raw.json" "$scratch_dir/pr-scrape.json"
+        fi
+    else
+        # Scrape failed — write an empty array so downstream consumers
+        # don't trip on a missing file. The scrape-failed tag is logged
+        # below per §24.2.
+        echo "[]" > "$scratch_dir/pr-scrape.json"
+    fi
 else
     echo "[]" > "$scratch_dir/pr-scrape.json"
     scrape_exit=0
 fi
 ```
 
-On non-zero exit (rate limit, auth, network) per §24.2: log stderr to
-`trace.md` with tag `phase_1_5_scrape_failed`; continue with the CLI
-reviewer outputs only. Do not abort.
+On scrape non-zero exit (rate limit, auth, network) per §24.2: log
+stderr to `trace.md` with tag `phase_1_5_scrape_failed`; continue with
+the CLI reviewer outputs only. Do not abort. The freshness-filter
+failure path (inner `if`) is separately logged because it can fire
+independently of the scrape succeeding.
 
 ### 1.5.4. Collect CLI reviewer outputs
 

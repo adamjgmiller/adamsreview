@@ -234,10 +234,13 @@ Run `gh pr view --json number,state,isDraft,url,author,headRefName,baseRefName`
 
 ### 0.5. Capture `review_started_at`
 
-Run `date -u +%Y-%m-%dT%H:%M:%SZ` **before** any push, stash, or other
-mutation. Per §4 Phase 0 step 4, this timestamp anchors the Phase 1.5 scrape
-window, and missing it by even a second of push-gap can silently hide bot
-comments that landed during the gap. Capture as `review_started_at`.
+Run `date -u +%Y-%m-%dT%H:%M:%SZ` and capture as `review_started_at`.
+This is the review's start time — consumed by Phase 6 `metrics.time_elapsed_seconds`
+for cost-vs-size tracking. Pre-Stage-2.8 this timestamp also anchored
+the Phase 1.5 scrape window, which is why its capture was deliberately
+pre-mutation; Stage 2.8 moved PR comment filtering onto a code-locality
+axis (§13.13) so the timing invariant is gone and this field is now
+metrics-only.
 
 ### 0.6. Compute `reviewed_files_all`, `num_files`, and `lines_changed`
 
