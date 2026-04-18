@@ -58,6 +58,7 @@ bd6b610      Bootstrap repo with design doc (rev 8) and build journal
 | 2 | `/adams-review` end-to-end (Phases 0–6) | **done** | `plans/stage-2-review.md` | [Stage 2 section](#stage-2--adams-review) |
 | 2.5 | Hardening — reviews-root relocation + Phase-4 batch + renderer fix | **done** | `plans/stage-2.5-hardening.md` | [Stage 2.5 section](#stage-25--hardening) |
 | 2.6 | Base-branch freshness gate (§13.10) + origin cross-check (§13.11) + renderer surfacing | **done** | `plans/stage-2.6-freshness-origin.md` | [Stage 2.6 section](#stage-26--base-branch-freshness--origin-cross-check) |
+| 2.7 | Parallelize Phase 1 (internal lenses) + Phase 1.5 (ensemble) — wall-clock hardening | not started | `plans/stage-2.7-detection-parallel.md` | — |
 | 3 | `/adams-review-fix` (Phases 7–9 + terminal cleanup) | not started | `plans/stage-3-fix.md` | — |
 | 4 | Fragment shrink + helper externalization (context-budget hardening) | not started | `plans/stage-4-fragment-shrink.md` | — |
 
@@ -406,6 +407,59 @@ Closing both before Stage 3 adds Phase-7/8/9 surface on top keeps the data-quali
 - **Per-candidate blame in step 2a runs sequentially inside the lens-collection loop.** On a 50-candidate run that's ~2.5s of added Phase 1 time — acceptable per the plan's cost analysis. If a future lens burst returns 200+ candidates, consider batching or caching blame per file.
 - **Origin cross-check has no dedicated `trace.md` schema entry.** The helper's stderr flows into `trace.md` via `tee -a` in step 2a. The prior `trace.md` format convention is "one tag per line" which the `origin_crosscheck: id=... action=...` lines follow, but there's no explicit grammar. If Stage 3 grows a `trace.md` parser, codify.
 - **Schema change is additive-optional; no versioning event.** `base_context` joined the v1 schema without a schema_version bump. Future builds that emit `base_context` on every run are still schema-v1 — pre-§13.10 readers that filter by `schema_version` will accept them, at the cost of ignoring the new field. If readers develop field-set expectations, versioning becomes a real concern.
+
+---
+
+### Stage 2.7 — Detection parallelization (Phase 1 + Phase 1.5)
+
+**Rationale.** The ensemble run on beta-briefing / channel-slug-etc surfaced that Phase 1 (6 internal lenses) runs to completion *before* Phase 1.5 (CodeRabbit + Codex + PR scrape) even starts. There's no data dependency between them — Phase 2 (dedup) is the first cross-phase consumer, so both could fan out concurrently. Current sequential ordering costs ~30-50% of detection wall-clock on ensemble runs (observed ~5m 5s in Phase 1 alone; ensemble CLIs would have added another ~10-15m serially on top).
+
+**Why the current design serializes** (and what's actually needed to unblock parallelism):
+
+1. **Finding ID assignment races.** Phase 1 step 1.4 assigns `F001...F0NN` as each lens returns; Phase 1.5 step 1.5.6 continues from `F(NN+1)`. Concurrent claims would collide. *Fix:* collect-then-assign refactor — both phases accumulate candidate JSON into per-phase arrays (no IDs), and one final step assigns IDs across the pooled set before the `--add-finding` loop.
+2. **Ensemble readiness check (1.5.1) is user-blocking.** Today it runs at the top of Phase 1.5, potentially AFTER Phase 1 has already burned tokens. To parallelize, the readiness check (AskUserQuestion on missing CLIs) must hoist to run BEFORE either phase dispatches — either at Phase 0 close-out or as a new pre-Phase-1 gate.
+3. **Progress UI assumes sequential phases.** The phase-tracker surface currently shows one `in_progress` phase at a time. Minor cosmetic update to allow two concurrent.
+
+No hidden data dependency beyond these three. Phase 1.5's normalizer doesn't reference Phase 1 findings.
+
+**Scope (target):**
+
+- **2.7.A** — DESIGN §4 narrative + new §13.12 "Detection parallelization" sub-section normalizing the pattern: "Phase 1 and Phase 1.5 fan out concurrently from a single orchestrator turn when `--ensemble` is set; finding IDs are assigned at the join point." Update §4 Phase 1 / Phase 1.5 headings to reflect joint dispatch.
+- **2.7.B** — Refactor fragments:
+  - `02-ensemble-adapter.md` step 1.5.1 (readiness + AskUserQuestion on missing CLIs) hoists to a new **pre-detection gate** in `01-detection.md` (runs between 1.1 "Decide which lenses" and 1.3 "Dispatch").
+  - `01-detection.md` step 1.3 gains the ensemble CLI launches (background Bash) alongside the 6 lens Agent dispatches, all in one orchestrator turn.
+  - `01-detection.md` step 1.4 changes from "add-finding per lens as it returns" to "collect candidates with no IDs". Ensemble normalizer (old 1.5.5) runs when its inputs resolve, also collecting into the candidate pool.
+  - New **step 1.9 "Join + assign IDs + add-finding"** at the end of detection: pooled candidates get monotonic `F001...F0NN` across the combined set, then one `--add-finding` sweep.
+- **2.7.C** — Smoke tests for the ID-assignment invariant. No real CLIs required — synthesize two candidate batches (one simulating "lens output", one simulating "ensemble normalizer output"), feed through the assignment step, assert IDs are monotonic + non-colliding + sorted by source.
+- **2.7.D** — BUILD.md close-out + `phases.jsonl` update so the two phases log joint `elapsed_sec` rather than two separate rows that look sequential.
+
+**Explicitly out of scope:**
+
+- Parallelizing Phase 2 / 3 / 4 against each other. They have real data dependencies (Phase 3 needs Phase 2 dedup results; Phase 4 needs Phase 3 scores). No wall-clock win without deeper refactors.
+- Token-cost changes. Each agent still dispatches once; the saving is wall-clock, not tokens.
+- Timeout handling changes. The existing 10-min CLI timeout per `02-ensemble-adapter.md` step 1.5.4 already tolerates slow reviewers independently; parallelism just means the timeout clock starts earlier.
+- Phase-tracker UI beyond the minimum needed to show two concurrent phases.
+
+**Done when:**
+
+1. On `--ensemble` runs, Phase 1 lens dispatches and Phase 1.5 CLI launches happen in the **same orchestrator turn** (verifiable by inspecting session transcripts — single Agent + Bash turn with multiple tool-use blocks).
+2. Finding IDs remain monotonic and non-colliding across the pooled detection set. `test/smoke.sh` gains an assertion that exercises the pool+assign path on synthetic candidates.
+3. `phases.jsonl` records Phase 1 and Phase 1.5 with overlapping time windows (a pr-mode ensemble run produces `phase_1.elapsed_sec ≈ phase_1_5.elapsed_sec ≈ max(internal, external)` rather than `phase_1 + phase_1_5`).
+4. Non-ensemble runs (`--ensemble` not set) behave unchanged — Phase 1 dispatches alone, Phase 1.5 is skipped at the readiness gate.
+5. Readiness gate surfaces the AskUserQuestion BEFORE any lens agent dispatches, so a user who picks "stop so I can set them up first" isn't billed for the 6 internal lens tokens.
+6. DESIGN §4 narrative + new §13.12 land with the refactor.
+7. BUILD.md stage index + Stage 2.7 section filled in with before/after wall-clock evidence from a real ensemble run.
+
+**Commit cadence (estimated):**
+
+1. 2.7.A DESIGN §13.12 + §4 narrative — 1 commit.
+2. 2.7.B fragment refactor (01-detection.md + 02-ensemble-adapter.md + smoke ID-assignment assertion) — 1-2 commits.
+3. 2.7.C additional smoke coverage — folded into 2.7.B or 1 commit.
+4. 2.7.D close-out — 1 commit.
+
+~3-5 commits total. Plan-approval round-trip recommended (behavior change touching orchestration pattern; affects every ensemble run).
+
+**Status:** not started. Will plan next — highest-impact outstanding work per minute-saved.
 
 ---
 
