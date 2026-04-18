@@ -854,6 +854,132 @@ else
     fail "FR-7: expected non-zero fetch rc against bogus remote, got 0"
 fi
 
+# ------------------------------------------------------------------ Stage 2.6.B
+# Origin cross-check (§13.11). Deterministic blame-based classifier —
+# origin-crosscheck.sh takes a candidate JSON array and corrects
+# {origin, origin_confidence} based on whether every implicated commit
+# is reachable from $comparison_ref.
+
+OC_DIR="$WORK/origin-crosscheck"
+mkdir -p "$OC_DIR/repo"
+(
+    cd "$OC_DIR/repo"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git config user.email "smoke@example.com"
+    git config user.name "smoke"
+    # Rename default branch to main if init didn't honor --initial-branch.
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    cat > file_a.py <<PY
+def a():
+    return 1
+def b():
+    return 2
+PY
+    git add file_a.py
+    git commit --quiet -m "initial main"
+    git checkout --quiet -b feat
+    # Add a new file (trivially PR-introduced).
+    cat > file_b.py <<PY
+def new_feature():
+    return 'hi'
+PY
+    # Modify one line of file_a.py (line 4: "return 2" → "return 3").
+    sed -i.bak 's/return 2/return 3/' file_a.py
+    rm -f file_a.py.bak
+    git add file_a.py file_b.py
+    git commit --quiet -m "feature"
+)
+
+# Assertion OC-1: pre-existing range (lines 1-2 of file_a.py — untouched).
+# Lens default (introduced_by_pr/high) should be OVERRIDDEN to pre_existing/high.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C1","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "pre_existing" && "$conf" == "high" ]]; then
+    pass "OC-1 (§13.11): fully-ancestor line range overrides lens to pre_existing/high"
+else
+    fail "OC-1: expected origin=pre_existing,conf=high; got origin=$origin conf=$conf"
+fi
+
+# Assertion OC-2: PR-modified range (line 4 of file_a.py — the sed change).
+# Lens value (introduced_by_pr/high) should be RESPECTED.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C2","file":"file_a.py","line_range":[4,4],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "introduced_by_pr" && "$conf" == "high" ]]; then
+    pass "OC-2 (§13.11): PR-modified line respects lens (introduced_by_pr/high)"
+else
+    fail "OC-2: expected origin=introduced_by_pr,conf=high; got origin=$origin conf=$conf"
+fi
+
+# Assertion OC-3: new file (file_b.py). Whole file is PR-introduced.
+# Lens value should be RESPECTED with reason=new-file.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C3","file":"file_b.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2> "$OC_DIR/c3.err")
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "introduced_by_pr" && "$conf" == "high" ]] \
+    && grep -q "action=respected" "$OC_DIR/c3.err" \
+    && grep -q "reason=new-file" "$OC_DIR/c3.err"; then
+    pass "OC-3 (§13.11): new-file candidate respects lens with reason=new-file"
+else
+    fail "OC-3: expected origin=introduced_by_pr,conf=high + new-file reason; got origin=$origin conf=$conf; stderr=$(cat "$OC_DIR/c3.err")"
+fi
+
+# Assertion OC-4: mixed range (file_a.py lines 1-4 — spans pre-existing AND
+# the sed'd line). Conservative policy: RESPECT lens (don't auto-override).
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C4","file":"file_a.py","line_range":[1,4],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "introduced_by_pr" && "$conf" == "high" ]]; then
+    pass "OC-4 (§13.11): mixed PR+pre-existing range respects lens (conservative policy)"
+else
+    fail "OC-4: expected origin=introduced_by_pr,conf=high (mixed range); got origin=$origin conf=$conf"
+fi
+
+# Assertion OC-5: lens says pre_existing/high but blame disagrees.
+# DOWNGRADE confidence to medium so §13.1 override does not fire.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C5","file":"file_a.py","line_range":[4,4],"origin":"pre_existing","origin_confidence":"high"}]' 2> "$OC_DIR/c5.err")
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "pre_existing" && "$conf" == "medium" ]] \
+    && grep -q "action=downgraded" "$OC_DIR/c5.err"; then
+    pass "OC-5 (§13.11): lens=pre_existing/high + blame-disagrees → confidence downgraded to medium"
+else
+    fail "OC-5: expected origin=pre_existing,conf=medium + action=downgraded; got origin=$origin conf=$conf stderr=$(cat "$OC_DIR/c5.err")"
+fi
+
+# Assertion OC-6: unknown --comparison-ref surfaces error-as-prompt with
+# suggestions (git rev-parse --symbolic --branches). Exits EXIT_VALIDATION=1.
+stderr=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref nonexistent-ref \
+    --candidates '[{"id":"C6","file":"file_a.py","line_range":[1,1],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>&1 >/dev/null); code=$?
+if [[ "$code" == "1" ]] \
+    && echo "$stderr" | grep -q "did not resolve" \
+    && echo "$stderr" | grep -q "Did you mean"; then
+    pass "OC-6 (§13.11): unknown --comparison-ref rejected with error-as-prompt + suggestions (exit 1)"
+else
+    fail "OC-6: expected exit 1 + error-as-prompt; got code=$code stderr=$stderr"
+fi
+
+# Assertion OC-7: malformed JSON rejected. Exits EXIT_VALIDATION=1.
+stderr=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main --candidates 'not-json' 2>&1 >/dev/null); code=$?
+if [[ "$code" == "1" ]] && echo "$stderr" | grep -q "JSON array"; then
+    pass "OC-7 (§13.11): malformed --candidates JSON rejected with exit 1"
+else
+    fail "OC-7: expected exit 1; got code=$code stderr=$stderr"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

@@ -221,6 +221,33 @@ For each sub-agent result, in the order it returns:
    the JSON array described in the schema." If still unparseable, log to
    `trace.md` and drop that lens's output per §24.1.
 
+2a. **Origin cross-check (§13.11).** Before building the full finding
+   shape, hand the lens's candidate array to `origin-crosscheck.sh` so
+   any candidate whose blame range is entirely ancestor of
+   `$comparison_ref` gets `origin=pre_existing, origin_confidence=high`
+   — which then triggers the §13.1 pre-existing override at Phase 3.
+   `introduced_by_pr` candidates that blame confirms as PR-modified
+   are respected; lens-supplied `pre_existing` whose blame disagrees
+   gets downgraded to medium confidence so the override doesn't fire.
+
+   ```bash
+   corrected_candidates=$(
+     ~/.claude/commands/_shared/tools/origin-crosscheck.sh \
+       --comparison-ref "$comparison_ref" \
+       --candidates "$lens_candidates_json" \
+       2> >(tee -a "$trace_log_path" >&2)
+   )
+   ```
+
+   Stderr (one `origin_crosscheck: id=... action=...` line per
+   candidate) flows directly into `trace.md` via the process
+   substitution. On non-zero exit: the helper does NOT abort per-
+   candidate blame failures (those surface as `action=skipped`), so a
+   non-zero exit means something structural (unknown ref, bad JSON).
+   Log the stderr to `trace.md` and fall through using
+   `$lens_candidates_json` unchanged — respecting the lens across the
+   board is the safe default when cross-check can't run.
+
 3. **Build a complete finding object and append it.** `artifact-patch.py
    --add-finding` does NOT default fields — it validates the payload
    against the full schema and rejects if anything required is missing.
@@ -229,6 +256,11 @@ For each sub-agent result, in the order it returns:
    `origin`, `origin_confidence`, `source_family` — singular). You must
    transform it into the full schema shape before passing to
    `--add-finding`.
+
+   Iterate over `$corrected_candidates` from step 2a (it has the same
+   shape as the lens's partial candidate array, with `origin` and
+   `origin_confidence` possibly corrected per §13.11). For each
+   element, bind it to `$candidate_from_lens` in the jq call below.
 
    Build the complete finding object per candidate. Monotonically assign
    finding ids (`F001`, `F002`, ... across all lenses — keep a counter in

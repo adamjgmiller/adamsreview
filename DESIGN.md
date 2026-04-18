@@ -142,6 +142,8 @@ Historical git context is NOT a lens — it's a *supporting resource* consulted 
 
 **Per-candidate output includes** a normalized `evidence_snippet`, a proposed `impact_type`, a proposed `origin` (introduced_by_pr | pre_existing | unknown) with `origin_confidence` (high | medium | low), and a `source_family`.
 
+**Origin cross-check (§13.11) runs between lens aggregation and `--add-finding`.** `origin-crosscheck.sh` (§21.9) takes the aggregated candidate list plus `$comparison_ref` and returns a corrected list: every candidate whose line range blame-traces entirely to commits reachable from `$comparison_ref` is forced to `origin=pre_existing, origin_confidence=high`; every lens-supplied `origin=pre_existing` whose blame includes a PR commit is downgraded to `origin_confidence=medium`; new files and mixed ranges keep the lens verdict. Phases 2–3 see only post-correction origin values, which is what the §13.1 pre-existing override keys on.
+
 **Source families** (for auto-graduation in Phase 3):
 - `diff-family`: L1 + any shallow external scan
 - `structural-family`: L2
@@ -1349,6 +1351,31 @@ The review's entire input — diff surface, lens context, origin cross-check —
 
 **Why no `--no-fetch` flag.** The fetch cost is small on every repo we care about, the offline path already degrades gracefully to `no_fetch` without prompting, and exposing an opt-out for a data-quality invariant would let users silently reintroduce the original bug class. If the soft timeout becomes a recurring problem on pathological repos, revisit.
 
+### 13.11 Origin cross-check (Phase 1 post-lens)
+
+Phase 1 lens prompts bias toward `origin: introduced_by_pr, origin_confidence: high`: "Default to introduced_by_pr with high confidence unless the implicated code is clearly unchanged by this diff." The default is safe when the diff is correct but silently drops the §13.1 pre-existing override in two failure modes:
+
+1. A user proceeds with a stale base (§13.10 option (c)): pre-existing commits are literally inside the diff, so the lens correctly sees them as modified and defaults to introduced.
+2. A candidate's line range straddles a modified hunk boundary: the lens flags a section of pre-existing code because it's *near* changed code, and the default kicks in.
+
+A deterministic blame-based cross-check corrects both cases without an LLM call.
+
+**Algorithm (per candidate from Phase 1, before `--add-finding`).** Given `{file, line_range}`:
+
+1. If `file` did not exist at `comparison_ref` (added by the PR): keep the lens-supplied origin. The file is trivially PR-introduced.
+2. Else, run `git blame -L <start>,<end> --porcelain <file>` at HEAD. Collect the distinct commit SHAs touching those lines.
+   - **Every SHA is reachable from `comparison_ref`** (none in `comparison_ref..HEAD`): the whole range pre-dates the PR. Override to `origin = "pre_existing", origin_confidence = "high"`. Log `action=overridden` to `trace.md`.
+   - **At least one SHA is in `comparison_ref..HEAD`**: the range was modified by this PR. Respect the lens-supplied value. Log `action=respected`.
+   - Blame fails (deleted lines, binary file, etc.): respect the lens value, log `action=skipped reason=<...>`.
+3. Lens already returned `origin: "pre_existing", origin_confidence: "high"` and blame confirms: no change (fast path; logged as `action=respected`).
+4. Lens returned `origin: "pre_existing"` but blame disagrees (at least one SHA in `comparison_ref..HEAD`): keep `origin = "pre_existing"` but drop `origin_confidence` to `"medium"`. The §13.1 override does not fire at medium confidence, so the finding stays in its normal disposition lane instead of being shunted to `pre_existing_report`. Log `action=downgraded`.
+
+**Conservative policy (mixed ranges).** A finding whose range spans PR-modified *and* pre-existing lines is typically about the PR's change creating a problem near pre-existing code; classifying it as pre-existing would hide it from the deep-lane tables. Only the fully-pre-existing case is unambiguous enough to auto-override.
+
+**Placement.** Runs as a Phase-1 step between lens aggregation and `--add-finding`. Phase 2 (dedup) and Phase 3 (scoring) see only post-correction origin values, which is what the §13.1 override keys on. Cost per candidate is one blame + a small number of `git merge-base --is-ancestor` tests — roughly 50ms on typical repos. At 50 candidates that's ~2.5s, a rounding error against Phase 1's 5–10min LLM cost. No tokens.
+
+**Implementation.** `origin-crosscheck.sh` (§21.9) takes `--comparison-ref <ref>` and `--candidates <path|@->` (JSON array), emits the same array with origin/origin_confidence corrected to stdout, and writes one `origin_crosscheck: id=<...> action=<respected|overridden|downgraded|skipped>` line to stderr per candidate for `trace.md`.
+
 ---
 
 ## 14. Rollout metrics
@@ -1822,6 +1849,20 @@ The orchestrator passes `artifact.reviewed_files_all` as the `--reviewed-files` 
    - If `allow` is a non-null array: drop unless `user.login` appears in `allow`
 5. Emit JSON array to stdout: `[{id, author_login, author_type, created_at, body, kind, path?, line?, commit_id?}]`. The `kind` field tags which endpoint the entry came from (issue_comment / review / review_comment) so downstream consumers can handle inline-review comments specifically.
 **Errors:** `gh` rate-limit (HTTP 429, 403 with `X-RateLimit-Remaining: 0`) → non-zero with message naming reset time; orchestrator handles per §24 (log and skip scrape, continue pipeline).
+
+### 21.9 `origin-crosscheck.sh`
+
+**Interface:** `origin-crosscheck.sh --comparison-ref <ref> --candidates <path|@->`
+**Input:** JSON array of candidates with at least `{id, file, line_range, origin, origin_confidence}` fields.
+**Output (stdout):** the same JSON array with `origin` / `origin_confidence` corrected per §13.11. Unspecified fields pass through untouched.
+**Output (stderr):** one `origin_crosscheck: id=<id> action=<respected|overridden|downgraded|skipped>[ reason=<...>]` line per candidate, intended for trace.md flushing by the orchestrator.
+**Algorithm (per candidate):**
+1. `git cat-file -e "$comparison_ref:<file>"` — if non-zero, file is new to the PR; respect the lens (`action=respected reason=new-file`).
+2. Else `git blame -L <start>,<end> --porcelain HEAD -- <file>`, parse distinct commit SHAs from the porcelain output. On blame failure, respect the lens (`action=skipped reason=<rc>`).
+3. For each SHA, `git merge-base --is-ancestor <sha> <comparison_ref>` decides "pre-existing" (ancestor) vs "PR-introduced" (not ancestor).
+4. Apply the §13.11 decision table: all-ancestor → override to `pre_existing/high`; any-non-ancestor with lens=`pre_existing` → downgrade confidence to `medium`; otherwise → respect.
+**Errors:** missing `git` (EXIT_MISSING_DEP), unknown `--comparison-ref` (EXIT_VALIDATION with suggestions via `git rev-parse --symbolic --branches`), malformed JSON (EXIT_VALIDATION with jq error). Per-candidate blame/blame-parse failures do NOT abort; they emit `action=skipped` and flow through as respected.
+**Cost:** 1 blame + N ancestry checks per candidate; ~50ms on typical repos. No LLM tokens.
 
 ---
 
