@@ -284,6 +284,37 @@
             { "type": "string", "pattern": "^F[0-9]+$" },
             { "type": "null" }
           ]
+        },
+        "human_confirmation": {
+          "description": "Set by /adams-review-promote. Present-and-non-null means a human has promoted this finding to auto-fixable; Phase 8 eligibility (§5.2.1) bypasses the impact_type lane filter and score threshold. Optional/nullable — pre-promote findings omit the field entirely.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reviewer", "reason", "ts", "promoted_from"],
+              "properties": {
+                "reviewer": { "type": "string", "minLength": 1 },
+                "reason":   { "type": "string", "minLength": 1 },
+                "ts":       { "type": "string", "format": "date-time" },
+                "promoted_from": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["disposition", "actionability", "score_phase4"],
+                  "properties": {
+                    "disposition":   { "$ref": "#/$defs/disposition_enum" },
+                    "actionability": { "$ref": "#/$defs/actionability_enum" },
+                    "score_phase4": {
+                      "anyOf": [
+                        { "type": "integer", "minimum": 0, "maximum": 100 },
+                        { "type": "null" }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     },
