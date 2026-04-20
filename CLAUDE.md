@@ -12,13 +12,14 @@ grep -n '2026-04-18'  docs/BUILD.md       # everything that happened that day
 
 ## What this repo is
 
-Build repo for three personal Claude Code slash commands:
+Build repo for four personal Claude Code slash commands:
 
 - **`/adams-review`** — multi-lens code review of a branch or PR (Phases 0–6).
+- **`/adams-review-walkthrough`** — interactive driver that walks the reviewer through every finding `/adams-review-fix` would skip at a given threshold, with a Sonnet briefing (summary + options + recommendation) per finding, then batches a single re-render + re-publish and posts a decisions-log PR comment (see DESIGN §28). Closes the light-lane `confirmed_auto` gap where the default Phase 8 lane filter skips mechanically-fixable ux/policy findings.
 - **`/adams-review-fix`** — automated fix loop for auto-fixable findings (Phases 7–9).
-- **`/adams-review-promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold (see DESIGN §27). Metadata-only; run `/adams-review-fix` afterwards to apply.
+- **`/adams-review-promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold (see DESIGN §27). Metadata-only; run `/adams-review-fix` afterwards to apply. Used internally by `/adams-review-walkthrough` via the shared `commands/_shared/promote-core.md` fragment and its `--defer-publish` flag.
 
-All three are **built and in production use** as of 2026-04-18 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed). The only unexecuted scope is Stage 4 (fragment shrink), scoped in `plans/stage-4-fragment-shrink.md`.
+The first three, plus the shared `promote-core.md` fragment, are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough built on branch `walkthrough-mode`, see `plans/walkthrough-mode.md`). The only unexecuted original scope is Stage 4 (fragment shrink), scoped in `plans/stage-4-fragment-shrink.md`.
 
 ## Layout
 

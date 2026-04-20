@@ -2428,7 +2428,7 @@ eligibility set on the next run.
 ### 27.1 Invocation
 
 ```
-/adams-review-promote <finding_id> [--reason "..."] [--fix-hint "..."] [--force]
+/adams-review-promote <finding_id> [--reason "..."] [--fix-hint "..."] [--force] [--defer-publish]
 ```
 
 - `<finding_id>` — positional, required. Matches `^F[0-9]+$`.
@@ -2452,6 +2452,13 @@ eligibility set on the next run.
   finding (Phase 4 found positive evidence the issue isn't real;
   force makes the human override the validator's counter-evidence
   rather than filling a null).
+- `--defer-publish` — skip steps 7 (re-render), 8 (re-publish), and
+  10 (user-visible summary). The artifact patch and trace entry
+  still land. Intended for scripted multi-promote workflows where
+  render + publish should batch once at the end — primary consumer
+  is `/adams-review-walkthrough` (§28). When set, the caller is
+  responsible for running `artifact-render.py` and
+  `artifact-publish.sh` afterward.
 
 ### 27.2 Preconditions
 
@@ -2522,8 +2529,11 @@ gets a final-status note telling them how to re-publish manually
 
 - **Does not run `/adams-review-fix`.** Promote is metadata-only; the
   user runs fix explicitly when ready.
-- **No batch mode.** One finding per invocation. Shell-loop for
-  multiple.
+- **No batch mode in the command itself.** One finding per invocation.
+  For guided multi-finding promote flows, use
+  `/adams-review-walkthrough` (§28); for scripted loops, shell-loop
+  `/adams-review-promote --defer-publish` calls and run
+  `artifact-render.py` + `artifact-publish.sh` once at the end.
 - **No demotion / undo command.** If the user changes their mind
   before the next fix run, they patch manually with
   `artifact-patch.py --set-json human_confirmation=null --set
@@ -2581,3 +2591,191 @@ traces:
 
 Every signal needed to reconstruct the decision is local to the review
 directory — no cross-referencing Git history or external systems.
+
+## 28. `/adams-review-walkthrough` — guided non-eligible review
+
+Interactive driver for the findings `/adams-review-fix` would skip
+at a given threshold. Loads the latest review artifact for the
+current branch and walks the reviewer through each non-eligible
+finding one at a time (deep-lane manual/report/below-gate, and
+light-lane everything including `confirmed_auto` — which fails
+the §13.2 impact_type gate by default). For each finding, a Sonnet
+briefing agent produces a `{summary, options[], recommendation}`
+structured briefing; the reviewer picks an option; the command
+dispatches `/adams-review-promote`'s patch logic (via the shared
+`commands/_shared/promote-core.md` fragment, with `--defer-publish`
+semantics) or records a skip. At the end, the artifact is
+re-rendered and re-published once, and a separate "Walkthrough
+decisions" comment is POSTed to the PR for audit.
+
+Closes the light-lane `confirmed_auto` gap: the validator may mark
+a ux/policy finding mechanically-fixable, but the default Phase 8
+lane filter (§13.1, §13.2) skips it. Without walkthrough, each such
+finding would need a manual `/adams-review-promote <id>` invocation
+with the reviewer synthesizing `reason` and `fix_hint` from scratch.
+The walkthrough automates the synthesis and batches the side
+effects.
+
+### 28.1 Invocation
+
+```
+/adams-review-walkthrough [threshold]
+```
+
+- `[threshold]` — optional positional non-negative integer. Default
+  60 (§13.2). Used only to decide which `confirmed_auto` /
+  `partial` / `regression` findings would already be fix-eligible
+  and are therefore excluded from the walkthrough scope.
+
+### 28.2 Preconditions
+
+- `latest.txt` for the current branch must exist and point at a
+  schema-valid artifact. Otherwise error-as-prompt "run /adams-review first."
+- Dirty-tree state is IGNORED — walkthrough is metadata-only (no
+  working-tree edits). Matches `/adams-review-promote`'s
+  precondition set (§27.2).
+
+### 28.3 Scope filter
+
+The walkthrough enumerates findings where:
+
+```jq
+.current_state == "open"
+AND .disposition NOT IN {resolved, disproven, pending_validation}
+AND .human_confirmation == null
+AND NOT (Phase 8 eligibility passes at $threshold)
+```
+
+This is the **inverse** of `09-fix-execution.md` step 8.1 — the two
+jq expressions must stay in sync. Cross-reference comments in both
+files flag the coupling.
+
+Excluded by design:
+- `resolved` — fix already landed
+- `disproven` — validator found positive evidence this isn't real;
+  user must still override via `/adams-review-promote <id> --force`
+- `pending_validation` — shouldn't exist post-Phase 6; defensive
+- `human_confirmation != null` — already promoted, mid-session resume
+  skips these naturally
+
+### 28.4 Briefing sub-agent
+
+One Sonnet sub-agent per finding, dispatched with a shared prompt
+(see `commands/adams-review-walkthrough.md` step 5.2 for the full
+text). Inputs: finding JSON, file snippet (±30 lines via Read tool),
+CLAUDE.md rules that cite the same file or pattern, other findings
+on the same file. Budget ~3-5k tokens per invocation.
+
+Returns strict JSON:
+
+```json
+{
+  "summary": "2-4 sentences on what the finding is and what the validator concluded",
+  "options": [
+    {"label": "A", "title": "...", "detail": "...", "fix_hint_if_picked": string | null},
+    ...
+  ],
+  "recommendation": {"label": "A" | "B" | ..., "rationale": "..."}
+}
+```
+
+One retry on parse failure; degraded UX on second failure (raw
+finding + skip/promote-without-hint options).
+
+### 28.5 Per-finding interaction
+
+The orchestrator presents the briefing as a markdown block (with
+the recommended option visually labeled), then dispatches
+`AskUserQuestion` with:
+
+- One option per `briefing.options[]` entry
+- `Skip this finding`
+- `Stop the walkthrough (finalize with decisions made so far)`
+
+On a promote choice: set ambient `fix_hint`, `reason`, `force=false`,
+`defer_publish=true` / `DEFER_PUBLISH=1`, then include
+`commands/_shared/promote-core.md` (the same fragment
+`/adams-review-promote` uses for its steps 3-6, 9). The patch + trace
+entry land; render + publish stay skipped.
+
+On skip / stop: no mutation. Decision recorded in the in-memory
+`decisions[]` array for the final audit comment.
+
+### 28.6 Mutations
+
+Delegated entirely to `/adams-review-promote`'s patch logic (§27.3)
+via the shared fragment. Walkthrough itself performs no direct
+artifact writes beyond what the fragment emits.
+
+### 28.7 Side effects
+
+1. **Batched re-render.** `artifact-render.py` runs once at the end,
+   after all promotes have landed. Skipped if zero promotions were
+   made.
+2. **Batched re-publish.** `artifact-publish.sh` edits the persisted
+   `comment_id` in place once. Skipped if zero promotions.
+3. **Decisions-log PR comment.** A NEW comment (not an edit) with
+   the `<!-- adams-review-walkthrough-v1 -->` marker. Contains
+   Promoted / Skipped / Stopped sections with full per-finding
+   provenance. The new comment's id is written to `trace.md` but
+   NOT to `artifact.comment_id` (which stays pointing at the main
+   review comment so `/adams-review-fix` edits the right thing).
+4. **Trace.** `## walkthrough (<ts>)` block appended with per-finding
+   decision lines + the decisions-comment id.
+
+All four side effects are non-fatal — a failure in any one logs to
+trace and the run continues. The artifact patches land atomically
+per promote; no transactional coupling between iterations.
+
+### 28.8 What this command does NOT do
+
+- **No fix-run.** Metadata-only. User runs `/adams-review-fix`
+  explicitly when ready (same contract as `/adams-review-promote`).
+- **No `disposition=disproven` handling.** Scope filter excludes
+  them; promote via `--force` one-off for disproven findings.
+- **No resumption state file.** Partial walks leave the promoted
+  findings committed to the artifact; re-invocation picks up the
+  still-in-scope remainder naturally.
+- **No bulk skip / lane filters.** One-at-a-time decisions in v1.
+  Future: `--lanes light` / `--lanes deep`.
+- **No auto-chaining.** No `--and-fix` flag. Walkthrough ends at
+  the decisions-log comment.
+
+### 28.9 Interaction with `/adams-review-fix`
+
+A promoted finding goes through Phase 8 → Phase 9 exactly like any
+other `confirmed_auto` finding with `human_confirmation` set: the
+fix-group agent attempts the fix (using the walkthrough-authored
+`fix_hint` as its primary steering instruction per §27.6), Phase 9a
+verifies, and the finding transitions to `resolved` / `partial` /
+`regression`. `human_confirmation` including `fix_hint` rides along
+untouched.
+
+If the reviewer runs `/adams-review-fix [threshold]` immediately
+after the walkthrough, the eligibility set is:
+- original deep-lane `confirmed_auto` findings above threshold
+  (unchanged)
+- PLUS every finding promoted during the walkthrough (via the
+  `human_confirmation != null` bypass)
+
+### 28.10 Audit trail
+
+A reader reconstructing "how did F016 get auto-fixed?" traces:
+
+1. `artifact.md` auto-fixable table shows the `(human-confirmed)` tag.
+2. Details block shows the Human-confirmed line (reviewer + ts +
+   reason), Promoted-from line, and Fix-direction line with the
+   walkthrough-authored `fix_hint`.
+3. The main review comment on the PR is the current state.
+4. The **Walkthrough decisions** comment on the PR shows the full
+   context: which option the reviewer picked, the briefing's
+   rationale for recommending it, all other decisions made in that
+   session.
+5. `trace.md` has a `## walkthrough` block linking the
+   decisions-comment id, plus the `## promote` block the shared
+   fragment appended per-finding.
+6. `artifact.json` stores the full `human_confirmation` object
+   including `fix_hint`.
+
+Every signal is local to the review directory + the PR thread —
+no cross-referencing Git history.

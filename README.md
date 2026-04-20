@@ -1,12 +1,27 @@
 # adams-review
 
-Build repo for three personal Claude Code slash commands:
+Build repo for four personal Claude Code slash commands:
 
 - **`/adams-review`** — multi-lens code review of a branch or PR (phases 0–6).
+- **`/adams-review-walkthrough`** — interactive driver for findings `/adams-review-fix` would skip; per-finding briefing + options + recommendation, batched re-render/re-publish, decisions-log PR comment (see DESIGN §28).
 - **`/adams-review-fix`** — automated fix loop for auto-fixable findings surfaced by `/adams-review` (phases 7–9).
 - **`/adams-review-promote`** — human override that promotes a single finding to auto-fixable (bypasses the Phase 8 impact_type lane filter and score threshold; see DESIGN §27).
 
-All three live under `commands/` (with phase fragments under `commands/_shared/`) and are consumed from `~/.claude/commands/` via symlink (see *Layout* below).
+All four live under `commands/` (with phase fragments and `_shared/promote-core.md` under `commands/_shared/`) and are consumed from `~/.claude/commands/` via symlink (see *Layout* below).
+
+## Recommended flow
+
+Not required — each command is independent — but the four work best in this order on a non-trivial PR:
+
+1. **Review.** `/adams-review` — or `/adams-review --ensemble` if you have the CodeRabbit + Codex CLIs installed and want a multi-source review at higher token cost.
+2. **Walkthrough.** `/adams-review-walkthrough` — step through every finding the fix command would skip at the default threshold (deep-manual, deep-report, deep-below-gate, and the entire light lane including light `confirmed_auto`). Each finding gets a briefing + options + recommendation; promote the ones you want auto-fixed with tailored fix-hints, skip the rest. Posts a decisions log to the PR for audit.
+3. **Fix.** `/adams-review-fix` — applies every auto-eligible finding (including whatever was promoted in step 2). Commits each fix group separately with full provenance.
+
+Step 2 is optional. You can go straight from review to fix if you only care about the auto-eligible findings the review already surfaced. The walkthrough exists for the case where the validator's default gates (ux/policy lanes, below-threshold scores) skipped findings you want auto-fixed.
+
+Steps 2 and 3 can land days or weeks after step 1 — the review artifact persists under `~/.adams-reviews/<slug>/<branch>/`.
+
+`/adams-review-promote <id>` remains useful for one-off manual promotions outside the walkthrough flow (e.g. promoting a `disproven` finding with `--force`, or scripted promote loops with `--defer-publish`).
 
 ## Documents
 
@@ -31,18 +46,26 @@ All three live under `commands/` (with phase fragments under `commands/_shared/`
 ### Setup
 
 ```bash
-# One-time symlink so Claude Code sees the shared dir at its canonical path.
-# The repo is the source of truth; ~/.claude/commands/_shared just points at it.
-ln -s ~/Projects/adams-review/commands/_shared ~/.claude/commands/_shared
+# One-time symlinks so Claude Code sees the shared dir + each top-level
+# command at its canonical path. The repo is the source of truth;
+# ~/.claude/commands/* just points at it.
+ln -s ~/Projects/adams-review/commands/_shared                         ~/.claude/commands/_shared
+ln -s ~/Projects/adams-review/commands/adams-review.md                 ~/.claude/commands/adams-review.md
+ln -s ~/Projects/adams-review/commands/adams-review-walkthrough.md     ~/.claude/commands/adams-review-walkthrough.md
+ln -s ~/Projects/adams-review/commands/adams-review-fix.md             ~/.claude/commands/adams-review-fix.md
+ln -s ~/Projects/adams-review/commands/adams-review-promote.md         ~/.claude/commands/adams-review-promote.md
 ```
+
+The `_shared/` directory symlink propagates every helper script and fragment (including `promote-core.md`) automatically — only new **top-level command files** need per-command symlinks.
 
 No separate Python dep install. First invocation of any `*.py` helper triggers `uv` to resolve `jsonschema` (or any other declared dep) and cache it. Subsequent runs are fast.
 
 Verify:
 
 ```bash
-readlink ~/.claude/commands/_shared   # should print the repo path
-uv --version                          # 0.7+
+readlink ~/.claude/commands/_shared                           # should print the repo path
+readlink ~/.claude/commands/adams-review-walkthrough.md       # should print the worktree/repo path
+uv --version                                                  # 0.7+
 ```
 
 ### Review state location
