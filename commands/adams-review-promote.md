@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-read.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-patch.py:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-validate.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-render.py:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-publish.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/repo-slug.sh:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(cat:*), Bash(printf:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(tr:*), Read, AskUserQuestion
-argument-hint: "<finding_id> [--reason \"...\"] [--fix-hint \"...\"] [--force]"
+argument-hint: "<finding_id> [--reason \"...\"] [--fix-hint \"...\"] [--force] [--defer-publish]"
 description: Promote a finding to auto-fixable via human override. Patches artifact, re-renders, re-publishes to PR.
 disable-model-invocation: false
 ---
@@ -31,6 +31,13 @@ eligibility bypass works.
   at `disposition=disproven` (validator found positive evidence it's
   wrong). Without `--force`, disproven findings reject promotion with
   a user-visible message pointing to the validator's conclusion.
+- `--defer-publish` (optional) — skip steps 7 (re-render), 8
+  (re-publish to PR), and 10 (user-visible summary). The artifact
+  patch and trace entry still land. Useful for scripted promote
+  loops where render+publish should run once at the end rather than
+  per-iteration; `/adams-review-walkthrough` (§28) uses this
+  internally. When set, the caller is responsible for running
+  `artifact-render.py` and `artifact-publish.sh` afterward.
 
 ## What it does
 
@@ -68,6 +75,7 @@ for `--reason` and `--fix-hint`):
   empty string (treated as "absent" throughout — the jq at step 5
   omits the key entirely when empty).
 - `--force` → `force=true` (else `false`).
+- `--defer-publish` → `defer_publish=true` (else `false`).
 - Any other token → stop and ask the user to clarify.
 
 If no `finding_id` was provided, error-as-prompt:
@@ -137,10 +145,16 @@ use in steps 7, 8, and 10 below.
 
 ### 7. Re-render `artifact.md`
 
+Skip this step entirely when `defer_publish == true`. The caller is
+expected to run `artifact-render.py` once after all deferred promotes
+have landed.
+
 ```bash
-~/.claude/commands/_shared/tools/artifact-render.py \
-    --input "$artifact_path" \
-    --output "$review_dir/artifact.md"
+if [[ "${defer_publish:-false}" != "true" ]]; then
+    ~/.claude/commands/_shared/tools/artifact-render.py \
+        --input "$artifact_path" \
+        --output "$review_dir/artifact.md"
+fi
 ```
 
 On non-zero: log stderr to `trace.md` with tag `promote_render_failed`,
@@ -148,6 +162,18 @@ continue to step 8 (the artifact patch stands; the user can manually
 re-render).
 
 ### 8. Re-publish to the PR (PR mode only)
+
+Skip this step entirely when `defer_publish == true`. The caller is
+expected to run `artifact-publish.sh` once after all deferred promotes
+have landed.
+
+```bash
+if [[ "${defer_publish:-false}" == "true" ]]; then
+    # Step 10 below will print a terse one-liner pointing at the
+    # helpers the caller must run.
+    :
+else
+```
 
 Read `mode`, `pr_number`, `comment_id` from the artifact:
 
@@ -180,9 +206,24 @@ On non-zero exit: log stderr to `trace.md` with tag
 `promote_publish_failed`. Surface to user at step 10 (artifact state
 persists; user can manually re-publish with the helper).
 
+```bash
+fi  # end of defer_publish guard opened at top of step 8
+```
+
 ### 10. User-visible summary
 
-Print a clear summary block to chat (plain text, not a tool call):
+When `defer_publish == true`, print only a terse one-liner so the
+caller's own summary (e.g. `/adams-review-walkthrough`'s decisions
+log) isn't drowned out:
+
+```
+Promoted $finding_id (deferred — artifact patched, render/publish skipped).
+```
+
+And skip the rest of this step.
+
+Otherwise, print a clear summary block to chat (plain text, not a
+tool call):
 
 ```
 Promoted $finding_id:

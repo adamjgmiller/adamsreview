@@ -1952,6 +1952,28 @@ else
     fail "MP-10: 'Fix direction:' should NOT appear when fix_hint is absent"
 fi
 
+# ---------------------------------------------------------------- walkthrough
+#
+# WT-* cover the /adams-review-walkthrough command surface. These are mostly
+# structural (the command file is a prompt for Claude, not a shell script, so
+# we can't execute it) plus scope-filter jq coverage (WT-1..WT-4) which IS
+# pure data and fully testable.
+
+PROMOTE_MD="$REPO/commands/adams-review-promote.md"
+
+# WT-5: /adams-review-promote wires --defer-publish and includes promote-core.md.
+# Structural check guarding against accidental removal of either piece (plans/
+# walkthrough-mode.md §5, §6). If a future refactor merges the shared fragment
+# back inline or drops the --defer-publish flag, this assertion surfaces it
+# before the walkthrough command breaks.
+if grep -q -- '--defer-publish' "$PROMOTE_MD" \
+   && grep -q 'defer_publish.*true' "$PROMOTE_MD" \
+   && grep -q 'promote-core.md' "$PROMOTE_MD"; then
+    pass "WT-5 (§27, §28): promote command wires --defer-publish guards + includes promote-core fragment"
+else
+    fail "WT-5: --defer-publish or promote-core include missing from $PROMOTE_MD"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
