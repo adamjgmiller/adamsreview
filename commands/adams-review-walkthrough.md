@@ -31,18 +31,23 @@ for the design rationale.
 
 1. Parses the threshold.
 2. Locates the artifact for the current branch.
-3. Computes the walkthrough scope (see §3 below).
-4. Shows a pre-flight summary of the scope + asks for go/no-go.
-5. For each finding in scope:
+3. Computes three walkthrough scopes (qualifying / full / pre-existing).
+4. Shows a pre-flight summary + asks the reviewer which tier to walk
+   (default **Qualifying**; **Full skip set** is the opt-in for
+   auditing Phase-3-demoted findings).
+5. For each finding in the chosen tier:
    - Dispatches a Sonnet briefing sub-agent → `{summary, options[], recommendation}`.
-   - Presents the briefing and asks the reviewer which option to pick.
+   - Presents the briefing and asks the reviewer which option to pick
+     (or "Edit the fix hint" to override the recommended option's hint).
    - Dispatches a promote (patch + trace, no render/publish) or a skip.
 6. Re-renders `artifact.md` once.
 7. Re-publishes the main review comment once.
-8. Posts a new "Walkthrough decisions" comment to the PR with the
-   full log of what was promoted / skipped / why.
-9. Appends a `## walkthrough (<ts>)` block to `trace.md`.
-10. Prints a user-visible summary.
+8. For each `pre_existing_report` finding (PR mode only): offers to
+   draft + create a GitHub issue, one by one.
+9. Posts a new "Walkthrough decisions" comment to the PR with the
+   full log of what was promoted / skipped / issues filed / why.
+10. Appends a `## walkthrough (<ts>)` block to `trace.md`.
+11. Prints a user-visible summary.
 
 Does NOT run `/adams-review-fix`. Does NOT surface `disposition=disproven`
 findings (those require an explicit `/adams-review-promote <id> --force`).
@@ -98,14 +103,17 @@ On non-zero: surface the validator stderr and abort.
 
 ### 3. Compute walkthrough scope
 
-The scope is the set of findings `/adams-review-fix` would SKIP at
-`$threshold`, minus the ones already promoted or in a terminal state.
-This is the inverse of the Phase 8 eligibility selector at
-`09-fix-execution.md` step 8.1 — **keep the two jq expressions in
-sync**.
+The walkthrough surfaces findings `/adams-review-fix` would SKIP at
+`$threshold`. Compute three parallel id sets so the preflight at step
+4 can offer a tiered choice (default Qualifying) and step 6.5 can
+handle `pre_existing_report` findings on a separate track.
+
+**`scope_full_ids`** — the inverse of the Phase 8 eligibility selector
+at `09-fix-execution.md` step 8.1 (minus terminal + already-promoted).
+**Keep in sync with that fragment.**
 
 ```bash
-scope_ids=$(jq -r --argjson thr "$threshold" '
+scope_full_ids=$(jq -r --argjson thr "$threshold" '
     [.findings[]
      # Not terminal: skip resolved / disproven / pending_validation.
      | select(.current_state == "open")
@@ -130,16 +138,68 @@ scope_ids=$(jq -r --argjson thr "$threshold" '
      | .id
     ] | join(",")
 ' "$artifact_path")
-
-if [[ -z "$scope_ids" ]]; then
-    scope_count=0
-else
-    # scope_ids is comma-separated; count fields directly.
-    scope_count=$(awk -F, '{print NF; exit}' <<<"$scope_ids")
-fi
 ```
 
-If `scope_ids` is empty:
+**`scope_qualifying_ids`** — `scope_full_ids` minus the two
+dispositions that dilute the signal: `below_gate` (Phase 3 already
+judged these low-impact × low-confidence) and `pre_existing_report`
+(routed to the dedicated issue-filing phase at step 6.5). This is
+the new default tier.
+
+```bash
+scope_qualifying_ids=$(jq -r --argjson thr "$threshold" '
+    [.findings[]
+     | select(.current_state == "open")
+     | select(.disposition != "resolved")
+     | select(.disposition != "disproven")
+     | select(.disposition != "pending_validation")
+     | select(.disposition != "below_gate")
+     | select(.disposition != "pre_existing_report")
+     | select(.human_confirmation == null)
+     | select(
+         (
+           (.disposition == "confirmed_auto" or .disposition == "partial" or .disposition == "regression")
+           and (
+             (.impact_type == "correctness" or .impact_type == "security")
+             and (.score_phase4 != null and .score_phase4 >= $thr)
+           )
+         ) | not
+       )
+     | .id
+    ] | join(",")
+' "$artifact_path")
+```
+
+**`scope_preexisting_ids`** — open `pre_existing_report` findings,
+independent of the fix-skip logic. Feeds step 6.5 (issue filing).
+Already-promoted pre-existing findings are excluded for the same
+resume-cleanly reason as the other scopes.
+
+```bash
+scope_preexisting_ids=$(jq -r '
+    [.findings[]
+     | select(.current_state == "open")
+     | select(.disposition == "pre_existing_report")
+     | select(.human_confirmation == null)
+     | .id
+    ] | join(",")
+' "$artifact_path")
+```
+
+Counts:
+
+```bash
+count_ids() {
+    # $1: comma-separated id string
+    if [[ -z "$1" ]]; then echo 0; else awk -F, '{print NF; exit}' <<<"$1"; fi
+}
+
+scope_full_count=$(count_ids "$scope_full_ids")
+scope_qualifying_count=$(count_ids "$scope_qualifying_ids")
+scope_preexisting_count=$(count_ids "$scope_preexisting_ids")
+```
+
+If **all three** are empty, exit cleanly:
 
 ```
 No findings to walk through at threshold=$threshold.
@@ -149,18 +209,53 @@ $threshold to apply them) or the review has no actionable findings
 left. Nothing to do.
 ```
 
-Exit 0.
+Exit 0. If `scope_full_count == 0` but `scope_preexisting_count > 0`,
+fall through to step 4 anyway — the preflight will note that the walk
+has no scope but the issue-filing phase still has work to offer.
 
 ### 4. Pre-flight summary + go/no-go
 
-Render a compact preview table so the reviewer knows what they're
-signing up for. One row per id in `scope_ids`:
+Before the preview table, render this short preamble so the reviewer
+understands what "scope" means here. This is the preventive-docs fix
+for the historical "which gate?" confusion (see CLAUDE.md §Score
+gates → Gate terminology):
+
+```markdown
+**Understanding the scope.** Three different gates govern this pipeline:
+
+- **Phase 3 scoring gate (45)** — filters candidates into validation.
+  Failures get `disposition=below_gate` and no `score_phase4`.
+- **Phase 4 confirmation gate (45/60/75)** — maps `score_phase4` into
+  `disproven` / `uncertain` / `confirmed_*`.
+- **Phase 8 fix gate (default 60)** — what `/adams-review-fix` touches:
+  confirmed_auto + deep lane + score ≥ threshold.
+
+The walkthrough surfaces what Phase 8 would SKIP. `below_gate` is a
+**disposition name**, not a threshold — Phase 3 already demoted those
+as low-impact × low-confidence. Pre-existing findings (`pre_existing_report`)
+are handled on a separate track at the end of the run (file GitHub
+issues for base-branch bugs instead of trying to fix them here).
+```
+
+Render a compact preview table covering all of `scope_full_ids` (so
+the reviewer sees the full picture before picking a tier). Add a
+`tier` column that categorizes each row:
+
+- `qualifying` — would be included in the default tier
+- `below_gate` — Phase 3 demoted
+- `pre_existing` — routed to step 6.5 issue filing (not walked)
 
 ```bash
-preview=$(jq -r --arg ids "$scope_ids" --argjson thr "$threshold" '
+preview=$(jq -r --arg ids "$scope_full_ids" --arg preids "$scope_preexisting_ids" --argjson thr "$threshold" '
     ($ids | split(",")) as $want
+    | ($preids | split(",")) as $pre
     | [.findings[] | select(.id as $id | $want | index($id)) | {
         id,
+        tier: (
+          if (.disposition == "below_gate") then "below_gate"
+          elif (.disposition == "pre_existing_report") then "pre_existing"
+          else "qualifying" end
+        ),
         lane: .validation_lane,
         impact: .impact_type,
         disposition,
@@ -168,16 +263,62 @@ preview=$(jq -r --arg ids "$scope_ids" --argjson thr "$threshold" '
         file: .file,
         claim_first_line: (.claim | split("\n") | .[0])
       }]
-    | (["# ", "lane", "impact", "disposition", "score", "file", "claim"] | @tsv),
-      (.[] | [.id, .lane, .impact, .disposition, (.score|tostring), .file, .claim_first_line] | @tsv)
+    | (["# ", "tier", "lane", "impact", "disposition", "score", "file", "claim"] | @tsv),
+      (.[] | [.id, .tier, .lane, .impact, .disposition, (.score|tostring), .file, .claim_first_line] | @tsv)
 ' "$artifact_path")
 ```
 
-Present the preview as a markdown table in chat (one header row + one
-row per finding), then dispatch `AskUserQuestion` with two options:
+If `scope_preexisting_count > 0`, mention it explicitly under the
+table: "N pre-existing finding(s) are excluded from both walk tiers
+and will be offered as GitHub issues at the end of the run." This
+prevents the "where did F005 go?" variant of the same confusion.
 
-- "Proceed — walk through $scope_count finding(s)."
-- "Cancel — don't change anything."
+Then dispatch `AskUserQuestion` with three options. Default
+highlighted on Qualifying:
+
+- "⭐ Qualifying only — walk $scope_qualifying_count finding(s) (recommended)"
+- "Full skip set — walk $scope_full_count finding(s) (includes \`below_gate\`)"
+- "Cancel — don't change anything"
+
+Edge case: if `scope_qualifying_count == 0` and `scope_full_count > 0`,
+the only useful walk choice is "Full." Offer only "Full" and "Cancel"
+in that case — no recommendation star, since Qualifying is empty.
+If `scope_full_count == 0` AND `scope_preexisting_count > 0` (only
+pre-existing findings remain), skip the walk `AskUserQuestion`
+entirely and set `scope_tier="none"` directly. Print a one-line note
+like "No walk scope at threshold=$threshold; jumping to pre-existing
+issue filing." Then continue normally: the timestamp/reviewer
+capture below runs, step 5 loop iterates 0 findings (because
+`scope_ids=""`), §6 tallies to all zeroes, §6's existing
+`promote_count == 0` guard skips §6.1/§6.2, `scope_tier_title` is
+derived, and §6.5 takes over. The §7 guard
+("decisions empty AND issues_filed empty → skip POST") handles the
+case where the reviewer then skips issue filing too.
+
+Bind the `AskUserQuestion` result to `$scope_tier` (one of
+`qualifying` / `full` / `cancel`). For the walk-skip edge case
+(scope_full_count == 0, AskUserQuestion bypassed), set
+`scope_tier="none"` directly. Then map it onto the loop variables
+the rest of the command uses:
+
+```bash
+case "$scope_tier" in
+    qualifying)
+        scope_ids="$scope_qualifying_ids"
+        scope_count="$scope_qualifying_count" ;;
+    full)
+        scope_ids="$scope_full_ids"
+        scope_count="$scope_full_count" ;;
+    none)
+        # Walk skipped (only pre-existing remain). Bind empty so
+        # §6 arithmetic (unreviewed_count = scope_count - …) works.
+        scope_ids=""
+        scope_count=0 ;;
+    cancel)
+        # exit 0 with a one-line note; no mutation
+        ;;
+esac
+```
 
 If the reviewer picks Cancel, exit 0 with a one-line note. No mutation.
 
@@ -202,7 +343,7 @@ skipped, or interrupted — so step 7's decisions-log comment has the
 complete audit trail:
 
 ```
-decisions = []   # list of {finding_id, action, reason, fix_hint?, prior_disposition, prior_score}
+decisions = []   # list of {finding_id, action, option_label, option_title, edited_hint?, reason, fix_hint?, prior_disposition, prior_score, ts}
 ```
 
 Iterate `scope_ids` **in the order returned by the jq** (no re-sort —
@@ -253,6 +394,15 @@ tokens. Prompt (see DESIGN §28.4):
 >      emit only one or two weak-conviction options and let your
 >      recommendation say so in the rationale — the reviewer can still
 >      pick the walkthrough's Skip.
+>      **For `confirmed_manual` and `confirmed_report` findings:**
+>      propose a best-effort fix hint anyway. These are above the
+>      Phase 4 confirmation threshold (score ≥ 60) — the validator
+>      said the finding is real, just not mechanically trivial (manual)
+>      or not worth a fix (report-only). If a concrete fix path exists,
+>      emit it as your top option with a specific `fix_hint_if_picked`.
+>      If you genuinely can't see a clean fix (rare), emit one or two
+>      weak-conviction options and say so in your recommendation
+>      rationale — the reviewer can still pick Skip.
 >   3. A recommendation: which option + rationale + a specific
 >      `fix_hint` string suitable to pass to the Phase 8 fix-group
 >      agent. Include negative constraints when over-engineering is a
@@ -344,6 +494,13 @@ Dispatch `AskUserQuestion` with options built from the briefing:
 
 - One option per `briefing.options[]` entry, labeled with its letter
   and title ("**A.** <title>").
+- **"✎ Edit the fix hint (for the recommended option)"** — picks the
+  briefing's recommended option but overrides its
+  `fix_hint_if_picked` with reviewer-supplied text. On selection,
+  dispatch one follow-up `AskUserQuestion` (free-form) capturing the
+  override string. Use when the recommended option's direction is
+  right but the hint wording needs tightening or negative constraints
+  added.
 - One "Skip this finding" option.
 - One "Stop the walkthrough (finalize now with decisions made so
   far)" option.
@@ -354,7 +511,15 @@ one click.
 
 #### 5.5. Dispatch per choice
 
-**If the reviewer picked a promote option:**
+**If the reviewer picked a promote option (or Edit the fix hint):**
+
+For a regular promote option, `$fix_hint` comes from the option's
+`fix_hint_if_picked`. For "Edit the fix hint," `$fix_hint` is the
+reviewer's follow-up free-form string and `$option_label` /
+`$option_title` are the originally-recommended option's values
+(so the audit trail shows which direction the hint was edited for).
+Set `edited_hint=true` in that case; `edited_hint=false` (or absent)
+otherwise.
 
 Set ambient context for the shared promote-core fragment (steps 3,
 4, 4.5, 5, 6, 9 — the body of which is inlined once at the end of
@@ -362,18 +527,24 @@ this file for reference and for Claude Code's command-load
 preprocessor to resolve):
 
 ```bash
-fix_hint="$briefing_option.fix_hint_if_picked"          # non-null per §5.2
+fix_hint="$briefing_option.fix_hint_if_picked"          # or reviewer override when edited_hint
 reason="walkthrough: $finding_id — picked option $label ($title)"
+[[ "${edited_hint:-false}" == "true" ]] && reason="$reason · hint edited"
 force=false
 defer_publish=true
 ```
 
+(Note: `${edited_hint:+...}` would expand for the string `"false"`
+since `:+` tests emptiness, not boolean — we need an explicit
+string compare against `"true"`.)
+
 Then execute the shared fragment's steps 3, 4, 4.5 (the prompt is
 skipped because `$fix_hint` is always non-empty — the briefer at
 §5.2 is hard-constrained to emit a non-null `fix_hint_if_picked` on
-every option), 5, 6, and 9 for this finding id. The fragment reads
-`$finding_id`, `$reason`, `$fix_hint`, `$force`, `$artifact_path`,
-and `$trace_log_path` from this ambient context.
+every option, and the edit-hint path is a free-form override that's
+likewise always populated), 5, 6, and 9 for this finding id. The
+fragment reads `$finding_id`, `$reason`, `$fix_hint`, `$force`,
+`$artifact_path`, and `$trace_log_path` from this ambient context.
 
 **The fragment runs once per iteration** — read it as the per-finding
 playbook, not as a single-shot action. Each iteration patches one
@@ -389,8 +560,9 @@ for this iteration. Append to `decisions`:
   action: "promote",
   option_label: <briefing label>,
   option_title: <briefing title>,
+  edited_hint: <true if the reviewer picked Edit the fix hint, else false>,
   reason: $reason,
-  fix_hint: $fix_hint,          # may be empty
+  fix_hint: $fix_hint,          # non-empty (option default or reviewer override)
   prior_disposition: $curr_disp,
   prior_score: $curr_score,
   ts: $ts
@@ -462,11 +634,34 @@ separately so the decisions-log (§7.1) and user-visible summary
 (§9) can't misleadingly imply the reviewer walked all scope_count
 findings.
 
+Extract `mode` + `pr_number` from the artifact NOW (before the guard
+below) so they are available to §6.5 and §7 even when §6.1/§6.2 are
+skipped:
+
+```bash
+mode=$(jq -r '.mode' "$artifact_path")
+pr_number=$(jq -r '.pr_number // empty' "$artifact_path")
+```
+
+(`comment_id` stays in §6.2 — it's only used by the publish call.)
+
 Guard: if `promote_count == 0` (all skip/stop), there's nothing to
-re-render or re-publish. Skip steps 6.1 and 6.2; jump to step 7
-(decisions-log comment). The scope filter + preview table already
-showed the user what's in the backlog; a decisions-log with
-"skipped all 10" is still useful audit.
+re-render or re-publish. Skip steps 6.1 and 6.2; proceed to step 6.5
+(pre-existing issue filing) and then step 7 (decisions-log comment).
+Issue filing is independent of walk activity — a reviewer who skipped
+every walk finding may still want to file pre-existing issues. The
+scope filter + preview table already showed the user what's in the
+backlog; a decisions-log with "skipped all 10" is still useful audit.
+
+Also derive `scope_tier_title` here for §7.1:
+
+```bash
+case "$scope_tier" in
+    qualifying) scope_tier_title="Qualifying" ;;
+    full)       scope_tier_title="Full skip set" ;;
+    none)       scope_tier_title="Pre-existing only" ;;
+esac
+```
 
 #### 6.1. Re-render `artifact.md`
 
@@ -482,11 +677,10 @@ patches stand; the user can manually re-render.
 
 #### 6.2. Re-publish the main review comment (PR mode only)
 
-Read mode + pr_number + comment_id from the artifact:
+`mode` and `pr_number` were already extracted in §6 (before the guard).
+Extract `comment_id` here — it's only used by the publish call:
 
 ```bash
-mode=$(jq -r '.mode' "$artifact_path")
-pr_number=$(jq -r '.pr_number // empty' "$artifact_path")
 comment_id=$(jq -r '.comment_id // empty' "$artifact_path")
 ```
 
@@ -510,13 +704,234 @@ If `mode == "local"`: call with `--mode local --review-id "$review_id"
 --review-dir "$review_dir"` (no-op that appends a trace line).
 
 On non-zero: log stderr to `trace.md` with tag
-`walkthrough_publish_failed`. Continue to step 7 — the decisions-log
-is still worth posting even if the main-comment PATCH failed.
+`walkthrough_publish_failed`. Continue to step 6.5 — the downstream
+steps are still worth running even if the main-comment PATCH failed.
+
+### 6.5. File GitHub issues for pre-existing findings
+
+Skip entirely when ANY of the following hold:
+- `mode == "local"` — no PR to link the issue back to.
+- `scope_preexisting_count == 0` — nothing to file.
+- `pr_number` is empty — defensive; in pr mode this should always be
+  populated but we avoid calling `gh issue create` with an empty
+  link in the drafted body.
+
+(Local mode has no PR → no natural "parent" issue; the trace entry at
+step 8 remains the sole audit record.)
+
+Rationale: `pre_existing_report` findings originate in code that
+pre-dates this PR (per the §13 pre-existing override). They're not
+fixable in the current change, so bundling them with promote-eligible
+findings in the §5 loop forced awkward "skip" decisions every run.
+Filing a GitHub issue moves them to a durable tracking surface outside
+the review artifact.
+
+Initialize an `issues_filed=[]` array in ambient context. Each entry:
+`{finding_id, issue_url, title, ts}`.
+
+Cache the owner/repo string once (used per iteration):
+
+```bash
+repo_name_with_owner=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+```
+
+If `repo_name_with_owner` is empty (no remote, or `gh` auth issue),
+log to `trace.md` under tag `walkthrough_repo_resolve_failed`, skip
+§6.5 entirely, and continue to §7. `gh issue create --repo ""` would
+fail per-iteration with a confusing error; a single upfront skip is
+cleaner.
+
+#### 6.5.1. One-shot gate prompt
+
+Dispatch `AskUserQuestion`:
+
+- "File all $scope_preexisting_count issue(s)"
+- "Pick a subset"
+- "Skip — don't file any"
+
+If the reviewer picks "Pick a subset," dispatch a follow-up
+`AskUserQuestion` with the finding ids as multi-select options
+(fall back to a free-form comma-separated id list with validation
+when multi-select isn't available). Capture the selected ids into
+`filing_ids` (comma-separated). "File all" sets
+`filing_ids=$scope_preexisting_ids`. "Skip" leaves `filing_ids`
+empty.
+
+If `filing_ids` is empty (either the reviewer chose "Skip" or
+selected zero items in the subset picker), skip the §6.5.2 loop
+entirely and proceed to §7. `issues_filed[]` remains empty and the
+§9 summary's "not filed" note will fire.
+
+#### 6.5.2. Per-selected finding: draft + confirm + create
+
+Iterate `filing_ids` in the order returned. For each `$finding_id`:
+
+**Fetch the finding JSON and per-finding variables** (same pattern as
+§5.1). These MUST be re-extracted inside the §6.5.2 loop — they are
+local to each iteration. If §6.5 runs after the §5 walk loop,
+`$f_file` / `$f_line_start` / `$f_line_end` otherwise carry the last
+walked finding's values (wrong file in the draft) or are unset when
+the walk was cancelled (undefined-variable expansion):
+
+```bash
+finding_json=$(~/.claude/commands/_shared/tools/artifact-read.sh \
+    --path "$artifact_path" \
+    --filter ".findings[] | select(.id == \"$finding_id\")")
+f_file=$(jq -r '.file' <<<"$finding_json")
+f_line_start=$(jq -r '.line_range[0]' <<<"$finding_json")
+f_line_end=$(jq -r '.line_range[1]' <<<"$finding_json")
+f_claim=$(jq -r '.claim' <<<"$finding_json")
+```
+
+**Dispatch a Sonnet drafting agent.** Model: `sonnet`. Budget: ~2-3k
+tokens. Prompt:
+
+> You are drafting a GitHub issue for a code-review finding that
+> pre-dates the current PR (`pre_existing_report`). The reviewer
+> wants a concise, actionable issue that someone triaging the
+> backlog can read cold.
+>
+> Return strict JSON matching:
+>
+> ```json
+> {
+>   "title": "<70 chars, imperative or descriptive; no issue #, no trailing period>",
+>   "body": "<markdown body; sections: Summary, Location, Evidence, Suggested direction>"
+>
+> }
+> ```
+>
+> Hard rules:
+>
+>   - Emit ONE JSON object only. No surrounding prose. No outer code
+>     fences on the JSON itself (the `body` string may contain inner
+>     fenced code blocks — those are fine).
+>   - Body must include a line like `File: <file>:<line_start>-<line_end>`
+>     and a "Discovered during" sentence naming this PR number
+>     (see context).
+>   - Keep the body under 40 lines. Link to the PR once; don't
+>     replicate the finding JSON.
+>
+> Context:
+>
+>   - Finding JSON: <paste $finding_json verbatim>
+>   - PR: #$pr_number in $repo_name_with_owner
+>   - File: $f_file (lines $f_line_start-$f_line_end, plus ±20 of
+>     context via Read)
+
+Parse the returned text as JSON (one retry on parse failure). On
+second failure, log to `trace.md` under tag
+`walkthrough_issue_draft_failed:$finding_id` and surface a degraded
+UX: offer `Skip this finding` or `Write body free-form` (captured
+via one `AskUserQuestion` free-form follow-up).
+
+Log the drafting agent's tokens per §5.2 convention:
+
+```bash
+~/.claude/commands/_shared/tools/log-tokens.sh \
+    --review-dir "$review_dir" \
+    --phase walkthrough --agent-role pre_existing_issue_draft \
+    --agent-id <id-from-Agent-result> \
+    --model sonnet --finding-id "$finding_id" \
+    --tokens <N or null>
+```
+
+**Render the draft** as a markdown block to chat:
+
+```markdown
+## Pre-existing issue draft — $finding_id
+
+**Title:** <draft.title>
+
+---
+
+<draft.body>
+```
+
+**Ask for the next action.** `AskUserQuestion`:
+
+- "Create issue"
+- "Edit the body first"
+- "Skip this finding"
+
+For "Edit the body first," dispatch one follow-up `AskUserQuestion`
+(free-form) capturing the replacement body, then re-render and loop
+back to this same `AskUserQuestion`. Two edit rounds max per finding
+to keep cadence predictable — after two, auto-offer Create/Skip only.
+
+**For "Skip this finding,"** continue to the next finding in
+`filing_ids`. The finding remains open in the artifact with its
+existing `pre_existing_report` disposition. No trace entry is
+written per-skip — the `pre_existing_issues:` block in §8 lists
+what was *filed*, and the artifact's full `pre_existing_report`
+set (discoverable via `artifact-read.sh`) implicitly shows what
+was available, so absence = skipped.
+
+**For "Create issue":**
+
+```bash
+body_tmp=$(mktemp -t adams-walkthrough-issue.XXXXXX)
+err_tmp=$(mktemp -t adams-walkthrough-gh-err.XXXXXX)
+# write $draft_body (possibly user-edited) to $body_tmp
+# Capture gh's full stdout so we can detect failure by its own exit
+# status — piping through awk would swallow gh's non-zero exit
+# because bash without `set -o pipefail` reports only the pipeline's
+# last command's exit, and awk 'END{print}' always succeeds.
+gh_stdout=$(gh issue create \
+    --repo "$repo_name_with_owner" \
+    --title "$draft_title" \
+    --body-file "$body_tmp" 2>"$err_tmp")
+gh_rc=$?
+rm -f "$body_tmp"
+issue_url=$(awk 'END{print}' <<<"$gh_stdout")
+```
+
+`gh issue create` emits the URL as its final stdout line on success;
+`awk 'END{print}'` extracts it in a separate step so `gh_rc` is
+gh's own exit, not awk's. (`tail` is not in this command's
+`allowed-tools`; `awk` is.) Stderr is captured to `$err_tmp` — a
+`mktemp` file, not `/tmp/...$$`, because the orchestrator may invoke
+successive bash calls with different PIDs, and `mktemp` gives a
+stable path for the whole step.
+
+If `gh_rc != 0`, read `$err_tmp`, log under tag
+`walkthrough_issue_filed_failed:$finding_id` with the drafted
+title + body (for manual recovery), `rm -f "$err_tmp"`, and continue
+to the next finding. Do not abort the whole step on a single `gh`
+failure. On success, also `rm -f "$err_tmp"`.
+
+On success, append to `issues_filed`:
+
+```
+{
+  finding_id: $finding_id,
+  issue_url: $issue_url,
+  title: $draft_title,
+  ts: <now>
+}
+```
+
+Print a one-line chat update: "Filed $finding_id → $issue_url.
+Ns processed of M." Mirrors the §5.6 cadence for the main loop.
+
+Note on partial runs: any issues filed before an interruption stand
+— these are durable side effects. If the reviewer later re-runs
+`/adams-review-walkthrough`, the same `pre_existing_report` findings
+will re-appear (they don't set `human_confirmation`, and the
+artifact has no `filed_issue_url` field per our no-schema-change
+decision). The reviewer can close duplicates manually on GitHub. The
+trace entry at step 8 records which findings were filed in each run,
+so cross-referencing is straightforward.
 
 ### 7. Post the decisions-log PR comment
 
 Skip entirely when `mode == "local"` (no PR to comment on — the trace
 entry at step 8 is the audit record in local mode).
+
+Also skip when `${#decisions[@]} == 0` AND `${#issues_filed[@]} == 0`
+— there's nothing to report (the reviewer cancelled before walking
+anything AND filed no pre-existing issues). Step 8's trace line is
+still written so the run is auditable locally.
 
 In PR mode, render a decisions-log markdown block from `decisions`
 and POST it as a NEW PR comment (separate from the main review
@@ -534,9 +949,9 @@ array.
 <!-- adams-review-walkthrough-v1 -->
 ### Walkthrough decisions
 
-`$review_id` · threshold=$threshold · reviewer=$reviewer · ts=$walkthrough_ts
+`$review_id` · scope=**$scope_tier** · threshold=$threshold · reviewer=$reviewer · ts=$walkthrough_ts
 
-Of **$scope_count** non-auto-eligible finding(s) in scope: **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
+Walking the **$scope_tier_title** scope: of **$scope_count** non-auto-eligible finding(s), **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
 
 Promoted findings will be picked up by the next `/adams-review-fix $threshold` run via the `human_confirmation` bypass (DESIGN §27.6).
 
@@ -546,7 +961,7 @@ Promoted findings will be picked up by the next `/adams-review-fix $threshold` r
 
 - **F003** — [first line of claim] · option **A** (Update the docstring to match the code)
   - **Why:** <option.detail> — <recommendation.rationale>
-  - **Fix hint:** `<fix_hint>` (or "— (no steering hint supplied)" when empty)
+  - **Fix hint:** `<fix_hint>` (marked "(edited by reviewer)" when `edited_hint == true`; "— (no steering hint supplied)" when empty)
   - **Prior:** disposition=<prior_disposition> · score=<prior_score>
 
 - **F016** — ...
@@ -562,6 +977,11 @@ Promoted findings will be picked up by the next `/adams-review-fix $threshold` r
   - Reviewer requested stop at this finding. Not mutated.
   - Resume with `/adams-review-walkthrough $threshold`.
 
+#### Pre-existing issues filed
+
+- **F026** — <issue title> → <issue_url>
+- **F028** — <issue title> → <issue_url>
+
 ---
 
 Decisions log: this comment is append-only audit — it's never edited
@@ -569,8 +989,20 @@ in place. Each `/adams-review-walkthrough` run posts a fresh entry.
 Current state: see the main review comment and `artifact.md`.
 ```
 
-Sections are emitted only when non-empty — a run with no stops omits
-the "Stopped" block entirely. Similarly, omit the `$unreviewed_count
+`$scope_tier_title` is `"Qualifying"` when `scope_tier == qualifying`,
+`"Full skip set"` when `scope_tier == full`, and `"Pre-existing only"`
+when `scope_tier == none` (the walk was skipped because
+`scope_full_count == 0`). In the `none` case, `scope_count == 0` and
+`decisions[]` is empty — the Promoted/Skipped/Stopped subsections all
+omit, leaving only the Pre-existing issues subsection. The header
+sentence becomes "Walking the **Pre-existing only** scope: of **0**
+non-auto-eligible finding(s), 0 promoted, 0 skipped, 0 stopped." —
+accurate and matches the §7 guard (which skips the POST only when
+BOTH decisions and issues_filed are empty).
+
+Emit the Pre-existing issues subsection only when `issues_filed[]`
+is non-empty. Other sections continue to follow the existing "emit
+only when non-empty" rule. Similarly, omit the `$unreviewed_count
 unreviewed` clause from the header sentence when `$unreviewed_count
 == 0` (i.e., every scoped finding was promoted, skipped, or stopped
 at).
@@ -610,17 +1042,30 @@ post it.
 ```bash
 {
     printf '## walkthrough (%s)\n' "$walkthrough_ts"
-    printf 'review_id=%s threshold=%s scope_count=%s promote_count=%s skip_count=%s stop_count=%s unreviewed_count=%s\n' \
-        "$review_id" "$threshold" "$scope_count" "$promote_count" "$skip_count" "$stop_count" "$unreviewed_count"
+    printf 'review_id=%s scope_tier=%s threshold=%s scope_count=%s promote_count=%s skip_count=%s stop_count=%s unreviewed_count=%s\n' \
+        "$review_id" "$scope_tier" "$threshold" "$scope_count" "$promote_count" "$skip_count" "$stop_count" "$unreviewed_count"
     printf 'decisions:\n'
     # one line per decision, in order
     for d in "${decisions[@]}"; do
-        printf '  %s %s option=%s hint=%s\n' \
+        edited_marker=""
+        if [[ "$(jq -r '.edited_hint // false' <<<"$d")" == "true" ]]; then
+            edited_marker=" hint_edited=true"
+        fi
+        printf '  %s %s option=%s hint=%s%s\n' \
             "$(jq -r '.finding_id' <<<"$d")" \
             "$(jq -r '.action' <<<"$d")" \
             "$(jq -r '.option_label // "—"' <<<"$d")" \
-            "$(jq -r '.fix_hint // "—"' <<<"$d")"
+            "$(jq -r '.fix_hint // "—"' <<<"$d")" \
+            "$edited_marker"
     done
+    if (( ${#issues_filed[@]} > 0 )); then
+        printf 'pre_existing_issues:\n'
+        for i in "${issues_filed[@]}"; do
+            printf '  %s %s\n' \
+                "$(jq -r '.finding_id' <<<"$i")" \
+                "$(jq -r '.issue_url' <<<"$i")"
+        done
+    fi
     [[ -n "${decisions_comment_id:-}" ]] && \
         printf 'decisions_comment_id=%s\n' "$decisions_comment_id"
     printf '\n'
@@ -632,11 +1077,16 @@ post it.
 Print a clear summary block to chat (plain text, not a tool call):
 
 ```
-Walkthrough complete. Of $scope_count finding(s) in scope:
+Walkthrough complete. Scope: $scope_tier_title.
+Of $scope_count finding(s) in scope:
   Promoted:    $promote_count
   Skipped:     $skip_count
   Stopped:     $stop_count
   Unreviewed:  $unreviewed_count
+
+Pre-existing issues filed: <N; list id → url pairs below, or omit section>
+  F026 → <url>
+  F028 → <url>
 
 Promoted findings are now auto-fix-eligible via the human_confirmation
 bypass (§27.6). To apply them:
@@ -654,7 +1104,18 @@ will be what you see.
 
 Omit the "Unreviewed" line entirely (and the final re-run sentence's
 unreviewed-count clause) when `$unreviewed_count == 0` — keeps the
-common-case summary tidy.
+common-case summary tidy. Omit the "Pre-existing issues filed"
+section entirely when `issues_filed[]` is empty.
+
+When `mode == "pr"` AND `scope_preexisting_count > 0` AND
+`${#issues_filed[@]} == 0` (the reviewer saw pre-existing findings but
+chose "Skip — don't file any"), add a one-line note after the
+summary block:
+
+```
+Note: $scope_preexisting_count pre-existing finding(s) not filed as issues.
+Re-run /adams-review-walkthrough to revisit.
+```
 
 On any step failure earlier in the run, append a `Note:` section
 listing the deferred failures and their recovery actions (same

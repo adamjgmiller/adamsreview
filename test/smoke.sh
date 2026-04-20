@@ -2132,6 +2132,108 @@ else
     fail "WT-5: --defer-publish or promote-core include missing from $PROMOTE_MD"
 fi
 
+# WT-7: the "Qualifying" scope jq (step 3 of walkthrough) must exclude
+# below_gate and pre_existing_report while keeping everything else the
+# full-scope jq keeps. Mirrors the second jq in commands/adams-review-walkthrough.md;
+# keep in sync when that file changes.
+WT_QUALIFYING_JQ='
+[.findings[]
+ | select(.current_state == "open")
+ | select(.disposition != "resolved")
+ | select(.disposition != "disproven")
+ | select(.disposition != "pending_validation")
+ | select(.disposition != "below_gate")
+ | select(.disposition != "pre_existing_report")
+ | select(.human_confirmation == null)
+ | select(
+     (
+       (.disposition == "confirmed_auto" or .disposition == "partial" or .disposition == "regression")
+       and (
+         (.impact_type == "correctness" or .impact_type == "security")
+         and (.score_phase4 != null and .score_phase4 >= $thr)
+       )
+     ) | not
+   )
+ | .id
+] | join(",")
+'
+wt7_findings=$(jq -nc \
+    --argjson a "$(wt_finding W050 correctness deep below_gate null open null)" \
+    --argjson b "$(wt_finding W051 correctness deep pre_existing_report null open null)" \
+    --argjson c "$(wt_finding W052 ux light confirmed_auto 80 open null)" \
+    --argjson d "$(wt_finding W053 correctness deep uncertain 55 open null)" \
+    '[$a,$b,$c,$d]')
+wt7_fx=$(wt_build_fixture "$wt7_findings")
+wt7_full=$(echo "$wt7_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
+wt7_qual=$(echo "$wt7_fx" | jq -r --argjson thr 60 "$WT_QUALIFYING_JQ")
+if [[ ",$wt7_full," == *,W050,* && ",$wt7_full," == *,W051,* && ",$wt7_full," == *,W052,* && ",$wt7_full," == *,W053,* ]] \
+   && [[ ",$wt7_qual," != *,W050,* && ",$wt7_qual," != *,W051,* ]] \
+   && [[ ",$wt7_qual," == *,W052,* && ",$wt7_qual," == *,W053,* ]]; then
+    pass "WT-7 (§28 §3): qualifying scope excludes below_gate + pre_existing_report; full scope includes them"
+else
+    fail "WT-7: full='$wt7_full' qual='$wt7_qual' (expected full=W050..W053, qual=W052,W053)"
+fi
+
+# WT-8: the pre-existing isolation jq (step 3, third expression) must
+# select only open, non-promoted pre_existing_report findings.
+WT_PREEXISTING_JQ='
+[.findings[]
+ | select(.current_state == "open")
+ | select(.disposition == "pre_existing_report")
+ | select(.human_confirmation == null)
+ | .id
+] | join(",")
+'
+wt8_findings=$(jq -nc \
+    --argjson a "$(wt_finding W060 correctness deep pre_existing_report null open null)" \
+    --argjson b "$(wt_finding W061 correctness deep pre_existing_report null open "$WT_HC")" \
+    --argjson c "$(wt_finding W062 correctness deep below_gate null open null)" \
+    '[$a,$b,$c]')
+wt8_fx=$(wt_build_fixture "$wt8_findings")
+wt8_ids=$(echo "$wt8_fx" | jq -r "$WT_PREEXISTING_JQ")
+if [[ "$wt8_ids" == "W060" ]]; then
+    pass "WT-8 (§28 §3): pre-existing scope isolates only open, non-promoted pre_existing_report findings"
+else
+    fail "WT-8: expected W060 only; got '$wt8_ids'"
+fi
+
+# WT-9: preflight (§4) presents the three-tier AskUserQuestion and the
+# terminology preamble naming all three gates. Template-integrity check.
+if grep -q 'Qualifying only' "$WALK_MD" \
+   && grep -q 'Full skip set' "$WALK_MD" \
+   && grep -q 'Cancel' "$WALK_MD" \
+   && grep -q 'Phase 3 scoring gate' "$WALK_MD" \
+   && grep -q 'Phase 4 confirmation gate' "$WALK_MD" \
+   && grep -q 'Phase 8 fix gate' "$WALK_MD" \
+   && grep -q 'scope_qualifying_ids' "$WALK_MD" \
+   && grep -q 'scope_full_ids' "$WALK_MD" \
+   && grep -q 'scope_preexisting_ids' "$WALK_MD"; then
+    pass "WT-9 (§28 §4): preflight has three-tier choice + gate-terminology preamble + three scope variables"
+else
+    fail "WT-9: preflight tier options or gate preamble missing from $WALK_MD"
+fi
+
+# WT-10: pre-existing issue filing (§6.5) + decisions-log subsection are
+# wired. Template-integrity check.
+if grep -q '### 6.5' "$WALK_MD" \
+   && grep -q 'gh issue create' "$WALK_MD" \
+   && grep -q 'issues_filed' "$WALK_MD" \
+   && grep -q '#### Pre-existing issues filed' "$WALK_MD" \
+   && grep -q 'pre_existing_issue_draft' "$WALK_MD"; then
+    pass "WT-10 (§28 §6.5, §7.1): pre-existing issue filing + decisions-log subsection wired"
+else
+    fail "WT-10: step 6.5 or decisions-log 'Pre-existing issues filed' subsection missing from $WALK_MD"
+fi
+
+# WT-11: briefer prompt (§5.2) tells the agent to propose best-effort
+# hints for confirmed_manual/confirmed_report. Template-integrity check.
+if grep -q 'confirmed_manual.*confirmed_report' "$WALK_MD" \
+   || grep -q 'confirmed_manual` and `confirmed_report' "$WALK_MD"; then
+    pass "WT-11 (§28 §5.2): briefer prompt addresses confirmed_manual + confirmed_report findings"
+else
+    fail "WT-11: briefer prompt missing confirmed_manual/confirmed_report clause in $WALK_MD"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

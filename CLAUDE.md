@@ -9,7 +9,7 @@ Read this first on a fresh session. It's procedural (how to work in the repo) pl
 Build repo for four personal Claude Code slash commands:
 
 - **`/adams-review`** — multi-lens code review of a branch or PR (Phases 0–6).
-- **`/adams-review-walkthrough`** — interactive driver that walks the reviewer through every finding `/adams-review-fix` would skip at a given threshold. Per-finding Sonnet briefing (summary + options + recommendation), then batched re-render + re-publish + decisions-log PR comment. Closes the light-lane `confirmed_auto` gap where the default Phase 8 lane filter skips mechanically-fixable ux/policy findings.
+- **`/adams-review-walkthrough`** — interactive driver that walks the reviewer through findings `/adams-review-fix` would skip. Preflight offers a tiered scope choice (default **Qualifying** — excludes Phase-3-demoted `below_gate` and pre-existing; **Full skip set** includes them). Per-finding Sonnet briefing with an "Edit the fix hint" override path; for `confirmed_manual` / `confirmed_report` the briefer proposes best-effort hints. End-of-run phase offers to file GitHub issues (one by one, with a draft-confirm-edit flow) for `pre_existing_report` findings. Closes the light-lane `confirmed_auto` gap where the default Phase 8 lane filter skips mechanically-fixable ux/policy findings.
 - **`/adams-review-fix`** — automated fix loop for auto-fixable findings (Phases 7–9).
 - **`/adams-review-promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adams-review-fix` afterwards to apply. Used internally by `/adams-review-walkthrough` via `commands/_shared/promote-core.md` + `--defer-publish`.
 
@@ -138,6 +138,14 @@ current_state == open
 ```
 
 **Threshold summary.** Validation gate (Phase 3) is constant 45. Confirmation decision (Phase 4) has breakpoints at 45, 60, 75. Fix gate (Phase 8) defaults to 60 and is user-tunable via `/adams-review-fix <N>`. `human_confirmation != null` bypasses both the lane filter and the threshold — promotion is additive metadata, not a state mutation.
+
+**Gate terminology.** "Gate" means three different things in this repo and the distinction matters when reading command output or debugging a scope filter:
+
+- **Phase 3 scoring gate (45)** — the threshold that decides which candidates enter Phase 4 validation. Candidates below it get `disposition=below_gate` and carry no `score_phase4`.
+- **Phase 4 confirmation gate (45/60/75)** — the thresholds that map `score_phase4` into `disproven` / `uncertain` / `confirmed_*` dispositions.
+- **Phase 8 fix gate (default 60)** — the composite gate governing `/adams-review-fix`: disposition ∈ {confirmed_auto, partial, regression} **AND** deep lane **AND** `score_phase4 ≥ threshold`, with `human_confirmation` as the human-override bypass.
+
+`below_gate` is a *disposition name* (Phase 3), not a threshold. `/adams-review-walkthrough` at its default **Qualifying** scope excludes `below_gate` findings because Phase 3 already judged them low-impact × low-confidence; the **Full skip set** scope includes them when a reviewer wants to sanity-check what Phase 3 demoted.
 
 ## Lanes
 
