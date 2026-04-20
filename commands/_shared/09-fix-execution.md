@@ -12,7 +12,12 @@ The Phase 8 fix gate filters on current_state + disposition +
 impact_type (deep lane only — §13.2) + `score_phase4 >= threshold`.
 A non-null `human_confirmation` (set by `/adams-review-promote`, §27)
 bypasses both the impact_type lane filter AND the score threshold —
-the human has overridden the validator's conservative defaults:
+the human has overridden the validator's conservative defaults.
+
+The `/adams-review-walkthrough` scope filter (§28, step 3 in
+`commands/adams-review-walkthrough.md`) is the **inverse** of this
+selector. Keep the two in sync — any edit to the eligibility logic
+below must mirror into the walkthrough's scope jq.
 
 ```bash
 eligible_finding_ids=$(jq -r --argjson thr "$threshold" '

@@ -1952,6 +1952,185 @@ else
     fail "MP-10: 'Fix direction:' should NOT appear when fix_hint is absent"
 fi
 
+# ---------------------------------------------------------------- walkthrough
+#
+# WT-* cover the /adams-review-walkthrough command surface. WT-1..WT-4 exercise
+# the scope-filter jq (the inverse of 09-fix-execution.md step 8.1); WT-5 is a
+# structural check on /adams-review-promote's --defer-publish + shared-fragment
+# wiring. The scope jq MUST stay in sync with Phase 8 eligibility — any drift
+# surfaces here.
+
+PROMOTE_MD="$REPO/commands/adams-review-promote.md"
+PROMOTE_CORE_MD="$REPO/commands/_shared/promote-core.md"
+
+# WT-0: promote-core precondition PROCEEDS (not no-op) for confirmed_auto +
+# curr_hc == null. Pre-existing-bug guard: a blanket no-op on that row silently
+# broke promoting light-lane findings and deep-lane below-threshold findings
+# (§27.2, §27.6). If a future edit re-adds the no-op language, this surfaces.
+# Checks: (a) the precondition table contains a **Proceed.** verdict on the
+# confirmed_auto + curr_hc == null row, (b) it does NOT contain the old
+# "already confirmed_auto by validator" no-op text.
+if grep -q '`confirmed_auto` | `curr_hc == null` | \*\*Proceed' "$PROMOTE_CORE_MD" \
+   && ! grep -q "already confirmed_auto by validator.*no-op" "$PROMOTE_CORE_MD"; then
+    pass "WT-0 (§27.2, §27.6): promote-core precondition proceeds for confirmed_auto + no human_confirmation"
+else
+    fail "WT-0: promote-core.md missing 'Proceed' verdict or still has blanket no-op for confirmed_auto + no hc"
+fi
+
+# The walkthrough scope-filter jq — must stay in sync with the expression in
+# commands/adams-review-walkthrough.md §3. Held as a shell variable so the
+# assertions below can exercise it against different fixtures without drift.
+WT_SCOPE_JQ='
+[.findings[]
+ | select(.current_state == "open")
+ | select(.disposition != "resolved")
+ | select(.disposition != "disproven")
+ | select(.disposition != "pending_validation")
+ | select(.human_confirmation == null)
+ | select(
+     (
+       (.disposition == "confirmed_auto" or .disposition == "partial" or .disposition == "regression")
+       and (
+         (.impact_type == "correctness" or .impact_type == "security")
+         and (.score_phase4 != null and .score_phase4 >= $thr)
+       )
+     ) | not
+   )
+ | .id
+] | join(",")
+'
+
+# WT fixture builder. Accepts a findings[] JSON array on stdin; emits a minimal
+# artifact stub that passes just enough of the schema's top-level requirements
+# for the jq filter to run against. Only .findings is queried, so we don't need
+# a full schema-valid seed.
+wt_build_fixture() {
+    local findings_json="$1"
+    jq -nc --argjson findings "$findings_json" '{findings: $findings}'
+}
+
+# Shared finding templates — varying only the fields the scope filter inspects.
+# All other fields stubbed with plausible defaults; the scope jq ignores them.
+wt_finding() {
+    # args: id impact_type validation_lane disposition score_phase4 current_state human_confirmation
+    jq -nc \
+        --arg id "$1" \
+        --arg impact "$2" \
+        --arg lane "$3" \
+        --arg disp "$4" \
+        --arg score "$5" \
+        --arg state "$6" \
+        --arg hc "$7" \
+        '{
+            id: $id,
+            impact_type: $impact,
+            validation_lane: $lane,
+            disposition: $disp,
+            score_phase4: (if $score == "null" then null else ($score | tonumber) end),
+            current_state: $state,
+            human_confirmation: (if $hc == "null" then null else ($hc | fromjson) end)
+        }'
+}
+
+WT_HC='{"reviewer":"x","reason":"y","ts":"2026-04-19T00:00:00Z","promoted_from":{"disposition":"uncertain","actionability":"manual","score_phase4":null}}'
+
+# WT-1: resolved / disproven / pending_validation findings are excluded.
+# Fixture includes one of each terminal/unused disposition plus one in-scope
+# finding (uncertain) to prove the filter isn't dropping everything.
+wt1_findings=$(jq -nc \
+    --argjson a "$(wt_finding W001 correctness deep resolved 80 resolved null)" \
+    --argjson b "$(wt_finding W002 correctness deep disproven 70 open null)" \
+    --argjson c "$(wt_finding W003 correctness deep pending_validation null open null)" \
+    --argjson d "$(wt_finding W004 correctness deep uncertain 55 open null)" \
+    '[$a,$b,$c,$d]')
+wt1_fx=$(wt_build_fixture "$wt1_findings")
+wt1_ids=$(echo "$wt1_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
+if [[ "$wt1_ids" == "W004" ]]; then
+    pass "WT-1 (§28, plans/walkthrough-mode.md §3.5): scope excludes resolved/disproven/pending_validation"
+else
+    fail "WT-1: expected W004 only; got '$wt1_ids'"
+fi
+
+# WT-2: already-promoted findings (human_confirmation != null) are excluded
+# so a partially-walked session resumes cleanly without re-surfacing them.
+wt2_findings=$(jq -nc \
+    --argjson a "$(wt_finding W010 architecture light uncertain 40 open "$WT_HC")" \
+    --argjson b "$(wt_finding W011 architecture light uncertain 40 open null)" \
+    '[$a,$b]')
+wt2_fx=$(wt_build_fixture "$wt2_findings")
+wt2_ids=$(echo "$wt2_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
+if [[ "$wt2_ids" == "W011" ]]; then
+    pass "WT-2 (§28, §27.6): scope excludes already-promoted findings (human_confirmation set)"
+else
+    fail "WT-2: expected W011 only; got '$wt2_ids'"
+fi
+
+# WT-3: findings the Phase 8 gate would ALREADY pass (correctness/security +
+# score >= threshold + confirmed_auto/partial/regression) are excluded — the
+# walkthrough's purpose is to surface what fix SKIPS. Fixture: deep/correctness
+# confirmed_auto at score=80 should NOT appear.
+wt3_findings=$(jq -nc \
+    --argjson a "$(wt_finding W020 correctness deep confirmed_auto 80 open null)" \
+    --argjson b "$(wt_finding W021 correctness deep confirmed_manual 80 open null)" \
+    '[$a,$b]')
+wt3_fx=$(wt_build_fixture "$wt3_findings")
+wt3_ids=$(echo "$wt3_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
+if [[ "$wt3_ids" == "W021" ]]; then
+    pass "WT-3 (§28, §13.1): scope excludes fix-eligible findings (correctness confirmed_auto >= threshold)"
+else
+    fail "WT-3: expected W021 only; got '$wt3_ids'"
+fi
+
+# WT-4: light-lane confirmed_auto findings (which fail the impact_type gate)
+# ARE included — this is the primary gap the walkthrough exists to close.
+# Fixture: ux confirmed_auto at high score (which the fix command would skip
+# due to impact_type != correctness/security) plus a below-threshold correctness
+# confirmed_auto (which the fix command would skip due to the score gate).
+wt4_findings=$(jq -nc \
+    --argjson a "$(wt_finding W030 ux light confirmed_auto 80 open null)" \
+    --argjson b "$(wt_finding W031 policy light confirmed_auto 50 open null)" \
+    --argjson c "$(wt_finding W032 correctness deep confirmed_auto 40 open null)" \
+    '[$a,$b,$c]')
+wt4_fx=$(wt_build_fixture "$wt4_findings")
+wt4_ids=$(echo "$wt4_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
+# Order in jq output depends on array order, not a sort, so match any permutation.
+if [[ ",$wt4_ids," == *,W030,* && ",$wt4_ids," == *,W031,* && ",$wt4_ids," == *,W032,* ]] \
+   && [[ $(echo "$wt4_ids" | awk -F, '{print NF}') == "3" ]]; then
+    pass "WT-4 (§28, §13.2): scope includes light-lane confirmed_auto + below-threshold deep confirmed_auto"
+else
+    fail "WT-4: expected W030,W031,W032 (any order); got '$wt4_ids'"
+fi
+
+# WT-6: /adams-review-walkthrough decisions-log template contains the required
+# structural markers. Since the markdown is rendered inline by Claude at
+# runtime (the command file is a prompt, not a shell script), this is a
+# template-integrity check — guards against accidental removal of any
+# section so the posted PR comment stays auditable.
+WALK_MD="$REPO/commands/adams-review-walkthrough.md"
+if grep -q 'adams-review-walkthrough-v1' "$WALK_MD" \
+   && grep -q '### Walkthrough decisions' "$WALK_MD" \
+   && grep -q '#### Promoted' "$WALK_MD" \
+   && grep -q '#### Skipped' "$WALK_MD" \
+   && grep -q '#### Stopped' "$WALK_MD" \
+   && grep -q 'human_confirmation.* bypass' "$WALK_MD"; then
+    pass "WT-6 (§28.7): walkthrough decisions-log template has marker + Promoted/Skipped/Stopped sections"
+else
+    fail "WT-6: walkthrough decisions-log template missing required sections in $WALK_MD"
+fi
+
+# WT-5: /adams-review-promote wires --defer-publish and includes promote-core.md.
+# Structural check guarding against accidental removal of either piece (plans/
+# walkthrough-mode.md §5, §6). If a future refactor merges the shared fragment
+# back inline or drops the --defer-publish flag, this assertion surfaces it
+# before the walkthrough command breaks.
+if grep -q -- '--defer-publish' "$PROMOTE_MD" \
+   && grep -q 'defer_publish.*true' "$PROMOTE_MD" \
+   && grep -q 'promote-core.md' "$PROMOTE_MD"; then
+    pass "WT-5 (§27, §28): promote command wires --defer-publish guards + includes promote-core fragment"
+else
+    fail "WT-5: --defer-publish or promote-core include missing from $PROMOTE_MD"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

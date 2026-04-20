@@ -244,15 +244,48 @@ Prepend a one-line mode-aware header:
 - `draft` → `### Code review (draft PR)`
 - `local` → `### Code review (local — \`$head_branch\` vs \`$base_branch\`)`
 
-After the main report body (the contents of `artifact.md`), add:
+After the main report body (the contents of `artifact.md`), add a
+**Next steps** block so the reviewer knows their options. The block
+has two bullets — one for each follow-up command — framed as
+suggestions rather than forced next actions. Do NOT use
+`AskUserQuestion` here: the walkthrough is a 15-30 minute interactive
+session and prompting at review completion catches the reviewer at a
+bad time (they're just reading output). A descriptive block gives
+discoverability without pressure.
+
+Render this block verbatim (with the review's actual threshold
+default):
+
+```markdown
+---
+
+**Next steps**
+
+- **Apply the auto-eligible findings** — `/adams-review-fix 60`
+  applies every finding in the deep-lane "✓ Auto-fixable" table
+  that scores at or above the threshold. Light-lane rows are
+  skipped by default; promote them first with the walkthrough.
+
+- **Walk through the skipped findings** — `/adams-review-walkthrough`
+  presents each deep-lane manual finding and every light-lane row
+  one at a time with a briefing (what it's about, options, a
+  recommendation) and promotes the ones you approve with tailored
+  fix-hints. Posts a decisions log to the PR for audit. Works
+  same-session, later, or in a new session — the artifact persists
+  under `~/.adams-reviews/`.
+
+You can run either step independently, or both in either order.
+```
+
+Then add (still chat-only, not in `artifact.md`):
 
 - If PR mode: a one-line "Full artifact: `$artifact_path`" (so the user
   knows where the JSON lives).
 - If local mode: "Fix commit will land locally if you run /adams-review-fix.
   It will not be pushed without `--push` (Stage 3 future flag)."
 
-(The final line isn't part of `artifact.md` itself — keeps the PR comment
-clean.)
+(None of these trailing lines are part of `artifact.md` itself — keeps
+the PR comment clean.)
 
 ### 6.9. Pop stash (if Phase 0 took one)
 
