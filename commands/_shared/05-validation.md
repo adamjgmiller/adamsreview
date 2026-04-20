@@ -93,10 +93,24 @@ Prompt essence (per §19.5):
 >    `edge_cases_to_preserve`, `what_would_break_if_incomplete`.
 > 6. **Re-score 0-100** using the §20 rubric — based on what you found,
 >    not your gut.
-> 7. If a related candidate (different bug, related root cause) surfaces
->    during investigation, add it to `related_candidates_to_investigate`
->    with a one-line rationale. Do NOT investigate it yourself — Wave 2
->    will.
+> 7. **Related candidates — sweep actively, not just opportunistically.**
+>    Before returning, run a deliberate adjacent-bug sweep and list
+>    every candidate in `related_candidates_to_investigate[]` (even
+>    half-confident ones — Phase 3 filters weak candidates). Two
+>    radii, both mandatory:
+>    - **Same-block (±10 lines around the confirmed site).** Reread
+>      the surrounding code with a skeptical eye. Common adjacents:
+>      a filter predicate that misses a value the fix must handle
+>      (negative, zero, NULL, duplicate-key fan-out); a sibling
+>      if/else branch with a matching gap; a second call site in the
+>      same function with the same missing guard; a parallel parser
+>      with diverged strictness. Co-located bugs usually share a fix
+>      and are cheapest to surface now.
+>    - **Elsewhere in the traced code path.** Anything with a related
+>      root cause (different bug, same underlying invariant break)
+>      you noticed while walking blast radius.
+>
+>    Do NOT investigate any of these yourself — Wave 2 will.
 >
 > Return JSON (shape matches the `validation_result` schema):
 > ```
