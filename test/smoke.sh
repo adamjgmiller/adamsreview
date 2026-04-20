@@ -1037,6 +1037,20 @@ else
     fail "OC-7: expected exit 1; got code=$code stderr=$stderr"
 fi
 
+# Assertion OC-8: blame failure captures stderr into the audit reason so
+# rc=128 cases are diagnosable in trace.md instead of opaque. Force the
+# failure by requesting a line range that overshoots file_a.py (4 lines).
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C8","file":"file_a.py","line_range":[99,100],"origin":"introduced_by_pr","origin_confidence":"high"}]' \
+    2> "$OC_DIR/c8.err")
+if grep -qE 'reason=blame-failed rc=[0-9]+; .+' "$OC_DIR/c8.err" \
+    && grep -q 'action=skipped' "$OC_DIR/c8.err"; then
+    pass "OC-8 (§13.11): blame failure records rc and captured stderr suffix in reason"
+else
+    fail "OC-8: expected 'reason=blame-failed rc=<N>; <stderr>' + action=skipped; got: $(cat "$OC_DIR/c8.err")"
+fi
+
 # ------------------------------------------------------------------ Stage 2.6.C
 # Renderer surfaces §13.10 freshness state in the header when non-default.
 

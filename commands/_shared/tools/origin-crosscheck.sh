@@ -130,11 +130,20 @@ for (( i = 0; i < N; i++ )); do
         reason="new-file"
     else
         # Collect distinct commit SHAs from blame -L <start>,<end>.
+        # Capture stderr so rc=128 is diagnosable in trace.md instead
+        # of opaque — the reason string gets a "; <stderr first line>"
+        # suffix on failure.
+        _bl_err_tmp=$(mktemp)
         blame_rc=0
-        blame_out=$(git blame -L "$start,$end" --porcelain HEAD -- "$file" 2>/dev/null) || blame_rc=$?
+        blame_out=$(git blame -L "$start,$end" --porcelain HEAD -- "$file" 2>"$_bl_err_tmp") || blame_rc=$?
+        blame_err=""
+        if [[ $blame_rc -ne 0 ]]; then
+            blame_err=$(head -c 200 "$_bl_err_tmp" 2>/dev/null | tr '\n' ' ' | awk '{$1=$1; print}')
+        fi
+        rm -f "$_bl_err_tmp"
         if [[ $blame_rc -ne 0 ]]; then
             action="skipped"
-            reason="blame-failed rc=$blame_rc"
+            reason="blame-failed rc=$blame_rc${blame_err:+; $blame_err}"
         else
             # Porcelain SHAs are 40 hex chars at column 1, followed by
             # line-number fields. Match strictly to avoid false-positives
