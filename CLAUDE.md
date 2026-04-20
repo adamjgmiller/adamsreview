@@ -175,7 +175,7 @@ adams-review/
     └── fixtures/
 ```
 
-Top-level command files need **per-command symlinks** into `~/.claude/commands/`. The `_shared/` directory symlink propagates fragments + helpers automatically. Add new top-level commands with `ln -s $PWD/commands/<name>.md ~/.claude/commands/<name>.md` (see README §Setup for the full list).
+Top-level command files need **per-command symlinks** into `~/.claude/commands/`, created by `scripts/install.sh`. The `_shared/` directory symlink propagates fragments + helpers automatically. Adding a new top-level command means adding its stem to the `for cmd in …` loops in both `scripts/install.sh` and `scripts/uninstall.sh` (the `adams-review*.md` sed glob covers new files automatically as long as the name matches that pattern), then re-running `scripts/install.sh`. See README §Installation for the end-user flow.
 
 ## How to test
 
@@ -219,7 +219,7 @@ Enough to work without opening the archive. Each rule is a decision that was lea
 
 9. **Fix-group agents may not delete or rename files.** Layered enforcement: prompt prohibition + Phase 9.pre `git status --porcelain` scan for `D ` entries.
 
-10. **Absolute paths in `allowed-tools` grants.** Under the `_shared/` symlink, `Bash(/Users/.../tools/<script>.sh:*)` resolves cleanly. No relative-name + `PATH` fallback needed.
+10. **Absolute paths in `allowed-tools` grants.** Under the `_shared/` symlink, `Bash(/Users/.../tools/<script>.sh:*)` resolves cleanly. No relative-name + `PATH` fallback needed. Committed state shows `/Users/adammiller/...` literally; `scripts/install.sh` substitutes the current user's `$HOME` into the working tree at install time (no-op for the maintainer), and `scripts/uninstall.sh` reverses it.
 
 11. **Working set lives in-prompt, not shell vars.** Fragment composition (`` !`cat` ``) inlines markdown into a single prompt, so "variables" like `review_id`, `comparison_ref`, `reviewed_files_all` are orchestrator context values, not `$VAR`s. When a later fragment needs an artifact-stored value, call `artifact-read.sh --filter '.foo'` — don't pass it through prose. Run-level vars that don't live in the artifact (`run_id`, `threshold`, `stash_taken`) are surfaced once at the top of the top-level command file.
 
