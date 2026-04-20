@@ -2132,6 +2132,47 @@ else
     fail "WT-5: --defer-publish or promote-core include missing from $PROMOTE_MD"
 fi
 
+# ------------------------------------------------------------------ Phase 4 validator hardening
+# VR-* assertions cover the read-only preamble + fix-scope cross-check + post-wave
+# tree-cleanliness sweep added to 05-validation.md after the ray-finance 2026-04-19
+# run surfaced a validator that edited the working tree (F027) and two class-of-bug
+# misses whose prior fixes had scoped only to the obvious site (F032 ← F011,
+# F034 ← F037).
+VALIDATION_MD="$REPO/commands/_shared/05-validation.md"
+
+# VR-1: Phase 4a + 4b validator prompts contain a read-only preamble forbidding
+# Edit/Write. Prevents a repeat of the F027 incident where an Opus validator
+# modified src/cli/commands.ts and the orchestrator had to inline-revert with
+# no formal guardrail.
+if grep -qF '**Read-only.**' "$VALIDATION_MD" \
+    && grep -qF 'Do not use `Edit` or `Write`' "$VALIDATION_MD" \
+    && [[ "$(grep -cF '**Read-only.**' "$VALIDATION_MD")" -ge 2 ]]; then
+    pass "VR-1 (§19.5/§19.6): Phase 4a + 4b validator prompts contain read-only preamble"
+else
+    fail "VR-1: read-only preamble missing from one or both validator prompts in $VALIDATION_MD"
+fi
+
+# VR-2: Phase 4a validator prompt step 4 requires cross-checking
+# blast_radius.parallel_paths + grepping for in-repo precedent before
+# finalizing fix_proposal. Addresses the class-vs-instance gap.
+if grep -qF 'blast_radius.parallel_paths' "$VALIDATION_MD" \
+    && grep -qF 'in-repo precedent' "$VALIDATION_MD" \
+    && grep -qF 'the full class' "$VALIDATION_MD"; then
+    pass "VR-2 (§19.5): validator prompt step 4 requires parallel-path cross-check + precedent grep"
+else
+    fail "VR-2: class-not-instance fix-scope rule missing from $VALIDATION_MD"
+fi
+
+# VR-3: Post-wave tree-cleanliness sweep present as belt-and-braces for VR-1.
+# If a validator ignores the read-only preamble, the sweep reverts the tree
+# before Phase 5 and logs the incident to trace.md under phase_4_tree_dirty_reverted.
+if grep -qF 'phase_4_tree_dirty_reverted' "$VALIDATION_MD" \
+    && grep -qF 'status --porcelain' "$VALIDATION_MD"; then
+    pass "VR-3 (§4.4.5): post-wave tree-cleanliness sweep present with phase_4_tree_dirty_reverted trace tag"
+else
+    fail "VR-3: tree-cleanliness sweep missing from $VALIDATION_MD"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

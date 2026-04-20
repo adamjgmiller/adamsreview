@@ -60,6 +60,12 @@ Prompt essence (per §19.5):
 > **Candidate:** `<finding JSON>`
 > **CLAUDE.md paths:** `$claude_md_paths`
 >
+> **Read-only.** Do not use `Edit` or `Write`, and do not run Bash that
+> mutates the tree (no `git checkout`, no `git restore`, no writes into
+> tracked paths). If a fix is warranted, describe it in `fix_proposal` —
+> Phase 8 applies it. Any working-tree changes you make will be reverted
+> before Phase 5.
+>
 > Steps:
 > 1. **Confirm or disprove.** Trace the claim end-to-end in the code.
 >    Read function BODIES, not just signatures. Consult git blame if
@@ -70,9 +76,18 @@ Prompt essence (per §19.5):
 >    find those writers now.
 > 3. **Construct reproduction or disproof.** A concrete input / state /
 >    call sequence that triggers the bug, OR evidence showing it can't.
-> 4. **If real:** produce `fix_proposal.files_to_modify` — every file
->    needing a change, with per-file `what` and `why`. NOT just the
->    obvious site — list every parallel path and consumer that matters.
+> 4. **If real: produce `fix_proposal.files_to_modify` — the full class,
+>    not just the obvious site.**
+>    - Cross-check against `blast_radius.parallel_paths` you just
+>      enumerated. Every entry that exhibits the same invariant
+>      violation MUST appear in `files_to_modify`.
+>    - Grep the repo for in-repo precedent — if another file already
+>      implements the correct pattern (e.g. a null-safe COALESCE, a
+>      strict-regex parser, a non-TTY guard), cite that file:line and
+>      apply the same shape across every site you list.
+>    - A fix that addresses only the discovered site is a partial fix —
+>      it will surface again on the next review as a new finding. Err
+>      wide; Phase 8's fix-group agent will follow the scope you set.
 > 5. **Produce `verification_context`:** `how_to_verify_fix` (specific
 >    grep/read commands that confirm the fix landed everywhere),
 >    `edge_cases_to_preserve`, `what_would_break_if_incomplete`.
@@ -136,6 +151,9 @@ Prompt essence (per §19.6):
 > **Candidate:** `<finding JSON>`
 > **CLAUDE.md paths:** `$claude_md_paths`
 > **trivial_mode:** `<true|false>` (when true, do NOT emit `actionability: auto_fixable` — only `manual` or `report_only` per §13.9).
+>
+> **Read-only.** Do not use `Edit` or `Write`; describe any needed
+> change in the finding — it's not yours to apply.
 >
 > Verify the finding's accuracy only: does the CLAUDE.md really contain
 > this rule? Does the adjacent comment really conflict? Adjust score
@@ -253,6 +271,36 @@ tuple and re-invoke with just the remainder; do NOT re-send the whole
 batch (the committed tuples would be re-applied, and `_apply_finding_set`
 would re-append score_history entries — audit-trail pollution).
 
+### 4.4.5. Tree-cleanliness sweep (belt-and-braces for the read-only preamble)
+
+After `--apply-decisions` returns for Wave 1 (and again for Wave 2
+per §4.5 step 4), run a `git status --porcelain` sweep. Validators have no
+legitimate reason to touch the working tree — the 4.2 / 4.3 prompts
+already forbid it. This catches a prompt-override and restores the
+tree before Phase 5 so a misbehaving validator cannot poison the
+commit `/adams-review-fix` will later produce.
+
+```bash
+dirty=$(git -C "$repo_root" status --porcelain 2>/dev/null)
+if [[ -n "$dirty" ]]; then
+    printf 'phase_4_tree_dirty_reverted: %s\n' \
+        "$(printf '%s\n' "$dirty" | awk '{print $2}' | paste -sd, -)" \
+        >> "$trace_log_path"
+    # Restore tracked-file modifications.
+    git -C "$repo_root" checkout -- . 2>/dev/null || true
+    # Remove anything the sub-agent created that git doesn't know about.
+    printf '%s\n' "$dirty" | awk '/^\?\?/ {print $2}' \
+        | while IFS= read -r p; do rm -f "$repo_root/$p"; done
+fi
+```
+
+Invariant: Phase 0's dirty-tree gate clears the tree before Phase 1,
+and Phases 1–5 are tree-read-only (artifact writes happen in
+`$review_dir`, not in `$repo_root`). Anything `status --porcelain`
+surfaces here is therefore validator-sourced and safely revertable.
+The trace tag `phase_4_tree_dirty_reverted:` surfaces the incident
+for post-mortem.
+
 ### 4.5. Wave 2 (chain retry — optional)
 
 After Wave 1 completes, collect every
@@ -313,6 +361,9 @@ If the resulting list is non-empty AND we haven't already done Wave 2:
 4. Apply the decision table per step 4.4 for Wave 2 results — build
    a second tuple array at `$scratch/phase4-wave2-decisions.json` and
    invoke `--apply-decisions @…` once for the whole Wave 2 batch.
+   Re-run the step 4.4.5 tree-cleanliness sweep after this
+   `--apply-decisions` returns — Wave 2 validators are dispatched with
+   the same prompt as Wave 1, so the same read-only invariant applies.
 
 If the list is empty, proceed to step 4.6.
 
