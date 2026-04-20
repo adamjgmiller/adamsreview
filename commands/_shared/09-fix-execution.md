@@ -174,6 +174,29 @@ Cross-cutting annotations:
 <jq output: any cross_cutting_groups entry whose finding_ids intersect
  this group's>
 
+Sibling findings on files in this group (context only, not in this group):
+<jq output: for each file in $group.files_planned, emit open findings on
+ that file whose id is NOT in $group.finding_ids AND whose disposition is
+ NOT "below_gate". Minimal shape per finding: id, line_range, disposition,
+ and the first line of claim. Filter: current_state == "open". These
+ belong to other fix groups or are manual / report-only — do NOT attempt
+ to fix them in this group. Be aware of them so your edits don't collide
+ with nearby code another agent is about to edit or a reviewer will
+ evaluate separately.>
+
+Validator-noticed patterns Phase 3 demoted (below_gate, same files):
+<jq output: for each file in $group.files_planned, emit open findings
+ with disposition == "below_gate" on that file. Minimal shape: id,
+ line_range, score_phase3, and the first line of claim. (No id-exclusion
+ against $group.finding_ids is needed — below_gate findings are never
+ Phase-8-eligible, so they can't appear in this group by construction.)
+ These are patterns the detection lenses flagged but Phase 3's cheap
+ scoring demoted as low-impact or single-family. They are NOT bugs you
+ need to fix here, but if your edit ends up re-introducing the exact
+ pattern (a stale comment, a missing null-check, a typo), the next
+ review will surface it again. Avoid re-creating patterns Phase 3
+ already saw and rejected.>
+
 CLAUDE.md paths (read as needed for project conventions):
 $claude_md_paths
 

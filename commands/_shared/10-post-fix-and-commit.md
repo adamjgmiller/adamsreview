@@ -164,9 +164,13 @@ Run identity:
 - input_sha: $input_sha
 
 Attempted findings and their validation contexts:
-<jq output: each attempted finding's id, file, line_range, claim,
- validation_result.evidence, validation_result.verification_context,
- plus the fix group id it belongs to — cross-referenced from fix_groups>
+<jq output: each attempted finding's id, file, line_range, claim, plus
+ from validation_result — the evidence array, the blast_radius block
+ (especially parallel_paths and invariants_at_stake — checklist step 5
+ needs these to catch adjacent regressions), the fix_proposal block
+ (especially files_to_modify — checklist step 2 verifies every planned
+ file received an edit), and the verification_context block — plus the
+ fix group id it belongs to, cross-referenced from fix_groups>
 
 Fix-group agent results (what each group said it did):
 <jq output: per-group id, finding_ids, files_modified, files_created,
