@@ -95,9 +95,18 @@ else
     CANDIDATES_JSON="$CANDIDATES_ARG"
 fi
 
-# Validate shape — must be a JSON array.
+# Validate shape — must be a JSON array. On failure, include enough
+# diagnostic info that trace.md readers can tell whether the caller
+# passed empty input, prose, or malformed JSON without re-running.
 if ! echo "$CANDIDATES_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    die_validation "--candidates must parse as a JSON array; got $(echo "$CANDIDATES_JSON" | jq -r 'type' 2>/dev/null || echo 'unparseable JSON')"
+    input_size=${#CANDIDATES_JSON}
+    if [[ $input_size -eq 0 ]]; then
+        die_validation "--candidates received empty input (zero bytes) — caller likely passed an empty lens response or an unset variable; upstream should drop the lens before invoking this helper"
+    else
+        input_type=$(echo "$CANDIDATES_JSON" | jq -r 'type' 2>/dev/null || echo 'unparseable')
+        first60=$(echo "$CANDIDATES_JSON" | head -c 60 | tr '\n' ' ')
+        die_validation "--candidates must parse as a JSON array; got $input_type (size=${input_size}B, head=\"$first60\")"
+    fi
 fi
 
 N=$(echo "$CANDIDATES_JSON" | jq 'length')

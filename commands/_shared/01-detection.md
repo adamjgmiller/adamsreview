@@ -446,8 +446,14 @@ For each sub-agent result, in the order it returns:
 2. **Light JSON repair** if the output isn't a parseable array — strip code
    fences, extract the JSON block. If still unparseable, retry once with
    prompt addendum: "Your prior response was not valid JSON. Return only
-   the JSON array described in the schema." If still unparseable, log to
-   `trace.md` and drop that lens's output per §24.1.
+   the JSON array described in the schema." If still unparseable after the
+   retry, append `lens_dropped_unparseable: lens=<lens-tag> attempts=2` to
+   `$trace_log_path`, **SKIP step 2a entirely for this lens** (no
+   origin-crosscheck call, no tagging, no pool append), and move on to the
+   next lens. The lens contributes zero candidates this run — an unparseable
+   lens is out of scope for blame classification, and origin-crosscheck was
+   never the right recovery tool for it. Step 1.6's summary surfaces the
+   drop count so a silent-fallthrough regression is visible.
 
 2a. **Origin cross-check (§13.11).** Hand the lens's candidate array to
    `origin-crosscheck.sh` so any candidate whose blame range is entirely
@@ -459,12 +465,22 @@ For each sub-agent result, in the order it returns:
    fire.
 
    ```bash
-   corrected_candidates=$(
-     ~/.claude/commands/_shared/tools/origin-crosscheck.sh \
-       --comparison-ref "$comparison_ref" \
-       --candidates "$lens_candidates_json" \
-       2> >(tee -a "$trace_log_path" >&2)
-   )
+   # Defensive pre-check — step 2 should have already dropped unparseable
+   # lens output, but belt-and-suspenders here converts any leaked-through
+   # garbage into a loud skip audit line instead of a helper error plus
+   # silent fallthrough into the tagging step.
+   if ! echo "$lens_candidates_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+       printf 'origin_crosscheck_skipped: lens=%s reason=input_not_array\n' \
+           "$lens_source_tag" >> "$trace_log_path"
+       corrected_candidates="$lens_candidates_json"
+   else
+       corrected_candidates=$(
+         ~/.claude/commands/_shared/tools/origin-crosscheck.sh \
+           --comparison-ref "$comparison_ref" \
+           --candidates "$lens_candidates_json" \
+           2> >(tee -a "$trace_log_path" >&2)
+       )
+   fi
    ```
 
    Stderr (one `origin_crosscheck: id=... action=...` line per
@@ -474,7 +490,10 @@ For each sub-agent result, in the order it returns:
    non-zero exit means something structural (unknown ref, bad JSON).
    Log the stderr to `trace.md` and fall through using
    `$lens_candidates_json` unchanged — respecting the lens across the
-   board is the safe default when cross-check can't run.
+   board is the safe default when cross-check can't run. The
+   `origin_crosscheck_skipped` audit line (different tag from the
+   helper's own `origin_crosscheck:` per-candidate lines) is what step
+   1.6 counts for the summary.
 
 3. **Tag with `sources` and append to the pool.** Do NOT call
    `--add-finding` here; do NOT assign an id. The full-finding jq build
@@ -652,10 +671,16 @@ counts_by_family=$(~/.claude/commands/_shared/tools/artifact-read.sh \
 total_candidates=$(~/.claude/commands/_shared/tools/artifact-read.sh \
   --path "$artifact_path" --filter '.findings | length')
 
+# Surface Phase 1's loud-failure audit tags so the operator sees a non-
+# zero count in the trace + phases.jsonl summary rather than having to
+# grep trace.md themselves. Both zero on a healthy run.
+lens_drops=$(grep -c '^lens_dropped_unparseable:' "$trace_log_path" 2>/dev/null || echo 0)
+oc_skipped=$(grep -c '^origin_crosscheck_skipped:' "$trace_log_path" 2>/dev/null || echo 0)
+
 ~/.claude/commands/_shared/tools/log-phase.sh \
   --review-dir "$review_dir" --phase 1 --name detection \
   --elapsed "$phase_1_elapsed" \
-  --summary "total=$total_candidates; counts_by_family=$counts_by_family; skipped_lenses=<list-if-any>"
+  --summary "total=$total_candidates; counts_by_family=$counts_by_family; skipped_lenses=<list-if-any>; lens_drops=$lens_drops; origin_crosscheck_skipped=$oc_skipped"
 
 ~/.claude/commands/_shared/tools/log-phase.sh \
   --review-dir "$review_dir" --phase 1 --record "$(jq -nc \
