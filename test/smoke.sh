@@ -2662,6 +2662,27 @@ else
     fail "PFD-6: expected 64/1; got missing=$rc_missing badref=$rc_badref"
 fi
 
+# PFD-8: 01-detection.md contains the step 1.2b wiring block. Guards
+# against silent removal — smoke passes for the helper even if the
+# wiring is deleted, so add an explicit presence check.
+DETECTION_MD="$REPO/commands/_shared/01-detection.md"
+if grep -qF '### 1.2b. Prior-fix suspect scan' "$DETECTION_MD" \
+    && grep -qF 'prior-fix-diff.sh' "$DETECTION_MD" \
+    && grep -qF 'prior_fix_suspects=' "$DETECTION_MD"; then
+    pass "PFD-8 (§13.11b): 01-detection.md step 1.2b wires prior-fix-diff.sh"
+else
+    fail "PFD-8: step 1.2b wiring missing from $DETECTION_MD"
+fi
+
+# PFD-9: L2 prompt contains the prior-fix reversion addendum. Guards
+# against the wiring existing but L2's prompt never consuming it.
+if grep -qF 'Prior-fix reversion check' "$DETECTION_MD" \
+    && grep -qF '$prior_fix_suspects' "$DETECTION_MD"; then
+    pass "PFD-9 (§13.11b): L2 prompt consumes \$prior_fix_suspects"
+else
+    fail "PFD-9: L2 prior-fix addendum missing from $DETECTION_MD"
+fi
+
 # PFD-7: Lookback cap — prior fix committed before the --lookback-days
 # window is filtered out of git log --since output, so no suspect.
 mkdir -p "$PFD_DIR/r7"

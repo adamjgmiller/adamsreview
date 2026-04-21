@@ -175,6 +175,43 @@ compute `phase_1_5_elapsed`. Placing it here mirrors Phase 1's
 start at the same turn boundary, so under §13.12 parallel dispatch
 the two `elapsed_sec` values naturally overlap in `phases.jsonl`.
 
+### 1.2b. Prior-fix suspect scan (§13.11b)
+
+Before dispatching lenses, scan git history for prior "fix" commits
+whose changes overlap the PR's diff. The output feeds L2's prompt so
+L2 can judge whether the current change undoes any suspect fix — the
+deterministic half of prior-fix-reversion detection; L2 is the judge.
+
+Skipped when `$trivial_mode` is true (L2 is skipped too, so the
+suspects have no consumer):
+
+```bash
+if [[ "$trivial_mode" != "true" ]]; then
+    reviewed_files_csv=$(printf '%s\n' "$reviewed_files_all" \
+      | awk 'NF' | paste -sd, -)
+
+    prior_fix_suspects=$(
+        ~/.claude/commands/_shared/tools/prior-fix-diff.sh \
+          --comparison-ref "$comparison_ref" \
+          --reviewed-files "$reviewed_files_csv" \
+          2> >(tee -a "$trace_log_path" >&2)
+    ) || prior_fix_suspects="[]"
+else
+    prior_fix_suspects="[]"
+fi
+```
+
+On helper non-zero exit, fall back to `[]` — L2's prior-fix section
+becomes a no-op, which is the right degraded behavior (the rest of
+L2's prompt still runs normally). Per-file audit lines
+(`prior_fix_diff: file=... hunks=... suspects=...`) flow into
+`trace.md` via the `tee -a` pattern — mirrors `origin-crosscheck.sh`
+dispatch at step 1.4 step 2a.
+
+`$prior_fix_suspects` is held in orchestrator working context and
+consumed once at step 1.3 (L2's prompt). No artifact write here —
+suspects are prompt input, not findings.
+
 ### 1.3. Dispatch the lenses (one turn, one Agent call per applicable lens)
 
 #### L1 — diff-local scan (Haiku)
@@ -274,6 +311,29 @@ Prompt essence:
 >    half-confident ones. Phase 3 filters weak candidates; a bug
 >    co-located with a known bug usually shares a fix and is cheapest
 >    to surface now.
+>
+> **Prior-fix reversion check (§13.11b).** The following prior commits
+> (subject matches fix-intent patterns, reachable from the comparison
+> ref — PR-internal commits already filtered out) touched lines that
+> this PR also modifies:
+>
+> ```
+> $prior_fix_suspects
+> ```
+>
+> (Empty array → nothing to check; skip this section.)
+>
+> For each suspect, compare the current diff's changes at the overlapping
+> lines against what the prior fix commit did. Flag as a candidate when
+> the current diff appears to undo the prior fix — either by reverting
+> to the pre-fix line content, by introducing a parallel code path that
+> behaves like the pre-fix code, or by broadening a narrow condition the
+> prior fix specifically narrowed. Include the prior fix commit's short
+> SHA and subject in your `claim` so a reviewer can trace the history.
+>
+> `impact_type` for a regression-of-prior-fix: `correctness`.
+> `source_family`: `structural-family` (L2's default — this is still a
+> structural observation, just with history awareness).
 >
 > Read function BODIES, not just signatures. Flag contract changes,
 > nullability shifts, return-shape changes, concurrent-write assumption
