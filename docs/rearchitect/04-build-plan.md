@@ -633,9 +633,9 @@ Many extensions the user has on WIP branches are likely of one of these shapes:
 
 - **A new scanner.** Drop into `src/scan/scanners/` + one prompt md + one agent md + one registry entry. See `05-extending.md § Adding a scanner`.
 - **A new preflight enrichment** (deterministic data feed). Drop into `src/preflight/enrichments/` + registry entry. See `05-extending.md § Adding a preflight enrichment`. The Stage 2.9 `prior-fix-diff` helper landed via this extension point.
-- **A new fix strategy.** Extension point in `src/fix/strategies/` with a shared `FixStrategy` interface. See `05-extending.md § Fix strategies`.
+- **A new fix strategy.** Extension point in `src/fix/strategies/` with a shared `FixStrategy` interface. See `05-extending.md § Adding a fix strategy`.
 - **A new external tool integration.** External scanners are regular scanners; see `02-scanners.md § External scanners`.
-- **A new report section.** Add to the renderer's section ordering. See `05-extending.md § Report sections`.
+- **A new report section.** Add to the renderer's section ordering. See `05-extending.md § Adding a report section`.
 - **A new CLI flag or mode.** The flag parser is centralized; add to `src/cli.ts`.
 - **A new way to inject candidates** (e.g. CI hook, Slack listener). The `/adams-review:add` verb owns paste + structured input today; future input sources would extend the verb. Out of v1 scope but the pattern is established.
 

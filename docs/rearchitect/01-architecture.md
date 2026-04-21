@@ -85,7 +85,7 @@ Today's Phase 2 dedup (30k tokens) and Phase 3 scoring (58k) are two Sonnet call
 Two auto-graduate rules let candidates skip the rubric prompt entirely:
 
 1. **Corroboration shortcut.** When two scanners independently flag the same candidate (matching file + line proximity), Triage auto-graduates it to `confidence: high` regardless of its rubric score. This is today's "≥2 source families auto-graduate" rule.
-2. **External-add bypass.** Candidates injected by `/adams-review:add` carry `confidence: high` from the verb itself and skip Triage entirely. The reasoning: a human bothered to escalate them, and deep Investigate is the right precision gate (not a Sonnet rubric). Mirrors today's review-add design — see `§ Add flow` below and `03-commands-and-ux.md § Add flow`.
+2. **External-add bypass.** Candidates injected by `/adams-review:add` carry `confidence: high` from the verb itself and skip Triage entirely. The reasoning: a human bothered to escalate them, and deep Investigate is the right precision gate (not a Sonnet rubric). Mirrors today's review-add design — see `§ Add flow` below and `03-commands-and-ux.md § Add` (under `Interactive flows`).
 
 ## Data model
 
@@ -308,7 +308,7 @@ class Store {
 }
 ```
 
-No schema-v1 wire format; Zod types are the single source. Migration story for existing on-disk artifacts (`latest.txt` + `artifact.json`) lives in `04-build-plan.md § Migration`.
+No schema-v1 wire format; Zod types are the single source. Migration story for existing on-disk artifacts (`latest.txt` + `artifact.json`) lives in `04-build-plan.md § Stage 11 — Migration and decommission`.
 
 ## Scanner dispatch (outline, details in `02-scanners.md`)
 
