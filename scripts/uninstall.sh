@@ -30,7 +30,7 @@ remove_link() {
 }
 
 remove_link "$COMMANDS_DIR/_shared" "$REPO_ROOT/commands/_shared"
-for cmd in adams-review adams-review-fix adams-review-walkthrough adams-review-promote; do
+for cmd in adams-review adams-review-fix adams-review-walkthrough adams-review-promote adams-review-add; do
   remove_link "$COMMANDS_DIR/$cmd.md" "$REPO_ROOT/commands/$cmd.md"
 done
 

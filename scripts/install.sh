@@ -39,7 +39,7 @@ fi
 # --- Symlinks --------------------------------------------------------------
 mkdir -p "$COMMANDS_DIR"
 ln -sfn "$REPO_ROOT/commands/_shared" "$COMMANDS_DIR/_shared"
-for cmd in adams-review adams-review-fix adams-review-walkthrough adams-review-promote; do
+for cmd in adams-review adams-review-fix adams-review-walkthrough adams-review-promote adams-review-add; do
   ln -sfn "$REPO_ROOT/commands/$cmd.md" "$COMMANDS_DIR/$cmd.md"
 done
 
@@ -66,6 +66,7 @@ Installed:
   $COMMANDS_DIR/adams-review-fix.md          -> $REPO_ROOT/commands/adams-review-fix.md
   $COMMANDS_DIR/adams-review-walkthrough.md  -> $REPO_ROOT/commands/adams-review-walkthrough.md
   $COMMANDS_DIR/adams-review-promote.md      -> $REPO_ROOT/commands/adams-review-promote.md
+  $COMMANDS_DIR/adams-review-add.md          -> $REPO_ROOT/commands/adams-review-add.md
 
 Next steps:
   1. Verify: bash test/smoke.sh    (expect "smoke: PASS (…)")

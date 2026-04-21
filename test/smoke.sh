@@ -2529,6 +2529,105 @@ else
     fail "AS-3: expected exit 64, got $code"
 fi
 
+# ------------------------------------------------------------------ /adams-review-add command
+# RA-* assertions cover the structural shape of the new top-level command
+# (commands/adams-review-add.md). The command is a prose markdown file
+# that Claude Code interprets — these assertions verify the load-bearing
+# pieces are present, mirroring the VR-* / PF-* pattern for prompts that
+# only an LLM can execute.
+ADD_MD="$REPO/commands/adams-review-add.md"
+
+# RA-1: command file exists.
+if [[ -f "$ADD_MD" ]]; then
+    pass "RA-1: commands/adams-review-add.md exists"
+else
+    fail "RA-1: commands/adams-review-add.md missing"
+fi
+
+# RA-2: leftover-attempted hard abort present (mirrors Phase 7 step 4).
+# Re-uses the same "attempted" detection + recovery message shape so a
+# /adams-review-fix run in flight cannot be silently extended by an add.
+if grep -qF 'select(.current_state == "attempted")' "$ADD_MD" \
+    && grep -qF 'leftover_ids' "$ADD_MD"; then
+    pass "RA-2: leftover-attempted hard abort present (mirrors Phase 7)"
+else
+    fail "RA-2: leftover-attempted gate missing from $ADD_MD"
+fi
+
+# RA-3: --start-from wired through assign-finding-ids.sh so new findings
+# continue past the highest existing F-id (the AS-2 helper assertion is
+# the helper-side proof; this is the wiring proof).
+if grep -qF 'assign-finding-ids.sh --start-from' "$ADD_MD"; then
+    pass "RA-3: assign-finding-ids.sh --start-from wired into ID assignment"
+else
+    fail "RA-3: --start-from invocation missing from $ADD_MD"
+fi
+
+# RA-4: paste-mode normalizer Sonnet prompt present. Returns the
+# standard candidate-array shape with origin_confidence: low and
+# external-add-family family.
+if grep -qF 'normalizing an externally-sourced code-review note' "$ADD_MD" \
+    && grep -qF 'external-add-family' "$ADD_MD" \
+    && grep -qF '"origin_confidence": "low"' "$ADD_MD"; then
+    pass "RA-4: paste-normalizer prompt present (origin_confidence=low, external-add-family)"
+else
+    fail "RA-4: paste-normalizer prompt missing or malformed in $ADD_MD"
+fi
+
+# RA-5: one-direction dedup Sonnet prompt present. Each new candidate
+# matches AT MOST ONE existing finding; existing findings are NOT
+# compared against each other.
+if grep -qF 'deduplicating new bug candidates' "$ADD_MD" \
+    && grep -qF 'matches AT MOST ONE existing finding' "$ADD_MD" \
+    && grep -qF 'NOT compared against each other' "$ADD_MD"; then
+    pass "RA-5: dedup prompt present with one-direction matching constraint"
+else
+    fail "RA-5: dedup prompt missing or malformed in $ADD_MD"
+fi
+
+# RA-6: structured one-shot mode (--file/--line/--claim) builds a
+# candidate inline without invoking the normalizer.
+if grep -qF '"external-add:cli"' "$ADD_MD" \
+    && grep -qF 'external-add-family' "$ADD_MD" \
+    && grep -qF 'cli_file' "$ADD_MD" \
+    && grep -qF 'cli_claim' "$ADD_MD"; then
+    pass "RA-6: structured one-shot mode builds inline candidate (cli sources)"
+else
+    fail "RA-6: structured one-shot mode missing from $ADD_MD"
+fi
+
+# RA-7: re-render + re-publish to existing comment_id (so the new
+# findings appear in the same PR comment, not a duplicate).
+if grep -qF 'artifact-render.py' "$ADD_MD" \
+    && grep -qF 'artifact-publish.sh' "$ADD_MD" \
+    && grep -qF -e '--comment-id "$comment_id"' "$ADD_MD"; then
+    pass "RA-7: re-render + re-publish to existing comment_id wired"
+else
+    fail "RA-7: render/publish flow missing from $ADD_MD"
+fi
+
+# RA-8: Phase 4 validation lane-aware with NO Wave 2 chain retry.
+# Verifies the deep + light dispatch is present AND that the no-Wave-2
+# constraint is documented in the deep validator prompt.
+if grep -qF 'no Wave 2' "$ADD_MD" \
+    && grep -qF 'deep validator' "$ADD_MD" \
+    && grep -qF 'light confirmation validator' "$ADD_MD" \
+    && grep -qF 'apply-decisions' "$ADD_MD"; then
+    pass "RA-8: Phase 4 validation lane-aware, no Wave 2, --apply-decisions wired"
+else
+    fail "RA-8: Phase 4 dispatch incomplete in $ADD_MD"
+fi
+
+# RA-9: install.sh includes adams-review-add in the symlink loop AND
+# the verify/output blocks. Without this, /adams-review-add isn't
+# discoverable by Claude Code after install.
+if grep -qF 'adams-review-add' "$REPO/scripts/install.sh" \
+    && grep -qF 'adams-review-add' "$REPO/scripts/uninstall.sh"; then
+    pass "RA-9: install/uninstall scripts include adams-review-add symlink"
+else
+    fail "RA-9: install or uninstall script missing adams-review-add entry"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

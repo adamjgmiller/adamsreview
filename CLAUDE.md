@@ -6,16 +6,17 @@ Read this first on a fresh session. It's procedural (how to work in the repo) pl
 
 ## What this repo is
 
-Build repo for four personal Claude Code slash commands:
+Build repo for five personal Claude Code slash commands:
 
 - **`/adams-review`** — multi-lens code review of a branch or PR (Phases 0–6).
+- **`/adams-review-add`** — inject externally-sourced findings (cloud `/ultrareview` paste, Opus once-over, manual finds, etc.) into the most recent review's existing artifact. Free-form paste mode dispatches a Sonnet normalizer; structured `--file/--line/--claim` mode skips the normalizer; one Sonnet dedup pass against existing findings; Phase 4 validation lane-aware (Opus deep / Sonnet light) without Wave 2; re-renders + re-publishes to the existing PR comment.
 - **`/adams-review-walkthrough`** — interactive driver that walks the reviewer through findings `/adams-review-fix` would skip. Preflight offers a two-tier scope choice (default **Qualifying** — excludes Phase-3-demoted `below_gate`; **Full skip set** adds them back). `pre_existing_report` findings are always excluded from both walk tiers and routed exclusively to the end-of-run issue-filing phase (one-by-one draft/confirm/edit flow that calls `gh issue create`). Per-finding Sonnet briefing with an "Edit the fix hint" override path; for `confirmed_manual` / `confirmed_report` the briefer proposes best-effort hints. Closes the light-lane `confirmed_auto` gap where the default Phase 8 lane filter skips mechanically-fixable ux/policy findings.
 - **`/adams-review-fix`** — automated fix loop for auto-fixable findings (Phases 7–9).
 - **`/adams-review-promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adams-review-fix` afterwards to apply. Used internally by `/adams-review-walkthrough` via `commands/_shared/promote-core.md` + `--defer-publish`.
 
-All four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`). The only unexecuted original scope is Stage 4 (fragment shrink), scoped in `plans/stage-4-fragment-shrink.md`.
+The original four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`). `/adams-review-add` was added on branch `review-add` (plan: `plans/review-add.md`). The only unexecuted original scope is Stage 4 (fragment shrink), scoped in `plans/stage-4-fragment-shrink.md`.
 
-**Recommended flow on a non-trivial PR:** `/adams-review` → `/adams-review-walkthrough` (optional) → `/adams-review-fix`. Each command is independent; `/adams-review-promote` remains useful for one-off manual promotions outside the walkthrough.
+**Recommended flow on a non-trivial PR:** `/adams-review` → (optional) `/adams-review-add` to inject parallel-review findings → `/adams-review-walkthrough` (optional) → `/adams-review-fix`. Each command is independent; `/adams-review-promote` remains useful for one-off manual promotions outside the walkthrough.
 
 ## Pipeline shape
 
@@ -43,6 +44,15 @@ All four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5,
 └── Phase 9 — Post-fix Opus review pre-commit; aggregate outcomes per group;
               revert regression groups (checkout modified, rm created);
               commit surviving groups with outcome in message; push; append fix_attempts
+
+/adams-review-add [<paste...>] [--file path --line N --claim "..."] [--impact <type>] [--no-dedup]
+└── Locate artifact (latest.txt) → leftover-attempted gate → build candidates
+    (paste-normalizer Sonnet | structured one-shot | mixed) → dedup against
+    existing findings (Sonnet, one-direction) → assign IDs continuing past
+    max existing F-id (assign-finding-ids.sh --start-from) → --add-finding loop →
+    Phase 4 validation lane-aware, NO Wave 2 (Opus deep / Sonnet light) →
+    --apply-decisions → §13.1 pre-existing override re-assertion →
+    re-render → re-publish to existing comment_id → trace + summary
 ```
 
 ## Finding state model
@@ -169,6 +179,7 @@ adams-review/
 │                                     stage-4-fragment-shrink live)
 ├── commands/
 │   ├── adams-review.md             ← top-level slash command (Phases 0–6)
+│   ├── adams-review-add.md         ← top-level slash command (inject external findings)
 │   ├── adams-review-walkthrough.md ← top-level slash command (interactive)
 │   ├── adams-review-fix.md         ← top-level slash command (Phases 7–9)
 │   ├── adams-review-promote.md     ← top-level slash command (metadata promote)
