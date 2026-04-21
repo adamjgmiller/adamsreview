@@ -40,14 +40,29 @@ export interface Scanner {
   runWhen(ctx: ReviewCtx): boolean;
 
   /** Compose the prompt. MUST put the stable prefix (diff, CLAUDE.mds, manifest) at the
-   *  top of the prompt, before scanner-specific instructions, so Anthropic prompt caching
-   *  can hit across scanners. Orchestrator inserts a cache_control breakpoint between
-   *  the prefix and the scanner-specific tail. */
-  buildPrompt(ctx: ReviewCtx): Prompt;
+   *  top of the user message, before scanner-specific instructions, so Anthropic prompt
+   *  caching can hit across scanners. External scanners that spawn a subprocess use the
+   *  async return shape. */
+  buildPrompt(ctx: ReviewCtx): Promise<Prompt>;
 
   /** Parse the sub-agent's raw output into candidates. Return an empty array on total
    *  parse failure; the orchestrator logs the error and moves on. */
   parse(raw: string, ctx: ReviewCtx): Candidate[];
+}
+
+export interface Prompt {
+  /** Optional additional system-prompt content layered on top of the agent's own system.
+   *  External-scanner normalizers use this; internal scanners usually leave it undefined. */
+  system?: string;
+
+  /** User-message body. MUST begin with the shared cacheable prefix
+   *  (diff + CLAUDE.mds + manifest); the scanner-specific tail follows the breakpoint. */
+  user: string;
+
+  /** Cache breakpoints on the user message. `null` disables caching (e.g. external scanners
+   *  whose inputs vary per invocation). `[{ type: "ephemeral", on: "prefix" }]` is the
+   *  standard setup — the orchestrator splits the user content at the prefix boundary. */
+  cache_control: Array<{ type: "ephemeral"; on: "prefix" }> | null;
 }
 
 export interface Candidate {
@@ -74,8 +89,12 @@ export interface ReviewCtx {
   repetition: Record<string, number>;                              // scanner id → replica count
   enrichments: Record<string, unknown>;                            // deterministic preflight data (e.g. "prior-fix-diff")
                                                                    // see 01-architecture.md § Preflight enrichment
+  external_enabled: Record<string, boolean>;                       // per-external-scanner enable flags
+                                                                   // (set by --mode ensemble or --scanners overrides)
 }
 ```
+
+Internal helpers referenced below (`sharedPrefix`, `EXTERNAL_NORMALIZER_SYSTEM`, the `run` subprocess wrapper) live in `src/scan/prompt-shared.ts` and `src/util/exec.ts`. They're shown without imports in the examples; real scanner code imports them explicitly.
 
 ## Scanner packaging (three files per scanner)
 
@@ -193,11 +212,11 @@ Designed to *match* today's ~1.48M-token spend while extracting more recall from
 | **holistic** | opus | repo-wide | 1x | ~200–260k | Unconstrained "senior reviewer" safety net. Stage 2.9's L7. |
 | **Total** | | | | **~1.17M–1.26M** | vs. today's 677k Phase 1 (+74%–86%); thorough is **recall-first**, not budget-first |
 
-With prompt caching hitting across the seven dispatches (the diff+CLAUDE.md prefix is byte-identical for every scanner including replicas), expected realized cost is **~1.0M–1.1M** for detection. With Triage (~80k) + Investigate (~440k) + Finalize (~30k), end-to-end thorough lands around **~1.5–1.6M tokens** — comparable to today's 1.48M but with significantly higher recall from the corroboration mechanism (≥2 scanners flagging same candidate → auto-graduate).
+With prompt caching hitting across the thorough-mode dispatches (the diff+CLAUDE.md prefix is byte-identical for every scanner including replicas), expected realized cost is **~1.0M–1.1M** for detection. With Triage (~80k) + Investigate (~440k) + Finalize (~30k), end-to-end thorough lands around **~1.5–1.6M tokens** — comparable to today's 1.48M but with significantly higher recall from the corroboration mechanism (≥2 scanners flagging same candidate → auto-graduate).
 
 ### Cheaper alternative: `--mode standard`
 
-For reviewers who want the token-reduction win, `--mode standard` drops to four scanners (careful-reader, combined-sweep, policy-claude-md, ux-behavioral), 1x each, no holistic. Projected: ~440–570k for detection, ~900k end-to-end (−40% vs. today). See `00-overview.md § Targets` for the budget split.
+For reviewers who want the token-reduction win, `--mode standard` drops to the cheaper tier (careful-reader, combined-sweep, policy-claude-md, ux-behavioral) at 1x each, no holistic. Projected: ~440–570k for detection, ~900k end-to-end (−40% vs. today). See `00-overview.md § Targets` for the budget split.
 
 ### Why these specific consolidations
 
@@ -216,17 +235,19 @@ For reviewers who want the token-reduction win, `--mode standard` drops to four 
 ## Modes
 
 ```
---mode quick       2 scanners (diff-local + combined-sweep), all Sonnet/Haiku, no Opus.
+--mode quick       Small subset (diff-local + combined-sweep), Sonnet/Haiku only.
                    Fast PR pass; useful for trivial diffs or when iterating.
---mode standard    4 scanners, 1x each, no holistic. Cost-tier opt-in (~900k tokens, -40% vs today).
+--mode standard    Cheaper tier, 1x each, no holistic. Cost-tier opt-in (~900k tokens, -40% vs today).
                    Pick when you want the token-reduction win and accept lower recall.
---mode thorough    6 scanners (5 base + holistic) with 2x replicas on careful-reader and
-                   combined-sweep. **Default mode.** Recall-first; ~1.5-1.6M tokens (parity
+--mode thorough    Full base portfolio + holistic, with replicas on careful-reader and
+                   combined-sweep. **Default mode.** Recall-first; ~1.5–1.6M tokens (parity
                    with today, but with corroboration voting + holistic safety net).
---mode ensemble    Thorough + 3 external scanners (CodeRabbit, Codex, PR-scrape).
+--mode ensemble    Thorough + external scanners (CodeRabbit, Codex, PR-scrape).
                    Adds human-adjacent perspectives from outside the Anthropic model family;
-                   requires external CLI auth/setup. ~1.8-2.3M tokens.
+                   requires external CLI auth/setup. ~1.8–2.3M tokens.
 ```
+
+See the `DEFAULTS` map in the Registry section above for the authoritative per-mode scanner list.
 
 The `--mode` names are deliberately coarse. Fine control uses `--scanners` + `--repeat`:
 
@@ -257,7 +278,7 @@ Recommended repetition defaults by mode:
 
 *only when `user_facing`
 
-(Ensemble adds the three external scanners on top, each at 1x.)
+(Ensemble adds the external scanners on top of the thorough defaults, each at 1x.)
 
 Recall/cost curves should be measured empirically after the tool is running. The repetition knob is cheap to add (it's just a `for` loop) so it's available from day one.
 
@@ -276,6 +297,10 @@ External scanners have the same interface. They're dispatched via Bash (backgrou
 ```ts
 // src/scan/scanners/ext-coderabbit.ts
 
+import { run } from "../../util/exec";
+import { EXTERNAL_NORMALIZER_SYSTEM } from "../prompt-shared";
+import type { Scanner } from "../types";
+
 export const coderabbit: Scanner = {
   id: "ext-coderabbit",
   label: "CodeRabbit CLI",
@@ -284,10 +309,10 @@ export const coderabbit: Scanner = {
   runWhen: ctx => ctx.external_enabled.coderabbit,
 
   async buildPrompt(ctx) {
-    const rawOutput = await runCliInBackground("coderabbit", ["review", ...]);
+    const { stdout } = await run("coderabbit", ["review", "--json"], { cwd: ctx.repo_root });
     return {
       system: EXTERNAL_NORMALIZER_SYSTEM,
-      user: `Normalize this CodeRabbit output into candidates:\n\n${rawOutput}`,
+      user: `Normalize this CodeRabbit output into candidates:\n\n${stdout}`,
       cache_control: null,                                          // external outputs aren't cache-friendly
     };
   },

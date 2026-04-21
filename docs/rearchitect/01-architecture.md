@@ -4,23 +4,22 @@ Pipeline shape, data model, orchestrator model, artifact store, event log. The "
 
 ## Pipeline shape
 
-Five stages. Each is a pure function from artifact + repo state to a set of events. Stages never mutate in place; they emit events that the store applies atomically.
+Each stage is a pure function from artifact + repo state to a set of events. Stages never mutate in place; they emit events that the store applies atomically.
 
 ```
-Preflight  →  Enrichment  →  Scan  →  Triage  →  Investigate  →  Finalize
-(det)         (det data     (fan-out)  (gate)    (per-candidate)  (render + publish)
-              for scanners)
-                                                                    ↓
-                                                              (optional)
-                                                              Fix  →  Verify  →  Commit
-                                                              Add  →  Dedup  →  Investigate  →  Finalize
-                                                                      (no Triage; skips gate)
+Preflight  →  Scan  →  Triage  →  Investigate  →  Finalize
+(det, incl.   (fan-out)  (gate)    (per-candidate)  (render + publish)
+ enrichment)
+                                                        ↓
+                                                  (optional)
+                                                  Fix  →  Verify  →  Commit
+                                                  Add  →  Dedup  →  Investigate  →  Finalize
+                                                          (skips Triage)
 ```
 
-Compared to today's 10 phases, the consolidations are:
+Compared to today's phased pipeline, the consolidations are:
 
-- **Preflight** (~today's Phase 0): branch/PR detection, base-branch freshness, dirty-tree, claude-md discovery, trivial-diff check, user-facing classifier. Deterministic shell + one cheap Haiku classifier.
-- **Enrichment** (new; no direct analogue today): deterministic analyses that produce structured data for scanner prompts. First built-in is `prior-fix-diff` (git-history walk for regressions of prior named fixes). See `§ Preflight enrichment` below. Counted as part of the Preflight stage for budgeting; called out separately here because it's an extension point.
+- **Preflight** (~today's Phase 0, expanded): branch/PR detection, base-branch freshness, dirty-tree, claude-md discovery, trivial-diff check, user-facing Haiku classifier, and then deterministic **enrichments** (first built-in is `prior-fix-diff` — a git-history walk for regressions of prior named fixes). Enrichments produce structured data that scanner prompts opt into via `ctx.enrichments.<id>`. See `§ Preflight enrichment` below.
 - **Scan** (~today's Phase 1 + 1.5 merged): multi-perspective candidate detection. External scanners (CodeRabbit/Codex/PR-scrape) are regular members of the scanner list, not a separate adapter. See `02-scanners.md`.
 - **Triage** (~today's Phase 2 + Phase 3 merged): dedup + cheap scoring + gate, in one Sonnet agent. Single prompt that both groups near-duplicates and assigns a confidence tier to each surviving candidate. Cross-family agreement (same finding from ≥2 scanners) auto-graduates.
 - **Investigate** (~today's Phase 4a + 4b merged): per-candidate deep validation. Deep-lane (correctness, security) gets Opus with blast-radius instructions; light-lane (policy, comments, ux) gets Sonnet with a lighter prompt. No separate phases — one dispatch function that picks the model per candidate.
@@ -31,13 +30,13 @@ Two optional secondary invocations reuse the same stages in different combinatio
 - **Fix** (`/adams-review:fix`): loads an existing artifact, groups eligible findings, dispatches fix-group agents, post-fix review, revert regressions, commit + push.
 - **Add** (`/adams-review:add`): loads an existing artifact, normalizes an externally-sourced paste (or takes structured flags) into candidates, dedups against existing findings, **skips Triage** (externally-sourced candidates auto-graduate — someone already paid the filtering cost), runs lane-aware Investigate, re-renders + re-publishes. See `§ Add flow` below.
 
-The phase count drops from 10 to 5 (+3 for fix, +1 for add). Every merged phase saves a context-load + a per-phase token-logging block + a summary round-trip.
+Every merged phase saves a context-load + a per-phase token-logging block + a summary round-trip.
 
 ## Preflight enrichment
 
 **Motivation.** Some of the highest-value signals for scanner prompts are cheap to compute deterministically and expensive to compute with an LLM. Example: "did this PR broaden a predicate in a way that reverts a prior commit whose message named a fix?" is a `git log -L` regex walk — no reasoning required. But making `careful-reader` re-derive it on every run wastes Opus tokens and isn't reliable.
 
-Enrichment is the seam between Preflight and Scan where deterministic analyses produce structured data, added to `ReviewCtx.enrichments.<name>`. Scanner `buildPrompt` implementations opt into the data they want.
+Enrichments run at the tail of Preflight — after branch/diff detection and the user-facing classifier, before Scan dispatches. Each produces structured data, added to `ReviewCtx.enrichments.<name>`. Scanner `buildPrompt` implementations opt into the data they want.
 
 ### Enrichment contract
 
@@ -206,9 +205,9 @@ Event types:
 type Event =
   | { kind: "review_started"; review_id, reviewed_sha, base_branch, ... }
   | { kind: "preflight_classified"; user_facing, trivial, claude_mds }
-  | { kind: "enrichment_returned"; enrichment_id, ok, elapsed_ms, payload_summary }
+  | { kind: "enrichment_returned"; enrichment_id, ok, elapsed_ms, payload_summary, error? }
   | { kind: "scan_dispatched"; scanner_id, model, replica }
-  | { kind: "scan_returned"; scanner_id, replica, candidate_ids[], tokens }
+  | { kind: "scan_returned"; scanner_id, replica, candidate_ids[], tokens, error? }
   | { kind: "candidate_added"; id, file, line_range, claim, impact, sources, ... }
   | { kind: "candidate_externally_added"; id, channel, sources, raw_input_length }
   | { kind: "candidates_merged"; keeper_id, merged_ids[] }
@@ -229,7 +228,7 @@ No transition whitelist is required — events only append, and derived disposit
 
 The tool ships as a Claude Code plugin. Slash commands (one file per verb, under the plugin's `commands/` directory) are thin trampolines that shell into a compiled-TypeScript Node ESM script at `scripts/orchestrator.mjs` for every decision. The script emits structured JSON describing the next step; the slash command reads that JSON and dispatches `Agent`, `AskUserQuestion`, or prints to chat accordingly. The script never makes an outbound HTTP call — it is pure data folding plus subprocess helpers (`git`, `gh`).
 
-Per-turn slash-command prompt surface: ~40 lines (loop + dispatch protocol), constant across the whole review. Compare to today's ~4,600 lines (aggregate fragment context).
+Per-turn slash-command prompt surface: a short loop + dispatch-protocol fragment, constant across the whole review. Compare to today's aggregate fragment context (measured at ~4,600 lines in the current repo).
 
 ### Dispatch-turn protocol
 
@@ -240,11 +239,13 @@ The orchestrator emits one JSON object per step. Example:
   "step": 3,
   "next_step": "dispatch_agents",
   "dispatches": [
-    { "subagent_type": "scanner-careful-reader", "prompt": "<embedded>", "replica": 0 },
-    { "subagent_type": "scanner-combined-sweep", "prompt": "<embedded>", "replica": 0 }
+    { "subagent_type": "adams-review:scanner-careful-reader", "prompt": "<embedded>", "replica": 0 },
+    { "subagent_type": "adams-review:scanner-combined-sweep", "prompt": "<embedded>", "replica": 0 }
   ]
 }
 ```
+
+`subagent_type` uses the plugin-namespaced form `adams-review:<agent-name>` — that's the canonical id Claude Code exposes for plugin-bundled agents, and it's what the `Agent` tool-use block receives.
 
 Slash command behavior per `next_step`:
 
@@ -284,7 +285,7 @@ rev_01K…/
 ├── artifact.json           ← derived view over events (re-generated on each apply)
 ├── events.jsonl            ← append-only source of truth
 ├── artifact.md             ← rendered report
-└── tokens.jsonl            ← per-sub-agent token accounting (one of the event kinds, extracted for quick look-up)
+└── tokens.jsonl            ← per-sub-agent token accounting — projection over the event kinds that carry token counts (scan_returned, investigation_returned, fix_attempted), extracted for quick look-up
 ```
 
 `trace.md` + `phases.jsonl` from today are absorbed into `events.jsonl`. One source of truth; anything today's split logs expose is a jq filter or a short Node one-liner over the event stream.

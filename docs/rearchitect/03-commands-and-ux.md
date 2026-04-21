@@ -1,13 +1,13 @@
 # 03 — Commands and UX
 
-The user-facing surface. Six namespaced slash commands, predictable flags, an interactive walkthrough that uses native Claude Code UI elements.
+The user-facing surface. Namespaced slash commands under a single plugin, predictable flags, an interactive walkthrough that uses native Claude Code UI elements.
 
 ## Commands
 
-Today has four top-level slash commands. New world has six under a single plugin namespace — one command file per verb so each gets its own `description`, `argument-hint`, and `allowed-tools`:
+Today's four flat top-level commands collapse into a single plugin namespace — one command file per verb so each gets its own `description`, `argument-hint`, and `allowed-tools`:
 
 ```
-/adams-review:review                    # Full review: preflight → enrichment → scan → triage → investigate → finalize
+/adams-review:review                    # Full review: preflight → scan → triage → investigate → finalize
 /adams-review:walkthrough               # Interactive per-finding walk; promote/skip/file-issue/dismiss
 /adams-review:fix                       # Apply eligible fixes; post-fix review; commit or revert
 /adams-review:add [<paste...>]          # Inject externally-sourced findings (paste / structured) into existing artifact
@@ -17,7 +17,7 @@ Today has four top-level slash commands. New world has six under a single plugin
 
 **Recommended flow on a non-trivial PR:** `/adams-review:review` → (optional) `/adams-review:add` → (optional) `/adams-review:walkthrough` → `/adams-review:fix`. Each verb is independent; `:promote` is for one-off manual promotions outside the walkthrough.
 
-Each command file is a 30–60 line trampoline that shells into the orchestrator with its verb. Example:
+Each command file is a short trampoline that shells into the orchestrator with its verb. Example:
 
 ```markdown
 # commands/review.md → /adams-review:review
@@ -42,11 +42,21 @@ The orchestrator emits one JSON step object per turn. For each step:
 See `01-architecture.md § Dispatch-turn protocol` for the full protocol.
 ```
 
-`commands/walkthrough.md`, `commands/fix.md`, `commands/promote.md`, `commands/history.md` follow the same shape — only the first arg to the orchestrator (the verb) and the `allowed-tools` differ (e.g. `history` doesn't need `Agent`; `walkthrough` needs `AskUserQuestion`).
+The other command files (`walkthrough.md`, `fix.md`, `add.md`, `promote.md`, `history.md`) follow the same shape — only the first arg to the orchestrator (the verb) and the `allowed-tools` differ (e.g. `history` doesn't need `Agent`; `walkthrough` needs `AskUserQuestion`).
 
-Per-turn slash-command prompt surface: ~40 lines of loop-and-dispatch instructions, *constant across every review*. No phase-specific fragments inlined. The same protocol fragment appears in all five command files; the orchestrator provides the step JSON that determines the work.
+Per-turn slash-command prompt surface: a short loop-and-dispatch fragment, *constant across every review*. No phase-specific fragments inlined. The same protocol fragment appears in every command file; the orchestrator provides the step JSON that determines the work.
 
 ## Flags (summary)
+
+Global flags available on every verb:
+
+```
+--dry-run             for review/add: run through detection + triage but skip investigate/publish.
+                      For fix/walkthrough/promote: skip side effects (no git writes, no PR POST/PATCH).
+                      For history: no-op.
+```
+
+`/adams-review:review`:
 
 ```
 /adams-review:review [--mode MODE] [--scanners LIST] [--no-scanner NAME] [--repeat ID=N]
@@ -59,20 +69,19 @@ Per-turn slash-command prompt surface: ~40 lines of loop-and-dispatch instructio
 --full                force user_facing=true, skip trivial-mode early-exit
 --threshold N         Investigate → eligibility gate (default: confidence high)
 --base BRANCH         override detected base branch
---dry-run             preflight + scan + triage, skip investigate/finalize;
-                      artifact written but not published
 ```
 
-`--mode thorough` is the default. It runs 6 scanners (5 base + holistic) with 2x replicas on careful-reader and combined-sweep, projecting ~1.5–1.6M tokens — comparable to today's spend but with significantly higher recall from corroboration voting + the unconstrained holistic safety net. Pick `--mode standard` for the cheaper (~900k) pass; `--mode quick` for trivial diffs; `--mode ensemble` to add CodeRabbit / Codex / PR-scrape on top of thorough.
+`--mode thorough` is the default. It runs the full base portfolio plus holistic with replicas on careful-reader and combined-sweep, projecting ~1.5–1.6M tokens — comparable to today's spend but with significantly higher recall from corroboration voting + the unconstrained holistic safety net. Pick `--mode standard` for the cheaper (~900k) pass; `--mode quick` for trivial diffs; `--mode ensemble` to add CodeRabbit / Codex / PR-scrape on top of thorough.
 
 `/adams-review:fix`:
 
 ```
-/adams-review:fix [--threshold N] [--granular-commits] [--only IDS]
+/adams-review:fix [--threshold N] [--granular-commits] [--only IDS] [--interactive]
 
 --threshold N         override the fix-eligibility threshold (default: high confidence)
 --granular-commits    one commit per surviving fix group (default: one combined commit)
 --only IDS            comma-separated finding ids; restrict the run
+--interactive         pause before fix-group dispatch and show the plan for user confirmation
 ```
 
 `/adams-review:promote`:
@@ -94,6 +103,8 @@ Per-turn slash-command prompt surface: ~40 lines of loop-and-dispatch instructio
                       one of: correctness | security | ux | policy | architecture
 --no-dedup            skip the dedup pass against existing findings
 ```
+
+`--file`, `--line`, and `--claim` must be supplied together (structured mode); omit all three for paste mode.
 
 `/adams-review:history`:
 
@@ -130,7 +141,7 @@ Walkthrough is ~80 LoC of TypeScript orchestrator + one Sonnet prompt file + one
 
 ### Fix
 
-`/adams-review:fix` runs end-to-end without user input by default. With `--interactive`, it pauses before Phase 8 dispatch and shows the user the fix-group plan ("FG-1 will modify src/foo.ts, src/bar.ts; FG-2 will modify src/baz.ts — proceed?").
+`/adams-review:fix` runs end-to-end without user input by default. With `--interactive`, it pauses before fix-group dispatch and shows the user the fix-group plan ("FG-1 will modify src/foo.ts, src/bar.ts; FG-2 will modify src/baz.ts — proceed?").
 
 ### Promote
 
@@ -169,15 +180,15 @@ External candidates carry `confidence: high` and **skip Triage** — see `01-arc
 
 ## Output UX
 
-The rendered `artifact.md` and PR comment group findings by **section**, derived from the view layer. Sections map from today's dispositions but with plainer names:
+The rendered `artifact.md` and PR comment group findings by **section**, derived from the view layer. Each section corresponds to a derived view identifier (see `01-architecture.md § Data model` for the mapping):
 
 ```
-## Auto-fixable                            (confirmed_auto, introduced)
-## Manual attention needed                 (confirmed_manual)
-## Uncertain — worth a second look         (uncertain)
-## Pre-existing — informational            (pre_existing, high confidence)
-## Informational                           (confirmed_report, architecture/ux)
-## Below detection gate                    (low confidence, skipped) — collapsed by default
+## Auto-fixable                            (verdict: confirmed; fixable; origin: introduced)
+## Manual attention needed                 (verdict: confirmed; not fixable)
+## Uncertain — worth a second look         (verdict: uncertain)
+## Pre-existing — informational            (origin: pre_existing; origin_confidence: high)
+## Informational                           (verdict: confirmed; impact: architecture/ux/policy and report-only)
+## Below detection gate                    (confidence: low) — collapsed by default
 ## Disproven                               (verdict: disproven) — collapsed by default
 ## Fix results                             (shown only when fix_attempts exist)
 ```
@@ -190,7 +201,7 @@ Same as today: one "main" comment identified by a stable HTML marker at the top 
 
 ## Effort-level exposure
 
-Claude Code exposes session-wide effort (medium / high / xhigh / max). The tool respects it via `Agent` dispatch — the parent's effort flows into sub-agents. The orchestrator prints a one-liner at review start:
+Claude Code exposes a session-wide effort setting (low / medium / high / xhigh / max). The tool respects it via `Agent` dispatch — the parent's effort flows into sub-agents. The orchestrator prints a one-liner at review start:
 
 ```
 Running /adams-review:review at effort=high (mode=thorough) — expect ~1.5–1.6M tokens, ~35 min wall-clock.
@@ -210,12 +221,12 @@ Findings: 34 total → 12 confirmed, 5 uncertain, 5 disproven, 2 pre-existing, 1
   Corroborated (≥2 scanners): 11 (auto-graduated)
 
 Tokens: 1.52M total (vs 1.48M on old pipeline — parity, with corroboration voting)
-  Preflight + Enrichment:       18k   (1%)
-  Scan (6 scanners, 2x reps):  1.04M  (68%)
-    Cached prefix saved:        ~180k at ~10% cost
-  Triage (dedup + scoring):     78k   (5%)
-  Investigate (17 validators): 392k  (26%)
-  Finalize (render + comment):  20k   (1%)
+  Preflight (incl. enrichment):  18k
+  Scan (thorough portfolio):    1.04M
+    Cached prefix saved:         ~180k at ~10% cost
+  Triage (dedup + scoring):      78k
+  Investigate (confirmed set):  392k
+  Finalize (render + comment):   20k
 
 Wall-clock: 33 min 04 sec
 Report: <pr_comment_url>
@@ -273,7 +284,7 @@ The orchestrator's JSON-step protocol means every dispatch decision is inspectab
 
 | Today | New | Notes |
 |---|---|---|
-| `/adams-review` | `/adams-review:review` | Same job, fewer flags; plugin-namespaced. Default mode shifts from "all 6 lenses" to `--mode thorough` (6 scanners w/ replicas + holistic). |
+| `/adams-review` | `/adams-review:review` | Same job, fewer flags; plugin-namespaced. Default mode shifts from today's "all lenses" to `--mode thorough` (full portfolio with replicas + holistic safety net). |
 | `/adams-review --ensemble` | `/adams-review:review --mode ensemble` | External scanners are regular scanners in the new world. |
 | `/adams-review --full` | `/adams-review:review --full` | Same flag. |
 | `/adams-review-walkthrough [threshold]` | `/adams-review:walkthrough [--threshold N]` | |

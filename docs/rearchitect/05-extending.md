@@ -67,10 +67,12 @@ export interface Scanner {
   model: "haiku" | "sonnet" | "opus";
   emits: Array<"correctness" | "security" | "ux" | "policy" | "architecture">;
   runWhen(ctx: ReviewCtx): boolean;
-  buildPrompt(ctx: ReviewCtx): Prompt;
+  buildPrompt(ctx: ReviewCtx): Promise<Prompt>;
   parse(raw: string, ctx: ReviewCtx): Candidate[];
 }
 ```
+
+`Prompt` is declared in `02-scanners.md § Scanner interface`. `sharedPrefix(ctx)` (the cacheable diff + CLAUDE.mds + manifest block) and `EXTERNAL_NORMALIZER_SYSTEM` live in `src/scan/prompt-shared.ts`; the `run(cmd, args)` subprocess wrapper lives in `src/util/exec.ts` (see `§ Subprocess-safety note` above).
 
 ### Example: a "test-coverage-gaps" scanner
 
@@ -78,6 +80,7 @@ export interface Scanner {
 
 ```ts
 import { readFile } from "node:fs/promises";
+import { sharedPrefix } from "../prompt-shared";
 import type { Scanner } from "../types";
 
 const PROMPT_PATH = new URL(
@@ -97,7 +100,7 @@ export const testCoverageGaps: Scanner = {
     );
   },
 
-  buildPrompt(ctx) {
+  async buildPrompt(ctx) {
     return {
       user: `${sharedPrefix(ctx)}\n\n${PROMPT}`,              // prefix first = cache-friendly
       cache_control: [{ type: "ephemeral", on: "prefix" }],
@@ -275,8 +278,9 @@ A scanner that wants the data reads it in `buildPrompt`:
 
 ```ts
 // src/scan/scanners/my-coverage-scanner.ts
+import { sharedPrefix } from "../prompt-shared";
 
-buildPrompt(ctx) {
+async buildPrompt(ctx) {
   const presence = ctx.enrichments["test-presence"] as TestPresence | undefined;
   const untested = presence
     ? Object.entries(presence).filter(([, v]) => !v.has_test).map(([f]) => f)
@@ -409,6 +413,7 @@ Shape:
 
 import { run } from "../../util/exec";
 import { which } from "../../util/which";
+import { EXTERNAL_NORMALIZER_SYSTEM } from "../prompt-shared";
 import type { Scanner } from "../types";
 
 export const semgrep: Scanner = {
@@ -420,7 +425,7 @@ export const semgrep: Scanner = {
     return ctx.external_enabled.semgrep && which("semgrep");
   },
   async buildPrompt(ctx) {
-    const { stdout } = await run("semgrep", ["--config", "auto", "--json", ...ctx.diff_files], {
+    const { stdout } = await run("semgrep", ["--config", "auto", "--json", ...ctx.reviewed_files_all], {
       cwd: ctx.repo_root,
     });
     return {

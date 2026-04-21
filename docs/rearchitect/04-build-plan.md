@@ -123,7 +123,7 @@ Notes on the split:
 - `node scripts/orchestrator.mjs --help` prints usage for all verbs and exits 0.
 - `npm test` exits 0 (with no tests yet or a single trivial "hello" test).
 - Project lints clean.
-- `/plugin install /path/to/plugin` from a local Claude Code session registers all five commands.
+- `/plugin install /path/to/plugin` from a local Claude Code session registers every command in `commands/`.
 
 ### Verifiable output
 
@@ -137,6 +137,7 @@ Verbs:
   review          Run a review end-to-end
   walkthrough     Interactive per-finding walk
   fix             Apply eligible fixes
+  add             Inject externally-sourced findings into an existing review
   promote         Promote a finding manually
   history         List recent reviews
 
@@ -191,7 +192,7 @@ $ npm test
 
 - `src/cli.ts` routes verbs to handlers. Verb handlers are stubs that log "not implemented" and exit.
 - `src/orchestrate.ts` implements the `plan → dispatch → apply` loop shell. No real work yet — it emits a hard-coded stub step (`{"step": 1, "next_step": "done", "reason": "stub pipeline"}`) and terminates.
-- `commands/review.md`, `commands/walkthrough.md`, `commands/fix.md`, `commands/promote.md`, `commands/history.md` — each with the minimal loop-and-dispatch protocol (per `03-commands-and-ux.md § Commands`) and the verb hardcoded in the `node …/orchestrator.mjs <verb> $ARGUMENTS` line.
+- Every command file in `commands/` (`review.md`, `walkthrough.md`, `fix.md`, `add.md`, `promote.md`, `history.md`) gets the minimal loop-and-dispatch protocol (per `03-commands-and-ux.md § Commands`) with the verb hardcoded in the `node …/orchestrator.mjs <verb> $ARGUMENTS` line. `add.md` ships as a stub here; its orchestrator handler comes online in Stage 9.5.
 - `.claude-plugin/plugin.json` with name `adams-review`, version `2.0.0`, author, description.
 - `npm run build` bundles `src/` → `scripts/orchestrator.mjs`.
 
@@ -251,7 +252,7 @@ Run `/adams-review:review --dry-run` on a real PR in the review tool's own repo.
 ### Scope
 
 - Implement `Scanner` interface per `02-scanners.md`.
-- Build the six scanners that make up `--mode thorough` (the default). Each is three files (TS object + prompt md + agent md); see `02-scanners.md § Scanner packaging`:
+- Build the scanners that make up `--mode thorough` (the default). Each is three files (TS object + prompt md + agent md); see `02-scanners.md § Scanner packaging`:
   1. `careful-reader` (Opus, repo-wide) — port today's L2 prompt, consolidated. **Include the four Stage 2.9 patterns**: consumer-surface value trace, cross-provider/domain-scope, SQL JOIN vs. UNIQUE-constraint cardinality, prior-fix reversion (reads `ctx.enrichments["prior-fix-diff"]`).
   2. `combined-sweep` (Sonnet, diff + neighbors) — merge today's L1 + L4 + L6 into one prompt.
   3. `policy-claude-md` (Sonnet) — port today's L3 prompt.
@@ -272,7 +273,7 @@ Run `/adams-review:review --dry-run` on a real PR in the review tool's own repo.
 
 - Running scan in `--mode thorough` on the ray-finance `feat/import-apple` branch returns a pool of candidates that *includes* (a) the 29 today-baseline findings within ±20%, AND (b) at least three of the five Stage-2.9 "should" misses (P1.1 manual-account label, P1.2 NULL→0% APR, P2.5 cross-provider recat, P2.6 parseDate copy, P2.7 JOIN cardinality). The fourth and fifth landing is fine; missing more than two is a prompt-tune signal.
 - Prompt-caching hit rate is measurable: the second+ scanner dispatches read `cache_read_input_tokens > 0` in the Anthropic API response. Log this in the token accounting.
-- Thorough scan token cost lands at or below ~1.1M on the ray-finance baseline (after caching). Standard mode (`--mode standard --no-scanner holistic`) lands at or below 500k.
+- Thorough scan token cost lands at or below ~1.1M on the ray-finance baseline (after caching). Standard mode (`--mode standard`) lands at or below 500k.
 - Scanner registry can be queried: `node scripts/orchestrator.mjs scanners --list` prints the active set with expected costs and per-mode replicas.
 - Each scanner's agent file appears in `/agents` (Claude Code's agent listing) with its declared model and tool set.
 - Holistic scanner's agent file inherits Read + Grep + Glob + `Bash(git:*)` — same broad surface as careful-reader, since its mandate is broad.
@@ -284,7 +285,7 @@ $ node scripts/orchestrator.mjs review --dry-run --mode thorough --base origin/m
 Preflight complete: 20 files, 3284 lines, 6 CLAUDE.mds, user_facing=true,
                     trivial_mode=false, enrichments: prior-fix-diff(2 suspects).
 
-Scan dispatching 6 scanners (8 dispatches with replicas):
+Scan dispatching thorough portfolio:
   careful-reader   (opus,   repo-wide)        ×2
   combined-sweep   (sonnet, diff+neighbors)   ×2
   policy-claude-md (sonnet, diff+CLAUDE.mds)
@@ -295,6 +296,7 @@ Scan dispatching 6 scanners (8 dispatches with replicas):
   [progress as orchestrator fires Agent calls through slash command]
 
 Scan complete: 47 candidates → 22 unique after dedup, 9 corroborated by ≥2 scanners
+  Of 22 unique: 18 proceed to Triage, 4 short-circuit as pre_existing_report (origin gated, high confidence)
   Per scanner: careful-reader 17, combined-sweep 24, policy 5, ux 8, diff-local 4, holistic 11
 
 Token summary (scan phase):
@@ -332,12 +334,11 @@ Token summary (scan phase):
 ### Verifiable output
 
 ```
-Triage complete: 18 candidates
+Triage complete: 18 candidates (pre_existing_report candidates short-circuited before Triage)
   Auto-graduated (corroborated): 5
   High confidence:               8
   Medium:                        3
   Low (below gate):              2
-  Pre-existing (skipped):        0
 
 Token cost: 81k
 ```
@@ -394,7 +395,7 @@ Token cost: 438k  (Opus: 402k / Sonnet: 36k)
 
 - End-to-end review against the ray-finance baseline produces an `artifact.md` that's content-equivalent to today's output (same finding ids, same sections, within rounding on metrics).
 - PR comment POST/PATCH round-trips cleanly: first `/adams-review:review` POSTs; second `/adams-review:review` PATCHes the same comment.
-- Running `/adams-review:review` end-to-end on a clean PR completes in ≤25 minutes wall-clock and ≤900k tokens on a 20-file / 3k-line PR.
+- Running `/adams-review:review --mode thorough` (the default) end-to-end on a clean 20-file / 3k-line PR stays within the targets in `00-overview.md § Targets` — ≤35 min wall-clock, ≤1.6M tokens. A `--mode standard` run on the same PR lands at ≤25 min wall-clock and ≤900k tokens.
 
 ### Verifiable output
 
@@ -413,7 +414,7 @@ The rendered `artifact.md` plus the PR comment. The orchestrator prints the summ
   - After the loop: re-render, re-publish, handle issue-filing for pre-existing findings.
   - Post a "Walkthrough decisions" comment with the full log.
 - Briefing prompt in `prompts/walkthrough-briefing.md` (plugin-root asset). Matching agent file at `agents/walkthrough-briefer.md`.
-- Decision events: `override_applied(kind: "promote" | "dismiss")`.
+- Decision events: `override_applied(kind: "promote" | "dismiss" | "reclassify")`. Reclassify lets the reviewer move a finding between impact buckets (e.g. ux → correctness) when the scanner/validator mis-categorized it.
 
 ### Done-when
 
@@ -434,7 +435,7 @@ Run `/adams-review:walkthrough` on a real PR. The flow completes interactively; 
 
 - Implement `src/fix/group.ts`: union-find over eligible findings' `fix_proposal.files_to_modify`.
 - Implement `src/fix/dispatch.ts`: one Opus agent per group, prompt instructs to use `Edit`/`Write` only, no git, no renames, no deletes. Collect `files_modified` + `files_created` + `per_finding_verification` back.
-- Touched-file overlap guard (today's §Phase 9.pre): if two groups edited the same file, abort the fix run; emit `fix_attempted(outcome: null)` for all attempted findings and leave `current_state: attempted` in the derived view.
+- Touched-file overlap guard (today's §Phase 9.pre): if two groups edited the same file, abort the fix run; emit `fix_attempted(outcome: null)` for all attempted findings. The derived view reads these as "attempted" — a `fix_attempts[]` entry with `outcome: null` and no matching `fix_classified` event — which blocks further fix runs until classification or explicit revert.
 - Implement `src/fix/post-review.ts`: one Opus agent reviews the working-tree diff + attempted findings, returns per-finding `verified | partial | regression`.
 - Revert regression groups; stage surviving-group files explicitly (by name, not `-A`); commit with a message that includes the per-finding outcome.
 - Push in PR mode; emit `fix_classified` and (on successful commit) `fix_attempt` events with output_sha.
@@ -521,7 +522,7 @@ Next: /adams-review:fix or /adams-review:walkthrough.
 
 ### Done-when
 
-- All five verbs work end-to-end.
+- Every verb works end-to-end.
 - `history --since 30d` on a test directory with three mock reviews produces expected table output.
 - Error cases covered: invalid id, stale base, missing gh auth, Anthropic API failure, dirty tree.
 
@@ -548,7 +549,7 @@ main                rev_01KPH6ABQM67844RAA…    512k     14m     3           3
 
 ### Done-when
 
-- Installing on a fresh machine via `/plugin install` yields only the five namespaced verbs under `/adams-review:*`.
+- Installing on a fresh machine via `/plugin install` yields only the namespaced verbs under `/adams-review:*`.
 - Uninstalling via `/plugin uninstall adams-review` cleanly removes everything the plugin shipped.
 - An old review directory's `artifact.json` can be read by `/adams-review:history` (directly, since the file still exists on disk); a migrated review directory's `events.jsonl` can be read by every verb that consumes the store.
 
@@ -558,7 +559,7 @@ main                rev_01KPH6ABQM67844RAA…    512k     14m     3           3
 # In Claude Code:
 $ /plugin install /path/to/adams-review-plugin
 Installed: adams-review 2.0.0
-  5 commands, 14 agents, 1 hooks file
+  commands, agents, and hooks registered per the plugin manifest
 
 $ /adams-review:review --help
 (prints the v2 review flags)

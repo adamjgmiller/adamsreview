@@ -25,8 +25,8 @@ These goals drive every design decision in the rest of this spec. When a tradeof
 3. **Less code, one language, small surface.** One language (TypeScript, compiled to Node ESM and shipped inside a Claude Code plugin), one schema library (Zod), one test framework (Vitest or Node's built-in test runner). Target ≤4,000 LoC end to end, vs. current ~14,000.
 4. **Orchestration in code, not in prompts.** The LLM is called when judgment is needed; control flow, state transitions, artifact mutation, and token accounting run as deterministic TypeScript. The slash command is a thin trampoline.
 5. **Easy to modify and extend.** New scanner = new file. New fix strategy = new file. New report section = new file. No prose-in-three-places problem. See `05-extending.md`.
-6. **Easy for the user to use.** Six namespaced slash commands (`/adams-review:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`), each with its own description and flag surface so Claude Code's autocomplete + `/help` surfaces them naturally. Fewer flags, fewer state-model concepts exposed (`confidence: high` beats `disposition: confirmed_auto, actionability: auto_fixable, confirmed_strength: moderate`).
-7. **Resumable and auditable.** Interrupts are safe. Every LLM call and every state change is an event in one log. `review history` is a first-class operation.
+6. **Easy for the user to use.** Namespaced slash-command verbs (`:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`), each with its own description and flag surface so Claude Code's autocomplete + `/help` surfaces them naturally. Fewer flags, fewer state-model concepts exposed (`confidence: high` beats `disposition: confirmed_auto, actionability: auto_fixable, confirmed_strength: moderate`).
+7. **Resumable and auditable.** Interrupts are safe. Every LLM call and every state change is an event in one log. `/adams-review:history` is a first-class verb.
 
 ## Non-goals
 
@@ -37,7 +37,7 @@ These goals drive every design decision in the rest of this spec. When a tradeof
 
 ## Baseline: where the tokens go today
 
-From the most recent `/adams-review` run on `ray-finance feat/import-apple` (rev `01KPPT46J17C8M2SWWMS8D6SG8`, 2026-04-21, 20 files / 3,284 lines changed, 29 candidates → 9 confirmed, 4 uncertain, 4 disproven, 2 pre-existing, 11 below-gate):
+From the most recent `/adams-review` run on `ray-finance feat/import-apple` (rev `01KPPT46J17C8M2SWWMS8D6SG8`, 2026-04-20, 20 files / 3,284 lines changed, 29 candidates → 9 confirmed, 4 uncertain, 4 disproven, 2 pre-existing, 11 below-gate):
 
 | Phase | Role | Model | Agents | Tokens | % of total |
 |---|---|---|---|---|---|
@@ -76,7 +76,7 @@ Numeric targets the build plan optimizes toward. Measure after Stage 2 lands; ad
 | Lines of code (prompts + helpers + orchestrator) | ~14,000 | ≤4,000 |
 | Languages / runtimes | 3 (bash + python + markdown + uv + jq) | 1 (TypeScript, compiled to Node ESM) |
 | Distribution | symlinks via `scripts/install.sh` | Claude Code plugin (`/plugin install`) |
-| Top-level slash commands | 4 | 6 namespaced verbs (`:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`) |
+| Top-level slash commands | 4 flat verbs | Namespaced verbs (`:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`) |
 | State dispositions | 11 | 3 core + derived view |
 | Tokens per average-PR review (`--mode standard`, cheaper opt-in) | ~1.5M | ≤900k (-40%) |
 | Tokens per average-PR review (`--mode thorough`, **default**) | ~1.5M | ≤1.6M (parity with today, with corroboration voting + holistic safety net for higher recall) |
@@ -108,7 +108,7 @@ A few constraints have been fixed ahead of the detail docs to avoid relitigating
 - **Anthropic SDK (`@anthropic-ai/sdk`)** is a dev-time dependency for typed API shapes and recorded-response test fixtures. Real LLM calls at runtime flow through Claude Code's `Agent` tool-use, dispatched by slash commands — that's what gives us the Claude Code subscription billing, tool access, and user-controlled effort level. The orchestrator script is the TypeScript layer that composes prompts, collects results, and maintains state between those dispatches; it never makes an outbound HTTP call to Anthropic itself. See `01-architecture.md § Orchestrator model` for the mechanics.
 - **One artifact per review, one event log per artifact.** Artifact is the canonical machine state; events are the append-only audit trail. Both live under `~/.adams-reviews/<repo-slug>/<branch>/<review_id>/`.
 - **Prompt caching is on by default.** Every sub-agent call that shares a prefix (diff + CLAUDE.mds + repo context) uses Anthropic prompt caching. This is a token-budget line item, not an optional optimization. The orchestrator is responsible for composing prompts so that the cached prefix is identical across scanners.
-- **Multi-perspective scanning is not optional.** A single scanner is never the default. `--fast` is the only mode that drops to one scanner, and it is explicit opt-in for reviewers who know they want a quick pass.
+- **Multi-perspective scanning is not optional.** A single scanner is never the default. The cheapest defined preset is `--mode quick` (see `02-scanners.md § Modes`), intended for trivial diffs or iteration — and even it runs more than one scanner.
 
 ## What a successful rebuild looks like
 

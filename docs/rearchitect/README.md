@@ -1,6 +1,6 @@
 # Re-architecture spec
 
-Clean-slate specification for rebuilding `adams-review` as a TypeScript-compiled-to-Node Claude Code plugin with six namespaced slash commands, six default multi-perspective scanners (in `--mode thorough`, the default), deterministic preflight enrichments, and an event-logged artifact store.
+Clean-slate specification for rebuilding `adams-review` as a TypeScript-compiled-to-Node Claude Code plugin with namespaced slash commands (`:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`), a multi-perspective scanner portfolio (default `--mode thorough`), deterministic preflight enrichments, and an event-logged artifact store.
 
 ## Reading order
 
@@ -9,8 +9,8 @@ The numbered docs are each self-contained. Read them in order for the full pictu
 1. **[00-overview.md](./00-overview.md)** — goals, non-goals, baseline token data from the ray-finance `feat/import-apple` review, numeric targets.
 2. **[01-architecture.md](./01-architecture.md)** — pipeline stages, data model, orchestrator-in-code pattern, dispatch-turn protocol, event log, artifact store.
 3. **[02-scanners.md](./02-scanners.md)** — multi-perspective scan phase (the heart of the design). Scanner interface, three-file packaging, portfolio, repetition, corroboration voting, external scanners. **Most important for future modifications.**
-4. **[03-commands-and-ux.md](./03-commands-and-ux.md)** — six namespaced slash commands, flags, interactive walkthrough / fix / promote / add flows.
-5. **[04-build-plan.md](./04-build-plan.md)** — staged build plan for the AI agent: 12 stages, each with done-when + verifiable output.
+4. **[03-commands-and-ux.md](./03-commands-and-ux.md)** — the slash-command surface, flags, interactive walkthrough / fix / promote / add flows.
+5. **[04-build-plan.md](./04-build-plan.md)** — staged build plan for the AI agent. Each stage has a done-when checklist and a verifiable output.
 6. **[05-extending.md](./05-extending.md)** — plug-in points for work-in-progress branches. Scanner / preflight-enrichment / fix-strategy / external-tool / report-section / investigation-profile / slash-command verb.
 
 ## Authoritative sources
@@ -51,7 +51,7 @@ Cross-references are explicit (e.g. `01-architecture.md § Data model`). When a 
 
 ## For the AI agent building from this spec
 
-Before you start: read this README, then 00–05 in order. Hold the whole spec (~1,800 lines) in context before writing any code — each doc is self-contained but the cross-references matter.
+Before you start: read this README, then 00–05 in order. Hold the whole spec in context before writing any code — each doc is self-contained but the cross-references matter.
 
 Then start at `04-build-plan.md § Stage 0`. Work sequentially. After each stage, re-read the stage's "done-when" block and produce the "verifiable output." Commit at stage boundaries. Open a PR for user review at the checkpoints listed in `04-build-plan.md § Stage ordering notes`.
 
@@ -62,10 +62,10 @@ When the spec conflicts with itself (it shouldn't, but drift happens), defer to 
 ## Quick architectural summary (one-screen version)
 
 - **One language**: TypeScript, compiled to Node ESM and bundled into the plugin at `scripts/orchestrator.mjs`. No Python, no Bun at runtime, no Bash helpers beyond the slash-command trampolines.
-- **Distribution**: Claude Code plugin. `/plugin install adams-review` wires up six namespaced slash commands (`/adams-review:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`) plus the scanner/validator agent files.
-- **Orchestrator-in-code**: slash commands are ~40-line trampolines that shell into the bundled orchestrator. The orchestrator emits one JSON step per turn (dispatch_agents / ask_user / user_visible / done); the command reads it and dispatches Agent/AskUserQuestion accordingly. All LLM calls flow through Claude Code's subscription billing — the orchestrator never makes outbound HTTP calls and never reads `ANTHROPIC_API_KEY`.
-- **Five pipeline stages**: Preflight (incl. deterministic enrichments) → Scan → Triage → Investigate → Finalize. Fix/verify/commit and Add are separate invocations.
-- **Multi-perspective scanning** with 6 defaults in `--mode thorough` (`careful-reader` Opus + `combined-sweep` Sonnet at 2x replicas, `policy-claude-md` Sonnet, `ux-behavioral` Sonnet, `diff-local` Haiku, `holistic` Opus unconstrained). Each scanner is three files (TS object + prompt md + agent md). Optional cheaper tier (`--mode standard`) drops to 4 scanners 1x. Optional external scanners (CodeRabbit, Codex, PR-scrape) via `--mode ensemble`.
+- **Distribution**: Claude Code plugin. `/plugin install adams-review` wires up the namespaced slash commands (`/adams-review:review`, `:walkthrough`, `:fix`, `:add`, `:promote`, `:history`) plus the scanner/validator agent files.
+- **Orchestrator-in-code**: slash commands are thin trampolines that shell into the bundled orchestrator. The orchestrator emits one JSON step per turn (dispatch_agents / ask_user / user_visible / done); the command reads it and dispatches Agent/AskUserQuestion accordingly. All LLM calls flow through Claude Code's subscription billing — the orchestrator never makes outbound HTTP calls and never reads `ANTHROPIC_API_KEY`.
+- **Pipeline stages**: Preflight (incl. deterministic enrichments) → Scan → Triage → Investigate → Finalize. Fix/verify/commit and Add are separate invocations.
+- **Multi-perspective scanning**. The `--mode thorough` default runs `careful-reader` (Opus) and `combined-sweep` (Sonnet) with replicas, plus `policy-claude-md`, `ux-behavioral`, `diff-local`, and an unconstrained `holistic` scanner. Each scanner is three files (TS object + prompt md + agent md). Cheaper tiers (`--mode standard`, `--mode quick`) drop scanners and replicas; `--mode ensemble` adds external scanners (CodeRabbit, Codex, PR-scrape).
 - **Preflight enrichments**: deterministic data feeds (no LLM calls) that scanners read from `ctx.enrichments`. First built-in is `prior-fix-diff` (git-history walk that surfaces prior named-fix commits the PR may revert).
 - **Add verb**: `/adams-review:add` injects externally-sourced findings (paste, structured `--file/--line/--claim`) into the existing artifact. Skips Triage (auto-graduate); reuses Investigate + Finalize. PR comment PATCHes in place.
 - **State machine**: 3 core fields (`confidence`, `origin`, `fixable`) drive a derived view. Gone: 11-disposition enum, state-transition whitelist, coupling invariants.
@@ -76,10 +76,10 @@ When the spec conflicts with itself (it shouldn't, but drift happens), defer to 
 
 Measured against the ray-finance `feat/import-apple` baseline (1.48M tokens, ~51 min wall-clock):
 
-- **~40% token reduction** from consolidating overlapping Sonnet lenses + prompt caching + removing per-turn orchestrator context bloat.
+- **~40% token reduction** under `--mode standard` from consolidating overlapping Sonnet lenses + prompt caching + removing per-turn orchestrator context bloat. `--mode thorough` holds token parity with today while raising recall via corroboration voting and the holistic safety net.
 - **~40% wall-clock reduction** from removing between-phase round-trips and trimming per-sub-agent prompt padding.
-- **~75% code reduction**: ~14k lines → ~3k lines.
-- **Multi-perspective still non-negotiable** — 6 default scanners in thorough (4 in standard), optional repetition, optional ensemble. The goal is recall.
+- **Substantial code reduction** — see `00-overview.md § Targets` for the LoC target vs. today's footprint.
+- **Multi-perspective still non-negotiable** — the portfolio under `--mode thorough` is the full scanner set with replicas on the heaviest hitters; `--mode standard` and `--mode quick` are explicit cost-tier opt-ins; `--mode ensemble` adds external scanners. The goal is recall.
 - **Extensibility**: adding a scanner, preflight enrichment, fix strategy, report section, or slash-command verb is a single-file change (or a few for scanners; see `05-extending.md`).
 
 See `00-overview.md § Targets` for the full numeric targets.
