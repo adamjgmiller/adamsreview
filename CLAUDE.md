@@ -24,9 +24,11 @@ All four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5,
 ├── Phase 0 — Pre-flight (branch/PR detect, base-branch freshness, dirty-tree,
 │              push, prior-artifact prompt, record review_started_at,
 │              trivial-diff detection, CLAUDE.md path lister)
-├── Phase 1    ─┐ Detection (6 parallel lens agents tag impact_type/origin; under
-│               │   --ensemble also dispatches codex:codex-rescue + coderabbit:code-reviewer
-│               │   via the ensemble adapter; origin cross-check corrects blame-traceable verdicts)
+├── Phase 1    ─┐ Detection (6 parallel lens agents, 7 under --ensemble — L7
+│               │   is a holistic Opus safety net; origin cross-check corrects
+│               │   blame-traceable verdicts; under --ensemble also dispatches
+│               │   codex:codex-rescue + coderabbit:code-reviewer via the
+│               │   ensemble adapter)
 ├── Phase 1.5  ─┘ External PR-comment scrape (gh api → bot filter → comment-freshness →
 │                 Sonnet normalizer; ensemble mode only; joint dispatch with Phase 1)
 ├── Phase 2 — Dedup (one Sonnet call; merges equivalent candidates, unions source_families)

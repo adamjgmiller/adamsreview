@@ -2662,6 +2662,59 @@ else
     fail "PFD-6: expected 64/1; got missing=$rc_missing badref=$rc_badref"
 fi
 
+# L7-1..L7-4 guard the holistic-lens plumbing (Stage 2.9.D). L7 runs
+# only under --ensemble; these tests exercise the wiring that happens
+# on every run (source-priority slot, origin-crosscheck, fragment
+# presence) without the LLM dispatch itself.
+
+# L7-1: fragment presence — 01-detection.md step 1.1 table has L7 row,
+# step 1.3 has a dispatch block with the L7 header, and step 1.4's
+# lens-tag list names L7-holistic.
+if grep -qE '^\| L7 — holistic review' "$REPO/commands/_shared/01-detection.md" \
+    && grep -qF '#### L7 — holistic review (Opus' "$REPO/commands/_shared/01-detection.md" \
+    && grep -qF 'L7-holistic' "$REPO/commands/_shared/01-detection.md"; then
+    pass "L7-1 (§2.9.D): 01-detection.md fragment has L7 table row, dispatch block, and lens-tag"
+else
+    fail "L7-1: L7 fragment wiring incomplete"
+fi
+
+# L7-2: assign-finding-ids.sh slots L7-holistic between L6-security and
+# external-pr. Synthetic pool of one L6 + one L7 + one external-pr.
+in='[{"sources":["L7-holistic"],"file":"h.ts"},{"sources":["external-pr:bot"],"file":"e.ts"},{"sources":["L6-security"],"file":"s.ts"}]'
+out=$(echo "$in" | "$TOOLS/assign-finding-ids.sh")
+line=$(echo "$out" | jq -r '[.[] | "\(.id):\(.sources[0])"] | join(",")')
+expected="F001:L6-security,F002:L7-holistic,F003:external-pr:bot"
+if [[ "$line" == "$expected" ]]; then
+    pass "L7-2 (§2.9.D): assign-finding-ids.sh slots L7-holistic between L6 and external-pr"
+else
+    fail "L7-2: expected '$expected'; got '$line'"
+fi
+
+# L7-3: origin-crosscheck on a synthetic L7 candidate whose line range
+# is entirely ancestor of $comparison_ref gets overridden to
+# pre_existing/high — same behavior as L1..L6 (source-family-agnostic).
+# Reuse the OC scratch repo if it still exists from OC-*.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"L7C1","sources":["L7-holistic"],"source_family":"holistic-family","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "pre_existing" && "$conf" == "high" ]]; then
+    pass "L7-3 (§2.9.D): origin-crosscheck flips L7-holistic candidate (ancestor range) to pre_existing/high"
+else
+    fail "L7-3: expected pre_existing/high on ancestor L7 range; got origin=$origin conf=$conf"
+fi
+
+# L7-4: CLAUDE.md pipeline-shape narrative reflects the 6-vs-7 lens
+# count. A sanity guard so this meta-doc doesn't silently drift from
+# the fragment.
+if grep -qF '7 under --ensemble' "$REPO/CLAUDE.md" \
+    && grep -qF 'holistic Opus safety net' "$REPO/CLAUDE.md"; then
+    pass "L7-4 (§2.9.D): CLAUDE.md pipeline-shape narrative mentions L7 under --ensemble"
+else
+    fail "L7-4: CLAUDE.md pipeline-shape block missing L7 / --ensemble update"
+fi
+
 # UXT-1 guards the L5-ux diagnostic-message-quality addition (Stage
 # 2.9.B). Content lives in lens-ux-reference.md which L5 inlines via
 # `!`cat`` preprocessor, so grep the reference file directly.

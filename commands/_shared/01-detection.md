@@ -23,10 +23,12 @@ Based on the Phase 0 variables:
 | L4 — comment compliance | `sonnet` | always |
 | L5 — UX | `sonnet` | `user_facing == true AND trivial_mode != true` |
 | L6 — lightweight security | `sonnet` | `trivial_mode != true` |
+| L7 — holistic review | `opus` | `ensemble_mode == true AND trivial_mode != true` |
 
 Skipped lenses get a one-line note in `trace.md`:
 ```
-Phase 1: L2/L5/L6 skipped (trivial_mode=true)
+Phase 1: L7 skipped (ensemble_mode=false)
+Phase 1: L2/L5/L6/L7 skipped (trivial_mode=true)
 ```
 
 Log them via `log-phase.sh --summary` at step 1.6 as part of the Phase 1
@@ -480,6 +482,95 @@ Prompt essence:
 > Return the same candidate shape as L1 with `impact_type: "security"`,
 > `source_family: "security-family"`.
 
+#### L7 — holistic review (Opus; `ensemble_mode` only; skipped if `trivial_mode`)
+
+Launch one `Agent` tool-use with `model: opus`, `subagent_type: general-purpose`.
+Inherits the parent command's Read + Bash(git:*) + Bash(grep:*) grants — same
+permissions as L2.
+
+L7 exists as a recall-oriented safety net: focused lenses have narrower
+prompts tuned to specific bug classes; L7 reads the diff like a skeptical
+senior reviewer with no checklist. Ensemble-gated because it costs roughly
+1.5–2x an L2 pass. Phase 2 dedup merges overlaps with focused-lens
+findings (unioning `source_families`) so duplicates become a strengthening
+signal via Phase 3's ≥2-families auto-graduate rule, not noise.
+
+Prompt essence:
+
+> Review this PR as a skeptical, careful senior engineer who was just
+> handed it and asked to find bugs the test suite and linter will miss.
+> Read the diff between `$comparison_ref` and HEAD, plus any surrounding
+> code you need to understand it. Use `git blame` / `git log` freely.
+>
+> **No checklist — scan for anything wrong.** Other agents are running
+> in parallel with narrower prompts (L1 diff-local, L2 structural, L3
+> CLAUDE.md, L4 comments, L5 UX, L6 security). Your job is to catch
+> things those miss: semantic correctness across layer boundaries,
+> misleading state visible to users or AI consumers, latent bugs a
+> careful human reader would notice, regressions of prior behavior,
+> multi-failure-mode issues at the same call site.
+>
+> Places to look especially hard:
+>
+> - **Cross-layer semantic value.** When a field can be NULL / default /
+>   missing, follow every consumer and check whether the user-visible
+>   or AI-visible output is honest. A NULL rate rendered as `"0% APR"`
+>   in an LLM tool output is a real bug even when the SQL is correct.
+>
+> - **Regression of prior behavior.** When the diff changes behavior in
+>   an area that had a named fix commit, check whether the fix is being
+>   undone. Use `git log -L <range>:<file>` filtered to "fix"/"bug"/
+>   "regression" message patterns. A broadened SQL predicate or a
+>   consolidated branch that re-introduces the pre-fix behavior is the
+>   characteristic pattern.
+>
+> - **Cross-provider / domain scope.** When a function runs inside a
+>   path named for one data source (Apple import, Plaid sync, payroll),
+>   check whether its queries and writes stay scoped to that source, or
+>   whether it silently re-evaluates unrelated data.
+>
+> - **Multi-failure-mode at the same call site.** When the diff
+>   addresses one failure mode (e.g. wraps a throwing call in
+>   try/catch), enumerate other ways the same call can go wrong:
+>   inconsistent state, partial writes, stale cache, out-of-order side
+>   effects. A "fix" that addresses one mode while leaving another live
+>   is a partial fix worth flagging.
+>
+> - **Misleading user / AI interfaces.** Outputs that look correct but
+>   mislead — `"0% APR"` for a missing rate, `"Manual"` for a non-manual
+>   account, silent failures rendered as successes, partial updates
+>   reported as complete, generic error messages when specific context
+>   was available.
+>
+> - **Parallel paths whose invariants have diverged.** Two similar
+>   functions/queries where only one got updated; one strict parser and
+>   one lenient; a write-side that now allows NULL and a read-side that
+>   assumes non-null.
+>
+> - **Assumptions that don't hold.** Invariants the code assumes but
+>   the diff breaks; ordering assumptions; concurrency; JOIN cardinality
+>   against target-table UNIQUE constraints.
+>
+> Over-flag; Phase 3 filters. Err toward sharing a half-confident bug.
+>
+> Return a JSON array of candidates. Each candidate:
+>
+> ```
+> {
+>   "file": "src/path/to/file.ts",
+>   "line_range": [start, end],
+>   "claim": "one-sentence description of the issue",
+>   "evidence_snippet": "exact code lines (or multi-file trace if cross-layer)",
+>   "impact_type": "correctness" | "security" | "ux" | "policy" | "architecture",
+>   "origin": "introduced_by_pr" | "pre_existing" | "unknown",
+>   "origin_confidence": "high" | "medium" | "low",
+>   "source_family": "holistic-family"
+> }
+> ```
+>
+> Default `origin: "introduced_by_pr"`, `origin_confidence: "high"` unless
+> the implicated code is clearly unchanged by this diff.
+
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 
 Per DESIGN §13.12, the dispatch turn also launches the external
@@ -492,10 +583,10 @@ Total tool-use blocks in the dispatch turn:
 
 | Condition | Blocks |
 |---|---|
-| `ensemble_mode=false` | applicable lenses (6 max) |
-| `ensemble_mode=true`, both CLIs available, `mode=pr` | lenses + 2 background Bash + 1 foreground Bash |
-| `ensemble_mode=true`, both CLIs available, `mode=local` | lenses + 2 background Bash |
-| `ensemble_mode=true`, one CLI unavailable | lenses + 1 background Bash + (1 foreground Bash if PR mode) |
+| `ensemble_mode=false` | applicable lenses (6 max — L1..L6; L7 is ensemble-gated) |
+| `ensemble_mode=true`, both CLIs available, `mode=pr` | lenses (up to 7, including L7) + 2 background Bash + 1 foreground Bash |
+| `ensemble_mode=true`, both CLIs available, `mode=local` | lenses (up to 7) + 2 background Bash |
+| `ensemble_mode=true`, one CLI unavailable | lenses (up to 7) + 1 background Bash + (1 foreground Bash if PR mode) |
 
 The ensemble launch specs live in `02-ensemble-adapter.md`:
 
@@ -548,10 +639,11 @@ For each sub-agent result, in the order it returns:
    ```
 
    `<lens-name>` is one of `lens_1_diff_local`, `lens_2_structural`,
-   `lens_3_claude_md`, `lens_4_comments`, `lens_5_ux`, `lens_6_security`.
-   The paired per-finding `sources[]` entry — used in the jq builder at
-   step 1.5 — is the shorter lens tag: `L1-diff-local`, `L2-structural`,
-   `L3-claude-md`, `L4-comments`, `L5-ux`, `L6-security` (DESIGN §6).
+   `lens_3_claude_md`, `lens_4_comments`, `lens_5_ux`, `lens_6_security`,
+   `lens_7_holistic`. The paired per-finding `sources[]` entry — used in
+   the jq builder at step 1.5 — is the shorter lens tag: `L1-diff-local`,
+   `L2-structural`, `L3-claude-md`, `L4-comments`, `L5-ux`, `L6-security`,
+   `L7-holistic` (DESIGN §6).
 
 2. **Light JSON repair** if the output isn't a parseable array — strip code
    fences, extract the JSON block. If still unparseable, retry once with

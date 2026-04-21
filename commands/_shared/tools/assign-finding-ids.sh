@@ -30,9 +30,10 @@
 #   4  L4-comments
 #   5  L5-ux
 #   6  L6-security
-#   7  external-pr:<author_login>  (sub-ordered by author_login)
-#   8  codex
-#   9  coderabbit
+#   7  L7-holistic
+#   8  external-pr:<author_login>  (sub-ordered by author_login)
+#   9  codex
+#   10 coderabbit
 #   99 unknown (forward-compat)
 #
 # Exits: 0 success; 1 stdin is not a JSON array.
@@ -82,9 +83,10 @@ printf '%s' "$input" | jq -c '
     elif $s == "L4-comments"   then 4
     elif $s == "L5-ux"         then 5
     elif $s == "L6-security"   then 6
-    elif ($s | startswith("external-pr:")) then 7
-    elif $s == "codex"         then 8
-    elif $s == "coderabbit"    then 9
+    elif $s == "L7-holistic"   then 7
+    elif ($s | startswith("external-pr:")) then 8
+    elif $s == "codex"         then 9
+    elif $s == "coderabbit"    then 10
     else 99 end;
 
   def src_subkey:
