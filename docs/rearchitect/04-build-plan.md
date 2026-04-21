@@ -435,10 +435,10 @@ Run `/adams-review:walkthrough` on a real PR. The flow completes interactively; 
 
 - Implement `src/fix/group.ts`: union-find over eligible findings' `fix_proposal.files_to_modify`.
 - Implement `src/fix/dispatch.ts`: one Opus agent per group, prompt instructs to use `Edit`/`Write` only, no git, no renames, no deletes. Collect `files_modified` + `files_created` + `per_finding_verification` back.
-- Touched-file overlap guard (today's §Phase 9.pre): if two groups edited the same file, abort the fix run; emit `fix_attempted(outcome: null)` for all attempted findings. The derived view reads these as "attempted" — a `fix_attempts[]` entry with `outcome: null` and no matching `fix_classified` event — which blocks further fix runs until classification or explicit revert.
+- Touched-file overlap guard (today's §Phase 9.pre): if two groups edited the same file, abort the fix run before post-review. The `fix_attempted` events for those findings are already in the log (they were written at dispatch time); leaving them without matching `fix_classified` events means the derived view reads the findings as "attempted" — a `fix_attempts[]` entry whose `outcome` is still `null` — which blocks further fix runs until classification or explicit revert.
 - Implement `src/fix/post-review.ts`: one Opus agent reviews the working-tree diff + attempted findings, returns per-finding `verified | partial | regression`.
 - Revert regression groups; stage surviving-group files explicitly (by name, not `-A`); commit with a message that includes the per-finding outcome.
-- Push in PR mode; emit `fix_classified` and (on successful commit) `fix_attempt` events with output_sha.
+- Push in PR mode; emit one `fix_classified` event per attempted finding, carrying `outcome` (`verified` / `partial` / `regression`) and `output_sha` (the post-commit SHA for verified/partial groups; `null` for reverted regressions). The `fix_attempted` events from fix-group dispatch were already written earlier in the run.
 - Leftover-attempted hard abort: at the start of `/adams-review:fix`, if any finding has a `fix_attempted` event without a matching `fix_classified`, abort with the recovery message. The plugin's `SessionStart` hook already warns about this state on session load; this is the belt-and-braces check at fix-run start.
 
 ### Done-when
@@ -449,7 +449,7 @@ Run `/adams-review:walkthrough` on a real PR. The flow completes interactively; 
 
 ### Verifiable output
 
-`git log` shows the fix commit with a message that carries Phase-9 truth. Artifact reflects `fix_attempts`. PR comment updates.
+`git log` shows the fix commit with a message that carries the post-fix review's per-finding outcomes. Artifact reflects `fix_attempts`. PR comment updates.
 
 ---
 

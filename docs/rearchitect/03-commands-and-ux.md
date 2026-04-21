@@ -176,7 +176,7 @@ Flow:
    Next: /adams-review:fix or /adams-review:walkthrough to act on the new actionable findings.
    ```
 
-External candidates carry `confidence: high` and **skip Triage** — see `01-architecture.md § Why merge dedup + scoring (Triage)` rule 2 and `§ Add flow`. The reasoning: a human bothered to escalate them; Phase 4 validation is the right precision gate, not a Sonnet rubric.
+External candidates carry `confidence: high` and **skip Triage** — see `01-architecture.md § Why merge dedup + scoring (Triage)` rule 2 and `§ Add flow`. The reasoning: a human bothered to escalate them; deep Investigate is the right precision gate, not a Sonnet rubric.
 
 ## Output UX
 

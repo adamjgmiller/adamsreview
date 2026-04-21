@@ -85,7 +85,7 @@ Today's Phase 2 dedup (30k tokens) and Phase 3 scoring (58k) are two Sonnet call
 Two auto-graduate rules let candidates skip the rubric prompt entirely:
 
 1. **Corroboration shortcut.** When two scanners independently flag the same candidate (matching file + line proximity), Triage auto-graduates it to `confidence: high` regardless of its rubric score. This is today's "≥2 source families auto-graduate" rule.
-2. **External-add bypass.** Candidates injected by `/adams-review:add` carry `confidence: high` from the verb itself and skip Triage entirely. The reasoning: a human bothered to escalate them, and Phase 4 validation is the right precision gate (not a Sonnet rubric). Mirrors today's review-add design — see `§ Add flow` below and `03-commands-and-ux.md § Add flow`.
+2. **External-add bypass.** Candidates injected by `/adams-review:add` carry `confidence: high` from the verb itself and skip Triage entirely. The reasoning: a human bothered to escalate them, and deep Investigate is the right precision gate (not a Sonnet rubric). Mirrors today's review-add design — see `§ Add flow` below and `03-commands-and-ux.md § Add flow`.
 
 ## Data model
 
@@ -382,7 +382,7 @@ Events emitted: `candidate_externally_added` (one per candidate from step 3), `c
 
 What `/adams-review:add` deliberately doesn't do:
 
-- **No re-run of Phase 1 detection.** This is additive to the existing artifact, not a replacement. Run `/adams-review:review` for that (which overwrites).
+- **No re-run of Scan.** This is additive to the existing artifact, not a replacement. Run `/adams-review:review` for that (which overwrites).
 - **No cross-cutting recompute.** Added findings don't retroactively join existing cross-cutting groups in the renderer. Documented small loss; if it becomes painful, a `--rerun-cross-cutting` flag can be added later.
 - **No Triage scoring.** External candidates auto-graduate. See `§ Why merge dedup + scoring (Triage)` rule 2.
 - **No working-tree mutation.** Validators are read-only; no fix-group execution; no clean-tree gate needed.

@@ -113,7 +113,7 @@ A few constraints have been fixed ahead of the detail docs to avoid relitigating
 ## What a successful rebuild looks like
 
 - A reviewer types `/adams-review:review` on a PR and 30–35 minutes later (default `--mode thorough`) gets a rendered report with confidence-tagged findings, posted as a PR comment.
-- The reviewer can type `/adams-review:add "<paste from /ultrareview or another tool>"` to inject externally-sourced findings into the same artifact (Phase 4 validates them; PR comment updates in place).
+- The reviewer can type `/adams-review:add "<paste from /ultrareview or another tool>"` to inject externally-sourced findings into the same artifact (Investigate validates them; PR comment updates in place).
 - The reviewer can type `/adams-review:walkthrough` to interactively promote / skip / file-issue for the findings, or `/adams-review:fix` to apply the auto-fixable ones.
 - Adding a new scanner takes one file and one line in a registry, with no changes to the pipeline.
 - Adding a new fix strategy takes one file and one line in a registry.

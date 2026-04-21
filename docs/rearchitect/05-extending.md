@@ -561,6 +561,7 @@ const verbs: Record<string, (args: string[]) => Promise<void>> = {
   review: runReview,
   walkthrough: runWalkthrough,
   fix: runFix,
+  add: runAdd,
   promote: runPromote,
   history: runHistory,
   stats: runStats,                                           // ← new
@@ -598,7 +599,7 @@ Update `--help`: `src/help.ts` lists verbs from the same registry.
 
 ## Adding a post-fix validator
 
-Post-fix validators run between Phase 8 (apply fixes) and Phase 9 (classify outcomes). They're checks the orchestrator runs deterministically before asking the LLM to judge.
+Post-fix validators run after fix-group dispatch (edits applied) and before the post-fix reviewer classifies outcomes. They're checks the orchestrator runs deterministically before asking the LLM to judge.
 
 Built-in:
 - `test-suite-runner` — runs `npm test` / `pnpm test` / `pytest` / `go test` depending on detected toolchain; if tests fail where they passed pre-fix, mark affected groups as regression candidates.
