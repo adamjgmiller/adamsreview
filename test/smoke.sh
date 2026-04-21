@@ -2497,6 +2497,38 @@ else
     fail "PF-4: premise audit missing from $POSTFIX_MD"
 fi
 
+# ------------------------------------------------------------------ assign-finding-ids --start-from
+# AS-* assertions cover the --start-from flag added for /adams-review-add (so
+# new findings injected into an existing artifact continue the id sequence
+# instead of colliding from F001). The default-no-flag behavior must remain
+# F001..F0NN to keep Phase 1's pooled-candidate join unchanged.
+
+# AS-1: default behavior preserved (no flag → F001..).
+out=$(echo '[{"sources":["L1-diff-local"],"claim":"a"},{"sources":["L1-diff-local"],"claim":"b"}]' \
+        | "$TOOLS/assign-finding-ids.sh" | jq -r '[.[].id] | join(",")')
+if [[ "$out" == "F001,F002" ]]; then
+    pass "AS-1: assign-finding-ids.sh default start emits F001,F002 (regression check)"
+else
+    fail "AS-1: expected F001,F002, got $out"
+fi
+
+# AS-2: --start-from F037 emits F037..
+out=$(echo '[{"sources":["L1-diff-local"],"claim":"a"},{"sources":["L1-diff-local"],"claim":"b"},{"sources":["L1-diff-local"],"claim":"c"}]' \
+        | "$TOOLS/assign-finding-ids.sh" --start-from F037 | jq -r '[.[].id] | join(",")')
+if [[ "$out" == "F037,F038,F039" ]]; then
+    pass "AS-2: --start-from F037 emits F037,F038,F039"
+else
+    fail "AS-2: expected F037,F038,F039, got $out"
+fi
+
+# AS-3: --start-from with bad value rejected with exit 64.
+code=$(rc "$TOOLS/assign-finding-ids.sh" --start-from notF)
+if [[ "$code" == "64" ]]; then
+    pass "AS-3: --start-from with non-F<NNN> value rejected (exit 64)"
+else
+    fail "AS-3: expected exit 64, got $code"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

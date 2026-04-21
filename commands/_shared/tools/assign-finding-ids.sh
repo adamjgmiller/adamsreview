@@ -9,7 +9,7 @@
 # within source = preserves input order), then assigns F001..F0NN.
 #
 # Usage:
-#   assign-finding-ids.sh < pooled_candidates.json
+#   assign-finding-ids.sh [--start-from F<NNN>] < pooled_candidates.json
 #   echo "$pooled" | assign-finding-ids.sh
 #
 # Stdin:  JSON array of candidate objects. Each element must have a
@@ -20,6 +20,13 @@
 #
 # Stdout: same array (same post-sort element order) with `.id` set to
 #         F001, F002, ... (zero-padded to 3 digits) in sort order.
+#
+# Flags:
+#   --start-from F<NNN>   start numbering from F<NNN> instead of F001.
+#                         Used by /adams-review-add to continue the
+#                         existing artifact's id sequence rather than
+#                         restarting at F001 (which would collide with
+#                         findings already in the artifact).
 #
 # Source priority order (matches per-lens dispatch sequencing in
 # 01-detection.md step 1.3):
@@ -41,21 +48,45 @@ set -euo pipefail
 
 usage() {
     cat >&2 <<'USAGE'
-Usage: assign-finding-ids.sh < pooled_candidates.json
+Usage: assign-finding-ids.sh [--start-from F<NNN>] < pooled_candidates.json
 
 Stdin:  JSON array of candidate objects; each element should have
         a `sources` array (`sources[0]` drives the priority sort).
-Stdout: the same array (sorted) with `.id` set to F001..F0NN.
+Stdout: the same array (sorted) with `.id` set to F<start>..F<start+N-1>.
+
+Flags:
+  --start-from F<NNN>   integer offset for the first id (default 1 → F001).
+                        Used by /adams-review-add to continue numbering
+                        past the highest existing id in the artifact.
 USAGE
 }
 
-# --help / -h surface the usage and exit 0.
-if [[ $# -gt 0 ]]; then
+start_from=1
+while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
+        --start-from)
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "ERROR: --start-from requires a value (e.g. F037)" >&2
+                usage; exit 64
+            fi
+            if [[ ! "$1" =~ ^F[0-9]+$ ]]; then
+                echo "ERROR: --start-from value '$1' must match ^F[0-9]+$ (e.g. F037)" >&2
+                exit 64
+            fi
+            # Strip the F and the leading zeros so arithmetic doesn't
+            # parse "037" as octal under bash.
+            start_from=$((10#${1#F}))
+            if [[ "$start_from" -lt 1 ]]; then
+                echo "ERROR: --start-from value '$1' must resolve to >= 1" >&2
+                exit 64
+            fi
+            shift
+            ;;
         *) echo "ERROR: unexpected arg '$1'" >&2; usage; exit 64 ;;
     esac
-fi
+done
 
 input=$(cat)
 
@@ -73,7 +104,7 @@ fi
 #
 # external-pr:* entries share bucket 7 but sub-sort by sources[0] string
 # so distinct bot logins land in a deterministic order.
-printf '%s' "$input" | jq -c '
+printf '%s' "$input" | jq -c --argjson start "$start_from" '
   def src_priority:
     (.sources // []) | (if length == 0 then "" else .[0] end) as $s |
     if   $s == "L1-diff-local" then 1
@@ -96,7 +127,7 @@ printf '%s' "$input" | jq -c '
   | to_entries
   | map(
       .value + {
-        id: ("F" + (((.key) + 1) | tostring | "000" + . | .[-3:]))
+        id: ("F" + (((.key) + $start) | tostring | "000" + . | .[-3:]))
       }
       | del(._idx, ._pri, ._sub)
     )
