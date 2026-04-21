@@ -709,23 +709,25 @@ findings get the full validator output stored, light-lane confirmed
 findings get nothing (matching Phase 4.4's behavior in the original
 review path).
 
+**The contract is the output, not the technique.** Agent tool results
+land in orchestrator context, not a shell variable, so there's no
+single "right" way to marshal them. Compose the tuple array however is
+natural — a direct `Write` of the assembled JSON array, a `jq`
+pipeline, or an inline helper script — and emit it to
+`$scratch/add-decisions.json`. The trailing `rm -rf "$scratch"` below
+cleans everything in that directory, so ad-hoc helpers that land
+inside it get auto-removed too. Tuple shape is identical to
+Phase 4.4's (`{id, score_phase4, decision, actionability, reason,
+validation_result}`) — the helper validates and aborts the batch on
+shape drift.
+
 ```bash
 scratch="/tmp/adams-review-add-$review_id"
 mkdir -p "$scratch"
 
-# $validator_responses is an orchestrator-side dict keyed by finding id.
-jq -cn --argjson responses "$validator_responses" '
-  $responses
-  | to_entries
-  | map({
-      id: .key,
-      score_phase4: (.value.score_phase4 // null),
-      decision: (.value.decision // null),
-      actionability: (.value.actionability // null),
-      reason: (.value.reason // null),
-      validation_result: (.value.validation_result // null)
-    })
-' > "$scratch/add-decisions.json"
+# Compose the tuple array in orchestrator context and write it to
+# $scratch/add-decisions.json by whatever means is natural. The helper
+# only cares about the file path + tuple shape.
 
 out=$(~/.claude/commands/_shared/tools/artifact-patch.py \
         --path "$artifact_path" \

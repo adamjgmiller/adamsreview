@@ -235,35 +235,52 @@ but not authoritative.
 
 **Building the batch.** For each Wave-1 validator response, compose
 one tuple. `validation_result` in the tuple comes from the sub-agent's
-outer response envelope — extract the nested object via
-`jq -c '.validation_result // .'` (the `// .` no-ops when the response
-is already the inner object). Pass the sub-agent's `reason` through
-when it provides one; otherwise let the helper fill the
-disposition-appropriate default. The helper writes `validation_result`
-only when the derived disposition lands in the confirmed band; pass
-it for every deep-lane tuple — uncertain / disproven tuples have it
-silently ignored.
+outer response envelope — extract the nested object (the inner
+`validation_result` value, or the whole response if it's already the
+inner object). Pass the sub-agent's `reason` through when it provides
+one; otherwise let the helper fill the disposition-appropriate default.
+The helper writes `validation_result` only when the derived
+disposition lands in the confirmed band; pass it for every deep-lane
+tuple — uncertain / disproven tuples have it silently ignored.
+
+**The contract is the output, not the technique.** Agent tool results
+land in orchestrator context, not a shell variable, so there's no
+single "right" way to marshal them. Compose the tuple array however is
+natural — a direct `Write` of the assembled JSON array, a `jq`
+pipeline, or an inline helper script — and emit it to
+`$scratch/phase4-wave1-decisions.json` (inside the per-review scratch
+dir, so Phase 4's trailing cleanup at the end of §4.6 removes it and
+any co-located ad-hoc helper you wrote). Then invoke the helper on
+that path.
+
+Tuple shape (the helper rejects unknown keys; `id` is required;
+`actionability` is required when `score_phase4 >= 60`; everything else
+is optional and gets a sensible default):
+
+```json
+[
+  {
+    "id": "F001",
+    "score_phase4": 72,
+    "decision": "confirmed",
+    "actionability": "auto_fixable",
+    "reason": "optional — omit to let the helper fill the default",
+    "validation_result": { "evidence": [...], "blast_radius": {...}, "fix_proposal": {...}, "verification_context": {...} }
+  }
+]
+```
+
+`validation_result` is `null` for light-lane tuples and for deep-lane
+disproven / uncertain tuples. Deep-lane confirmed tuples carry the
+full nested object.
 
 ```bash
 scratch="/tmp/adams-review-$review_id"
 mkdir -p "$scratch"
 
-# Compose one tuple per Wave-1 validator response. $validator_responses
-# is an orchestrator-side list keyed by finding id; the snippet below
-# is the intended shape — the orchestrator fills it in as each
-# sub-agent returns.
-jq -cn --argjson responses "$validator_responses" '
-  $responses
-  | to_entries
-  | map({
-      id: .key,
-      score_phase4: (.value.score_phase4 // null),
-      decision: (.value.decision // null),
-      actionability: (.value.actionability // null),
-      reason: (.value.reason // null),
-      validation_result: (.value.validation_result // .value)
-    })
-' > "$scratch/phase4-wave1-decisions.json"
+# Compose the tuple array in orchestrator context and write it to
+# $scratch/phase4-wave1-decisions.json by whatever means is natural.
+# The helper only cares about the file path + tuple shape above.
 
 out=$(~/.claude/commands/_shared/tools/artifact-patch.py \
         --path "$artifact_path" \
@@ -408,6 +425,15 @@ For each returned id:
 (The validation_result stays on the finding — it's still valuable context
 for the user in the report — but the disposition forces it out of the
 actionable path.)
+
+Then clean up Phase 4's scratch dir (parallels Phase 1.5's cleanup of
+the same path in `02-ensemble-adapter.md`). Reference the literal path
+rather than `$scratch` — §4.4 may not have run if Phase 3 gated every
+candidate out:
+
+```bash
+rm -rf -- "/tmp/adams-review-$review_id"
+```
 
 ### 4.7. Log Phase 4 summary
 
