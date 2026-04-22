@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-read.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-patch.py:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-validate.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-render.py:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-publish.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/assign-finding-ids.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/log-phase.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/log-tokens.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent
+allowed-tools: Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-read.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-patch.py:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-validate.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-render.py:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/artifact-publish.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/assign-finding-ids.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/log-phase.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/log-tokens.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/tally-subagent-tokens.sh:*), Bash(/Users/adammiller/.claude/commands/_shared/tools/repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent
 argument-hint: "[<paste...>] [--file path --line N --claim \"...\"] [--impact <type>] [--no-dedup]"
 description: Inject externally-sourced findings (cloud /ultrareview, manual finds, etc.) into the most recent /adams-review artifact for this branch. Validates via Phase 4, re-renders, re-publishes.
 disable-model-invocation: false
@@ -786,17 +786,30 @@ phase_4_elapsed=$(( $(date +%s) - phase_4_start_epoch ))
   --summary "deep=$deep_count light=$light_count new_ids=$new_ids"
 ```
 
-### 8. Re-render `artifact.md`
+### 8. Re-tally `subagent_tokens` + re-render `artifact.md`
+
+Re-tally first so the rendered report (and the downstream PR comment
+update in step 9) reflects this run's new sub-agent spend on top of
+the prior `/adams-review` baseline. The paste normalizer (§3a) and any
+Phase-4 re-validators that ran during this `/adams-review-add`
+invocation already logged their usage to `tokens.jsonl`; the helper is
+a pure readback:
 
 ```bash
+~/.claude/commands/_shared/tools/tally-subagent-tokens.sh \
+    --tokens-log "$tokens_log_path" \
+    --artifact   "$artifact_path" \
+    2>>"$trace_log_path" || printf 'add_tally_failed\n' >> "$trace_log_path"
+
 ~/.claude/commands/_shared/tools/artifact-render.py \
     --input "$artifact_path" \
     --output "$review_dir/artifact.md"
 ```
 
-On non-zero: log stderr to `trace.md` with tag `add_render_failed`,
-continue to step 9 (the artifact patches stand; the user can manually
-re-render).
+Tally failure is non-fatal (observability, not correctness); a stale
+`subagent_tokens.total` doesn't block the re-publish. Render non-zero:
+log stderr to `trace.md` with tag `add_render_failed`, continue to
+step 9 (the artifact patches stand; the user can manually re-render).
 
 ### 9. Re-publish to the PR (PR mode only)
 
@@ -865,6 +878,8 @@ Added N new findings to <review_id>:
 Deduplicated K candidates against existing findings (sources merged):
   new#2 → F003   (skipped — same underlying issue)
 
+Cumulative sub-agent spend: <total> tokens across <invs> invocations.
+
 Next:
   - /adams-review-fix             apply newly auto-eligible findings (deep-lane confirmed_auto)
   - /adams-review-walkthrough     promote any non-eligible new findings (light-lane / manual / uncertain)
@@ -878,6 +893,21 @@ Build the per-finding lines from `artifact-read.sh`:
   --filter "[.findings[] | select(.id | IN(\"${new_ids//,/\",\"}\"))
             | \"  \\(.id) \\(.disposition | (. + \"                \")[0:18]) \\(.impact_type | (. + \"          \")[0:11]) \\(.file):\\(.line_range[0]) — \\(.claim | .[0:80])\"]
             | join(\"\n\")"
+```
+
+Read the cumulative spend numbers from the artifact (populated by §8's
+re-tally). Direct `jq -r` call so stdout is the chat line itself, not
+a JSON-quoted string (`artifact-read.sh --filter` doesn't enable raw
+mode). Omit the line entirely if `subagent_tokens` is absent or
+`total` is null — matches `artifact-render.py`'s renderer guard so
+the chat never shows `null tokens across null invocations`:
+
+```bash
+token_line=$(jq -r '
+    if (.subagent_tokens.total // null) != null and (.subagent_tokens.invocations // null) != null
+    then "Cumulative sub-agent spend: \(.subagent_tokens.total) tokens across \(.subagent_tokens.invocations) invocations."
+    else empty end
+' "$artifact_path")
 ```
 
 If publish failed in step 9, append:
