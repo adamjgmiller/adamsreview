@@ -1,15 +1,15 @@
 ---
 allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(include:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent
 argument-hint: "[<paste...>] [--file path --line N --claim \"...\"] [--impact <type>] [--no-dedup]"
-description: Inject externally-sourced findings (cloud /ultrareview, manual finds, etc.) into the most recent /adams-review artifact for this branch. Validates via Phase 4, re-renders, re-publishes.
+description: Inject externally-sourced findings (cloud /ultrareview, manual finds, etc.) into the most recent /adams-review:review artifact for this branch. Validates via Phase 4, re-renders, re-publishes.
 disable-model-invocation: false
 ---
 
-Inject one or more findings sourced from outside `/adams-review` —
+Inject one or more findings sourced from outside `/adams-review:review` —
 a Claude Code cloud `/ultrareview` dump, an Opus once-over, a teammate's
 Slack message, a CodeRabbit run outside `--ensemble` mode, or a human's
 own discovery — into the **existing** `artifact.json` produced by the
-most recent `/adams-review` on this branch. Each new finding goes
+most recent `/adams-review:review` on this branch. Each new finding goes
 through Phase 4 validation (deep Opus or light Sonnet, lane-aware) and
 lands with whatever disposition the validator produces. The PR comment
 is re-rendered + re-published to the existing `comment_id` so the new
@@ -18,9 +18,9 @@ findings appear alongside the original review's findings.
 This command is **additive**. It does not re-run Phase 1 detection,
 Phase 2 dedup against the original lens output, Phase 5 cross-cutting
 analysis, or any fix loop. To re-derive everything from the diff, run
-`/adams-review` (which overwrites the artifact). To act on the new
-findings after they land, run `/adams-review-fix` (auto-eligible
-findings only) or `/adams-review-walkthrough` (everything else).
+`/adams-review:review` (which overwrites the artifact). To act on the new
+findings after they land, run `/adams-review:fix` (auto-eligible
+findings only) or `/adams-review:walkthrough` (everything else).
 
 ## Arguments
 
@@ -53,9 +53,9 @@ This command runs against an artifact that ALREADY exists. The
 sequencing matters:
 
 1. Locate the artifact via `latest.txt` (same pattern as
-   `/adams-review-fix` and `/adams-review-promote`).
+   `/adams-review:fix` and `/adams-review:promote`).
 2. **Hard abort if any finding is `current_state == attempted`.**
-   Mirrors `/adams-review-fix` Phase 7's leftover-attempted gate. Adding
+   Mirrors `/adams-review:fix` Phase 7's leftover-attempted gate. Adding
    findings while the artifact is mid-mutation is a footgun.
 3. Build candidate findings — either via the structured one-shot, the
    paste normalizer, or both (mixed mode = paste + `--impact` override).
@@ -137,8 +137,8 @@ Determine `mode_input`:
 - Anything else (e.g. only `cli_file` set, or all empty) → error-as-prompt:
 
   > ERROR: no input. Provide either:
-  >   1. Free-form paste:    `/adams-review-add <paste body...>`
-  >   2. Structured one-shot: `/adams-review-add --file <path> --line <N> --claim "<one-sentence claim>"`
+  >   1. Free-form paste:    `/adams-review:add <paste body...>`
+  >   2. Structured one-shot: `/adams-review:add --file <path> --line <N> --claim "<one-sentence claim>"`
   > Optional flags on either form: `--impact correctness|security|ux|policy|architecture` `--no-dedup`
   > Action: re-invoke with at least one of the two input shapes.
 
@@ -161,7 +161,7 @@ If `latest.txt` is missing or empty → error-as-prompt:
 
 > ERROR: no review found for branch `$head_branch` under
 > `$reviews_root/$repo_slug/`.
-> Action: run /adams-review against this branch first.
+> Action: run /adams-review:review against this branch first.
 
 Otherwise:
 
@@ -204,7 +204,7 @@ If `leftover_ids` is non-empty, print the deterministic recovery
 message and abort (same shape as Phase 7 step 4 in
 `08-fix-loader.md`):
 
-> ERROR: previous /adams-review-fix run did not finish (N findings
+> ERROR: previous /adams-review:fix run did not finish (N findings
 > still in 'attempted'). The working tree may still contain partial
 > fix edits from that run.
 >
@@ -215,7 +215,7 @@ message and abort (same shape as Phase 7 step 4 in
 >      them.
 >   3. For each leftover 'attempted' finding, reset state manually:
 >      artifact-patch.py --finding-id <id> --set current_state=open
->   4. Re-run /adams-review-add.
+>   4. Re-run /adams-review:add.
 >
 > Leftover 'attempted' finding ids: `$leftover_ids`
 
@@ -509,7 +509,7 @@ Capture `phase_4_start_epoch=$(date +%s)`.
 Snapshot the working tree's cleanliness before dispatch. Step 7.5's
 belt-and-braces sweep reverts any dirty state detected after
 validators run — but only when the tree was clean going in. Unlike
-`/adams-review` Phase 0, `/adams-review-add` has no clean-tree gate
+`/adams-review:review` Phase 0, `/adams-review:add` has no clean-tree gate
 (§3.8 design decision: validators are read-only by contract). If the
 user has their own uncommitted work when they invoke this command, a
 blind sweep would clobber it.
@@ -598,7 +598,7 @@ apply):
 > 5. **Produce `verification_context`:** `how_to_verify_fix`,
 >    `edge_cases_to_preserve`, `what_would_break_if_incomplete`.
 > 6. **Re-score 0–100** using the §20 rubric — based on what you found.
-> 7. This finding was injected by `/adams-review-add` from an external
+> 7. This finding was injected by `/adams-review:add` from an external
 >    source; do NOT emit `related_candidates_to_investigate` (no Wave 2
 >    in this code path). If you notice adjacents, mention them in
 >    `evidence` for the user's awareness only.
@@ -674,7 +674,7 @@ safely revert.
 When `pre_validator_clean == "false"` (the user had their own
 uncommitted work going in), skip the sweep. Without a clean baseline
 we can't distinguish user state from validator writes, and a blind
-revert would clobber user work. `/adams-review-add` has no Phase-0
+revert would clobber user work. `/adams-review:add` has no Phase-0
 dirty-tree gate (§3.8), so this is the only safeguard against that
 data-loss class.
 
@@ -790,9 +790,9 @@ log-phase.sh \
 
 Re-tally first so the rendered report (and the downstream PR comment
 update in step 9) reflects this run's new sub-agent + orchestrator
-spend on top of the prior `/adams-review` baseline. The paste
+spend on top of the prior `/adams-review:review` baseline. The paste
 normalizer (§3a) and any Phase-4 re-validators that ran during this
-`/adams-review-add` invocation already logged their sub-agent usage to
+`/adams-review:add` invocation already logged their sub-agent usage to
 `tokens.jsonl`; the orchestrator transcript on disk captured every
 main-session turn. Both helpers are pure readbacks:
 
@@ -891,8 +891,8 @@ Cumulative sub-agent spend: <total> tokens across <invs> invocations.
 Cumulative orchestrator spend: <cache_read> cache-read / <output> output / <cache_creation> cache-creation / <input> fresh input across <turns> turns.
 
 Next:
-  - /adams-review-fix             apply newly auto-eligible findings (deep-lane confirmed_auto)
-  - /adams-review-walkthrough     promote any non-eligible new findings (light-lane / manual / uncertain)
+  - /adams-review:fix             apply newly auto-eligible findings (deep-lane confirmed_auto)
+  - /adams-review:walkthrough     promote any non-eligible new findings (light-lane / manual / uncertain)
 ```
 
 Build the per-finding lines from `artifact-read.sh`:
@@ -938,16 +938,16 @@ The artifact patches stand; to republish run:
 ## What this command does NOT do
 
 - **No fix-run.** Add is metadata-only (with validation). Run
-  `/adams-review-fix` afterward to apply auto-eligible new findings.
+  `/adams-review:fix` afterward to apply auto-eligible new findings.
 - **No promotion.** New findings land at whatever disposition Phase 4
-  produces. Run `/adams-review-walkthrough` (or
-  `/adams-review-promote <id>`) to promote anything that didn't land
+  produces. Run `/adams-review:walkthrough` (or
+  `/adams-review:promote <id>`) to promote anything that didn't land
   deep-`confirmed_auto`.
 - **No Phase 5 cross-cutting recompute.** Added findings are not
   retroactively grouped into existing `cross_cutting_groups`.
   Documented small loss; the rendered report still shows them in the
   standard per-finding tables.
-- **No persistence across fresh `/adams-review` runs.** A re-review
+- **No persistence across fresh `/adams-review:review` runs.** A re-review
   overwrites the artifact; added findings are lost. Re-add if needed.
 
 ## Sub-agent prompts (used by steps 4 and 5)

@@ -158,7 +158,7 @@ def render_header(artifact):
     if freshness_line:
         lines.append(freshness_line)
     if not any_fix_attempts(artifact):
-        lines.append("**Fix threshold:** not yet set (run `/adams-review-fix [threshold]` to apply fixes)")
+        lines.append("**Fix threshold:** not yet set (run `/adams-review:fix [threshold]` to apply fixes)")
     tokens = artifact.get("subagent_tokens") or {}
     total = tokens.get("total")
     invs = tokens.get("invocations")
@@ -376,8 +376,8 @@ def render_deep_other(buckets, disposition):
     lines = [f"### {glyph} {label} ({len(rows)})", ""]
     if disposition == "confirmed_manual":
         lines.append(
-            "_Not touched by `/adams-review-fix` by default. "
-            "To force-apply as auto-fix, run `/adams-review-promote <finding_id>`._"
+            "_Not touched by `/adams-review:fix` by default. "
+            "To force-apply as auto-fix, run `/adams-review:promote <finding_id>`._"
         )
         lines.append("")
         lines.append("| # | Score | Impact | File | Issue | Why manual |")
@@ -398,7 +398,7 @@ def render_deep_other(buckets, disposition):
             )
     if disposition == "uncertain":
         lines.append("")
-        lines.append("Phase 4 couldn't confirm decisively. Re-run `/adams-review` if you suspect this deserves")
+        lines.append("Phase 4 couldn't confirm decisively. Re-run `/adams-review:review` if you suspect this deserves")
         lines.append("further investigation with fresh context.")
     return "\n".join(lines)
 
@@ -419,9 +419,9 @@ def render_light_lane(buckets):
     lines = ["## Light lane — ux, policy, architecture", ""]
     if any(f.get("disposition") in ("confirmed_auto", "confirmed_manual") for f in rows):
         lines.append(
-            "_Light-lane findings are not touched by `/adams-review-fix` by default — "
+            "_Light-lane findings are not touched by `/adams-review:fix` by default — "
             "including rows labeled auto-fixable. To force-apply any row as auto-fix, "
-            "run `/adams-review-promote <finding_id>`._"
+            "run `/adams-review:promote <finding_id>`._"
         )
         lines.append("")
     lines.append("| # | Score | Impact | File | Finding | Disposition |")

@@ -6,7 +6,7 @@ disable-model-invocation: false
 ---
 
 Run the per-finding fix loop per DESIGN §4 Phases 7–9. Reads the
-artifact produced by the most recent `/adams-review` on this branch,
+artifact produced by the most recent `/adams-review:review` on this branch,
 dispatches fix-group agents, post-fix-reviews the working tree, and
 either commits a coherent set of surviving fixes (with per-group
 Phase-9 truth in the commit message) or leaves the tree exactly as it
@@ -19,7 +19,7 @@ a single reconciled fix if Phase 9 then verifies it), or inspect
 Arguments (optional):
 - First positional (integer 0–100) → `threshold` (default `60`). The
   §4 Phase 8 fix gate: `confirmed_auto`/`partial`/`regression` findings
-  with `score_phase4 >= threshold` are eligible. `/adams-review-fix 80`
+  with `score_phase4 >= threshold` are eligible. `/adams-review:fix 80`
   excludes moderate-strength findings from the run.
 - `--granular-commits` → one commit per surviving fix group. Default is
   one combined commit for all survivors (§13.6).
@@ -46,7 +46,7 @@ This matters because:
   completing and Phase 9e writing fix_attempts, findings sit in
   `current_state=attempted`. If the run is interrupted there — or if
   Phase 9.pre detects a touched-file overlap and the reviewer chooses
-  abort (default) or inspect — the next `/adams-review-fix`
+  abort (default) or inspect — the next `/adams-review:fix`
   invocation's Phase 7 step 4 hard abort catches the leftover
   `attempted` state and gives the user a deterministic recovery
   prompt. Never clean up `attempted` state silently; that's the
@@ -176,7 +176,7 @@ Capture both in your working context before executing Phase 7.
 
 ## What this command does NOT do
 
-- No new review (that's `/adams-review`). Findings, scores,
+- No new review (that's `/adams-review:review`). Findings, scores,
   validation_results, and cross_cutting_groups all come from the
   artifact this command loads; it never re-runs detection or scoring.
 - **No deletes, renames, or moves in the working tree (v1).** Fix

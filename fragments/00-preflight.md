@@ -399,7 +399,7 @@ and determine the prior state (per §4 Phase 0 step 11):
 |---|---|
 | `prior.reviewed_sha == reviewed_sha` AND no `fix_attempts` on any finding | "You have a review for this exact commit from `<date>`. Re-run fresh, or abort?" |
 | `prior.reviewed_sha == reviewed_sha` AND some finding has a `fix_attempts[-1]` whose `output_sha` matches `HEAD` | "You have a review that was already fixed at this commit. Re-run fresh, or abort?" |
-| Any finding has `current_state=open` AND `is_actionable=true` | "Previous review has unresolved actionable findings. Options: (a) run `/adams-review-fix` first, (b) proceed with fresh review, (c) abort." |
+| Any finding has `current_state=open` AND `is_actionable=true` | "Previous review has unresolved actionable findings. Options: (a) run `/adams-review:fix` first, (b) proceed with fresh review, (c) abort." |
 | Otherwise (prior exists but HEAD has moved beyond any known sha) | "Prior review at `<prior.reviewed_sha>`. Current HEAD is `<reviewed_sha>`. Proceed with fresh review?" |
 
 A "fresh review" supersedes the prior local artifact (new `review_id`,
@@ -432,7 +432,7 @@ If a comment id is returned, run `AskUserQuestion` with three choices:
   and want the single canonical review comment updated.
 - **(c) Abort** and recover the prior artifact first.
 
-Suggested prompt: "A prior `/adams-review` comment exists on this PR
+Suggested prompt: "A prior `/adams-review:review` comment exists on this PR
 (`<comment_url>`) but no local artifact was found. (a) post a new
 comment (prior stays), (b) replace the prior comment in place, (c)
 abort to recover the prior artifact first."

@@ -8,8 +8,8 @@
 #   { total, invocations, by_phase, by_model, by_lens, by_finding_phase4 }
 #
 # Safe to call repeatedly — the helper is a pure readback. Phase 6
-# of /adams-review invokes it at finalize; the lifecycle commands
-# (/adams-review-fix, /adams-review-add, /adams-review-walkthrough)
+# of /adams-review:review invokes it at finalize; the lifecycle commands
+# (/adams-review:fix, /adams-review:add, /adams-review:walkthrough)
 # invoke it before re-rendering so the PR comment reflects cumulative
 # sub-agent spend across the full review → fix/add/walkthrough arc.
 #

@@ -5,9 +5,9 @@ description: Promote a finding to auto-fixable via human override. Patches artif
 disable-model-invocation: false
 ---
 
-Promote a single finding from the most recent `/adams-review` on this
+Promote a single finding from the most recent `/adams-review:review` on this
 branch to `disposition=confirmed_auto`, recording full provenance in
-`human_confirmation` so `/adams-review-fix` will pick it up on its next
+`human_confirmation` so `/adams-review:fix` will pick it up on its next
 run. See DESIGN §27 for the contract and §5.2.1 for how the Phase 8
 eligibility bypass works.
 
@@ -35,7 +35,7 @@ eligibility bypass works.
   (re-publish to PR), and 10 (user-visible summary). The artifact
   patch and trace entry still land. Useful for scripted promote
   loops where render+publish should run once at the end rather than
-  per-iteration; `/adams-review-walkthrough` (§28) uses this
+  per-iteration; `/adams-review:walkthrough` (§28) uses this
   internally. When set, the caller is responsible for running
   `artifact-render.py` and `artifact-publish.sh` afterward.
 
@@ -50,11 +50,11 @@ eligibility bypass works.
    `promote-core.md` step 6).
 5. Re-renders `artifact.md`.
 6. Re-publishes to the PR (PR mode) or no-ops (local mode) — the same
-   `gh api PATCH` flow `/adams-review-fix` uses at Phase 9e.
+   `gh api PATCH` flow `/adams-review:fix` uses at Phase 9e.
 7. Appends a `## promote (<ts>)` block to `trace.md`.
 8. Prints a summary showing what changed.
 
-Does NOT run `/adams-review-fix` for you. Run it yourself when you're
+Does NOT run `/adams-review:fix` for you. Run it yourself when you're
 ready to apply promoted findings.
 
 ## Execution
@@ -81,7 +81,7 @@ for `--reason` and `--fix-hint`):
 If no `finding_id` was provided, error-as-prompt:
 
 > ERROR: missing finding_id.
-> Valid input: /adams-review-promote F037 [--reason "..."] [--fix-hint "..."] [--force]
+> Valid input: /adams-review:promote F037 [--reason "..."] [--fix-hint "..."] [--force]
 > Action: pass a finding id (matching `^F[0-9]+$`) as the first arg.
 
 If `--reason` was not provided, dispatch `AskUserQuestion` once with
@@ -109,7 +109,7 @@ If `latest.txt` is missing or empty, error-as-prompt:
 
 > ERROR: no review found for branch `$head_branch` under
 > `$reviews_root/$repo_slug/`.
-> Action: run /adams-review against this branch first.
+> Action: run /adams-review:review against this branch first.
 
 Otherwise:
 
@@ -199,7 +199,7 @@ persists; user can manually re-publish with the helper).
 ### 10. User-visible summary
 
 When `defer_publish == true`, print only a terse one-liner so the
-caller's own summary (e.g. `/adams-review-walkthrough`'s decisions
+caller's own summary (e.g. `/adams-review:walkthrough`'s decisions
 log) isn't drowned out:
 
 ```
@@ -219,7 +219,7 @@ Promoted $finding_id:
   reviewer:       $reviewer
   reason:         $reason
 
-Next: run /adams-review-fix to apply this and any other
+Next: run /adams-review:fix to apply this and any other
 confirmed_auto/partial/regression findings.
 ```
 
@@ -245,15 +245,15 @@ promote_publish_failed). The artifact patch stands; to republish run:
 ## What this command does NOT do
 
 - **No fix-run.** Promote is metadata-only. You must run
-  `/adams-review-fix` to apply the promoted finding.
+  `/adams-review:fix` to apply the promoted finding.
 - **No batch promotion.** One finding per invocation. Loop from the
   shell if you need multiple:
-  `for id in F003 F037 F039; do /adams-review-promote $id --reason "..."; done`
-- **No demotion / undo.** There is no `/adams-review-demote`. If you
-  change your mind BEFORE running `/adams-review-fix`, manually patch
+  `for id in F003 F037 F039; do /adams-review:promote $id --reason "..."; done`
+- **No demotion / undo.** There is no `/adams-review:demote`. If you
+  change your mind BEFORE running `/adams-review:fix`, manually patch
   the artifact:
   `artifact-patch.py --path <artifact> --finding-id F037 --set-json human_confirmation=null --set disposition=<prior> --set actionability=<prior>`
-- **No persistence across fresh `/adams-review` runs.** A new review
+- **No persistence across fresh `/adams-review:review` runs.** A new review
   overwrites the artifact; promotions are lost. Re-promote if needed.
   (Future work: `overrides.json` sidecar keyed by claim fingerprint.)
 - **No argument for changing `score_phase4`.** The validator's score is

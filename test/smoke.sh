@@ -246,8 +246,8 @@ fi
 
 # OC. Fresh-run-won't-overwrite (DESIGN §13.4, rev 7).
 # The publisher no longer auto-discovers a prior comment by marker. Each
-# command carries its own continuation intent: fresh /adams-review
-# omits --comment-id (→ POST); /adams-review-fix and /adams-review-promote
+# command carries its own continuation intent: fresh /adams-review:review
+# omits --comment-id (→ POST); /adams-review:fix and /adams-review:promote
 # pass --comment-id read from the artifact (→ PATCH).
 
 # OC-1: find_by_marker function is gone from the publisher.
@@ -290,10 +290,10 @@ else
     fail "OC-5: artifact-publish.sh has syntax errors"
 fi
 
-# OC-6: DESIGN §13.4 documents the new rule (fresh /adams-review POSTs).
+# OC-6: DESIGN §13.4 documents the new rule (fresh /adams-review:review POSTs).
 # Path repointed to docs/archive/ after the 2026-04-19 docs-consolidation move.
 if grep -q 'always .POST. a new comment' "$REPO/docs/archive/DESIGN.md"; then
-    pass "OC-6: DESIGN §13.4 documents fresh-/adams-review-POSTs rule"
+    pass "OC-6: DESIGN §13.4 documents fresh-/adams-review:review-POSTs rule"
 else
     fail "OC-6: DESIGN §13.4 missing new POST-on-fresh-review rule"
 fi
@@ -1258,7 +1258,7 @@ fi
 
 # ------------------------------------------------------------------ Stage 3
 #
-# Stage 3 introduces `/adams-review-fix`. These assertions cover the helper
+# Stage 3 introduces `/adams-review:fix`. These assertions cover the helper
 # contracts it depends on — `group-fixes.py` (§21.5) fix-group union-find
 # and `artifact-patch.py` batched fix-outcome modes. Fragment-level prose
 # (Phase 7/8/9 orchestration) is not machine-tested here; real-repo runs
@@ -1897,7 +1897,7 @@ else
     fail "CF-ES-2: expected exit 64 + unknown-arg; got code=$es_code stderr=$es_stderr"
 fi
 
-# ------------------------------------------------------------------ MP-* /adams-review-promote (§27)
+# ------------------------------------------------------------------ MP-* /adams-review:promote (§27)
 #
 # Covers the human_confirmation field, Phase 8 eligibility bypass
 # (§5.2.1, §13.1, §13.2), and the renderer's (human-confirmed) tag.
@@ -2014,7 +2014,7 @@ fi
 
 # MP-7: schema accepts human_confirmation with non-empty fix_hint string. Covers
 # the §27.3 / schema rev-adding-fix_hint path — this is the on-disk shape
-# /adams-review-promote --fix-hint "..." produces after step 5's jq build.
+# /adams-review:promote --fix-hint "..." produces after step 5's jq build.
 MP_HC_WITH_HINT=$(jq -nc '{
     reviewer: "tester@example.com",
     reason:   "promote with steering",
@@ -2073,9 +2073,9 @@ fi
 
 # ---------------------------------------------------------------- walkthrough
 #
-# WT-* cover the /adams-review-walkthrough command surface. WT-1..WT-4 exercise
+# WT-* cover the /adams-review:walkthrough command surface. WT-1..WT-4 exercise
 # the scope-filter jq (the inverse of 09-fix-execution.md step 8.1); WT-5 is a
-# structural check on /adams-review-promote's --defer-publish + shared-fragment
+# structural check on /adams-review:promote's --defer-publish + shared-fragment
 # wiring. The scope jq MUST stay in sync with Phase 8 eligibility — any drift
 # surfaces here.
 
@@ -2097,7 +2097,7 @@ else
 fi
 
 # The walkthrough scope-filter jq — must stay in sync with the expression in
-# commands/adams-review-walkthrough.md §3. Held as a shell variable so the
+# commands/walkthrough.md §3. Held as a shell variable so the
 # assertions below can exercise it against different fixtures without drift.
 # NOTE: pre_existing_report findings are excluded from scope_full_ids — they
 # are routed exclusively to §6.5 issue filing, never walked for promotion.
@@ -2223,7 +2223,7 @@ else
     fail "WT-4: expected W030,W031,W032 (any order); got '$wt4_ids'"
 fi
 
-# WT-6: /adams-review-walkthrough decisions-log template contains the required
+# WT-6: /adams-review:walkthrough decisions-log template contains the required
 # structural markers. Since the markdown is rendered inline by Claude at
 # runtime (the command file is a prompt, not a shell script), this is a
 # template-integrity check — guards against accidental removal of any
@@ -2240,7 +2240,7 @@ else
     fail "WT-6: walkthrough decisions-log template missing required sections in $WALK_MD"
 fi
 
-# WT-5: /adams-review-promote wires --defer-publish and includes promote-core.md.
+# WT-5: /adams-review:promote wires --defer-publish and includes promote-core.md.
 # Structural check guarding against accidental removal of either piece (plans/
 # walkthrough-mode.md §5, §6). If a future refactor merges the shared fragment
 # back inline or drops the --defer-publish flag, this assertion surfaces it
@@ -2258,7 +2258,7 @@ fi
 # to audit Phase-3-demoted findings). BOTH the full and qualifying scopes
 # exclude pre_existing_report — those are routed only to §6.5 issue filing
 # and are never walked for promotion. Mirrors the second jq in
-# commands/adams-review-walkthrough.md; keep in sync when that file changes.
+# commands/walkthrough.md; keep in sync when that file changes.
 WT_QUALIFYING_JQ='
 [.findings[]
  | select(.current_state == "open")
@@ -2602,7 +2602,7 @@ else
 fi
 
 # ------------------------------------------------------------------ assign-finding-ids --start-from
-# AS-* assertions cover the --start-from flag added for /adams-review-add (so
+# AS-* assertions cover the --start-from flag added for /adams-review:add (so
 # new findings injected into an existing artifact continue the id sequence
 # instead of colliding from F001). The default-no-flag behavior must remain
 # F001..F0NN to keep Phase 1's pooled-candidate join unchanged.
@@ -2633,9 +2633,9 @@ else
     fail "AS-3: expected exit 64, got $code"
 fi
 
-# ------------------------------------------------------------------ /adams-review-add command
+# ------------------------------------------------------------------ /adams-review:add command
 # RA-* assertions cover the structural shape of the new top-level command
-# (commands/adams-review-add.md). The command is a prose markdown file
+# (commands/add.md). The command is a prose markdown file
 # that Claude Code interprets — these assertions verify the load-bearing
 # pieces are present, mirroring the VR-* / PF-* pattern for prompts that
 # only an LLM can execute.
@@ -2643,14 +2643,14 @@ ADD_MD="$REPO/commands/add.md"
 
 # RA-1: command file exists.
 if [[ -f "$ADD_MD" ]]; then
-    pass "RA-1: commands/adams-review-add.md exists"
+    pass "RA-1: commands/add.md exists"
 else
-    fail "RA-1: commands/adams-review-add.md missing"
+    fail "RA-1: commands/add.md missing"
 fi
 
 # RA-2: leftover-attempted hard abort present (mirrors Phase 7 step 4).
 # Re-uses the same "attempted" detection + recovery message shape so a
-# /adams-review-fix run in flight cannot be silently extended by an add.
+# /adams-review:fix run in flight cannot be silently extended by an add.
 if grep -qF 'select(.current_state == "attempted")' "$ADD_MD" \
     && grep -qF 'leftover_ids' "$ADD_MD"; then
     pass "RA-2: leftover-attempted hard abort present (mirrors Phase 7)"
@@ -2779,7 +2779,7 @@ fi
 
 # RA-12: step 7.5 tree-cleanliness sweep is GATED on pre_validator_clean
 # so the sweep does not clobber the user's own uncommitted work.
-# /adams-review-add has no clean-tree gate (§3.8 design decision) — if
+# /adams-review:add has no clean-tree gate (§3.8 design decision) — if
 # the user had dirty state going in, the sweep would revert it. The
 # gate + skip-branch + distinct trace tag together prove the guard is
 # wired correctly.
@@ -3214,8 +3214,8 @@ else
     fail "TK-4: expected total=13000 invs=6 phase_9=5000; got total=$tk4_total invs=$tk4_invs phase_9=$tk4_p9"
 fi
 
-# TK-5: the chat-summary jq -r filter used by adams-review-add step 10 and
-# adams-review-walkthrough step 9. Must produce a clean (unquoted) line on
+# TK-5: the chat-summary jq -r filter used by adams-review:add step 10 and
+# adams-review:walkthrough step 9. Must produce a clean (unquoted) line on
 # a populated artifact and empty stdout when subagent_tokens is absent.
 token_filter='if (.subagent_tokens.total // null) != null and (.subagent_tokens.invocations // null) != null
     then "Cumulative sub-agent spend: \(.subagent_tokens.total) tokens across \(.subagent_tokens.invocations) invocations."

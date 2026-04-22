@@ -1,7 +1,7 @@
 ## Promote core — precondition, patch, trace
 
-Shared fragment used by both `/adams-review-promote` and
-`/adams-review-walkthrough` (§28). Implements the middle steps of the
+Shared fragment used by both `/adams-review:promote` and
+`/adams-review:walkthrough` (§28). Implements the middle steps of the
 promote flow — reading the finding, enforcing preconditions, resolving
 the `fix_hint` (with the doc/comment-vs-code heuristic), building the
 `human_confirmation` object, applying the atomic patch, and appending
@@ -76,7 +76,7 @@ both the integer and null cases via `--argjson`).
 | `curr_disp` | Additional condition | Action |
 |---|---|---|
 | `confirmed_auto` | `curr_hc != null` | Exit 0 with: "F$N already promoted by @$(jq -r '.reviewer' <<<"$curr_hc") on $(jq -r '.ts' <<<"$curr_hc"); no-op." — pulling reviewer and timestamp from the existing `human_confirmation` object (the bash `$reviewer` / `$ts` vars are not yet set in step 4). |
-| `confirmed_auto` | `curr_hc == null` | **Proceed.** Set `human_confirmation` to record the human override. May be strictly necessary (light-lane `confirmed_auto` fails the Phase 8 impact_type filter, deep-lane below-threshold `confirmed_auto` fails the score gate) or redundant-but-harmless audit (deep-lane above-threshold `confirmed_auto` was already eligible). Promote can't know the user's planned `/adams-review-fix` threshold, so always proceed. |
+| `confirmed_auto` | `curr_hc == null` | **Proceed.** Set `human_confirmation` to record the human override. May be strictly necessary (light-lane `confirmed_auto` fails the Phase 8 impact_type filter, deep-lane below-threshold `confirmed_auto` fails the score gate) or redundant-but-harmless audit (deep-lane above-threshold `confirmed_auto` was already eligible). Promote can't know the user's planned `/adams-review:fix` threshold, so always proceed. |
 | `resolved` | — | Exit 1: "F$N is resolved (fix already ran); cannot promote." |
 | `disproven` | `force == false` | Exit 1: "F$N was disproven by Phase 4 (score=$curr_score). Validator found positive evidence this isn't a real issue. Re-run with --force to override." |
 | `disproven` | `force == true` | Proceed with a warning line in trace.md: `disproven→confirmed_auto via --force`. |
@@ -94,10 +94,10 @@ Examples where the old no-op silently broke promote:
 
 - Light-lane `confirmed_auto` (impact_type ∈ ux/policy/architecture) —
   fails the Phase 8 impact_type filter; needs `human_confirmation` to
-  bypass (§27.6). This is the case `/adams-review-walkthrough`
+  bypass (§27.6). This is the case `/adams-review:walkthrough`
   exists to address.
 - Deep-lane `confirmed_auto` below the user's planned threshold — the
-  user may run `/adams-review-fix 70` on a finding scored 55, which
+  user may run `/adams-review:fix 70` on a finding scored 55, which
   fails the score gate; needs `human_confirmation` to bypass the
   score gate.
 
@@ -222,6 +222,6 @@ unchanged, so the rendered md on disk is already correct.
 ```
 
 Step numbering (3, 4, 4.5, 5, 6, 9) matches the original
-`/adams-review-promote` step numbers for continuity with DESIGN §27
+`/adams-review:promote` step numbers for continuity with DESIGN §27
 and existing trace.md entries. The top-level command owns steps 1, 2,
 7, 8, 10.

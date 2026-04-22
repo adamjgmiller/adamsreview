@@ -35,7 +35,7 @@ Found 7 findings across all lanes:
 
 ### ⚠ Requires manual attention (1)
 
-_Not touched by `/adams-review-fix` by default. To force-apply as auto-fix, run `/adams-review-promote <finding_id>`._
+_Not touched by `/adams-review:fix` by default. To force-apply as auto-fix, run `/adams-review:promote <finding_id>`._
 
 | # | Score | Impact | File | Issue | Why manual |
 |---|-------|--------|------|-------|-------------|
@@ -47,12 +47,12 @@ _Not touched by `/adams-review-fix` by default. To force-apply as auto-fix, run 
 |---|-------|--------|------|-------|
 | F003 | 55 | correctness | `src/api/search.ts:33` | Query string possibly not escaped |
 
-Phase 4 couldn't confirm decisively. Re-run `/adams-review` if you suspect this deserves
+Phase 4 couldn't confirm decisively. Re-run `/adams-review:review` if you suspect this deserves
 further investigation with fresh context.
 
 ## Light lane — ux, policy, architecture
 
-_Light-lane findings are not touched by `/adams-review-fix` by default — including rows labeled auto-fixable. To force-apply any row as auto-fix, run `/adams-review-promote <finding_id>`._
+_Light-lane findings are not touched by `/adams-review:fix` by default — including rows labeled auto-fixable. To force-apply any row as auto-fix, run `/adams-review:promote <finding_id>`._
 
 | # | Score | Impact | File | Finding | Disposition |
 |---|-------|--------|------|---------|-------------|

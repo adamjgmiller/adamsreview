@@ -39,7 +39,7 @@ If `latest.txt` is missing or empty → abort with the user-visible
 message:
 
 > No review found for this branch (`$head_branch`) under
-> `$reviews_root/$repo_slug/`. Run `/adams-review` first.
+> `$reviews_root/$repo_slug/`. Run `/adams-review:review` first.
 
 Otherwise read `review_id` from it:
 
@@ -82,7 +82,7 @@ leftover_ids=$(artifact-read.sh \
 If `leftover_ids` is non-empty, print the deterministic recovery
 message and abort (do NOT mutate state; the user decides):
 
-> ERROR: previous /adams-review-fix run did not finish (N findings
+> ERROR: previous /adams-review:fix run did not finish (N findings
 > still in 'attempted').
 > The working tree may still contain partial fix edits from that run.
 >
@@ -94,7 +94,7 @@ message and abort (do NOT mutate state; the user decides):
 >      commit or stash them yourself if you want to keep them.
 >   3. For each leftover 'attempted' finding, reset state manually:
 >      artifact-patch.py --finding-id <id> --set current_state=open
->   4. Re-run /adams-review-fix.
+>   4. Re-run /adams-review:fix.
 >
 > Leftover 'attempted' finding ids: `$leftover_ids`
 
@@ -173,7 +173,7 @@ else
         printf 'staleness: %s\n' "$staleness_stdout" >> "$trace_log_path"
         echo "Reviewed files have changed since the last known-good SHA." >&2
         echo "$staleness_stdout" >&2
-        echo "Re-run /adams-review, or check 'git log $latest_known_sha..HEAD' to see what moved." >&2
+        echo "Re-run /adams-review:review, or check 'git log $latest_known_sha..HEAD' to see what moved." >&2
         # Pop stash if we took one — don't leave the user's tree
         # behind a stash because we aborted before Phase 8 ran.
         if [[ "${stash_taken:-false}" == "true" ]]; then

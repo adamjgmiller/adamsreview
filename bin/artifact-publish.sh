@@ -27,9 +27,9 @@
 #   2. No --comment-id → POST new comment → emit {"comment_id": N}.
 #
 # The helper never auto-discovers a prior comment via marker search.
-# Continuation intent is the caller's responsibility: fresh /adams-review
-# calls without --comment-id (→ new comment); /adams-review-fix and
-# /adams-review-promote carry the prior comment_id forward from the
+# Continuation intent is the caller's responsibility: fresh /adams-review:review
+# calls without --comment-id (→ new comment); /adams-review:fix and
+# /adams-review:promote carry the prior comment_id forward from the
 # artifact and pass it explicitly (→ edit in place). See DESIGN §13.4.
 #
 # --dry-run: exits 0 after arg validation + md-path resolution; prints the
@@ -237,8 +237,8 @@ post_comment() {
     emit_comment_id "$new_id"
 }
 
-# Step 1: --comment-id → PATCH directly. Caller (e.g. /adams-review-fix,
-# /adams-review-promote, or Phase 0 step 0.14's opt-in recovery path)
+# Step 1: --comment-id → PATCH directly. Caller (e.g. /adams-review:fix,
+# /adams-review:promote, or Phase 0 step 0.14's opt-in recovery path)
 # carried the id forward from the artifact.
 if [[ -n "$COMMENT_ID" ]]; then
     if patch_comment "$COMMENT_ID"; then

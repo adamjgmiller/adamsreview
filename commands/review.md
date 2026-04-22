@@ -172,6 +172,6 @@ Capture both in your working context before executing Phase 0.
 - The only `git push` is in Phase 0 step 0.9 (unpushed commits → PR
   branch), and ONLY in PR mode after user dirty-tree confirmation.
 - No file deletes or renames anywhere in the working tree.
-- No fix application — that's `/adams-review-fix` (Stage 3).
+- No fix application — that's `/adams-review:fix` (Stage 3).
 - No review of closed/merged PRs — bail at Phase 0 step 0.4 with a
   user-visible message.

@@ -49,7 +49,7 @@ Each sub-agent receives:
   plus the Read/grep tools it uses to look at the diff directly.
 - `$claude_md_paths` (absolute paths).
 - If this is a retry-mode run (Stage 3 context): the finding's prior
-  `fix_attempts` for context. In Stage 2 `/adams-review`, `fix_attempts`
+  `fix_attempts` for context. In Stage 2 `/adams-review:review`, `fix_attempts`
   is always empty — noted here for symmetry with Stage 3's retry path.
 
 Prompt essence (per §19.5):
@@ -309,7 +309,7 @@ per §4.5 step 4), run a `git status --porcelain` sweep. Validators have no
 legitimate reason to touch the working tree — the 4.2 / 4.3 prompts
 already forbid it. This catches a prompt-override and restores the
 tree before Phase 5 so a misbehaving validator cannot poison the
-commit `/adams-review-fix` will later produce.
+commit `/adams-review:fix` will later produce.
 
 ```bash
 dirty=$(git -C "$repo_root" status --porcelain 2>/dev/null)

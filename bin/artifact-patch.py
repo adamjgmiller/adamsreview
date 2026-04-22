@@ -911,7 +911,7 @@ def cmd_apply_fix_start(args):
                     "a 'resolved' finding should have been filtered out of eligibility."
                 ),
                 valid_values=(sorted(allowed) or ["(none — terminal state)"]),
-                action="run /adams-review-fix fresh; if this persists, check the Phase 8 step 8.1 eligibility filter."
+                action="run /adams-review:fix fresh; if this persists, check the Phase 8 step 8.1 eligibility filter."
             )
             sys.exit(c.EXIT_INVALID_TRANSITION)
 

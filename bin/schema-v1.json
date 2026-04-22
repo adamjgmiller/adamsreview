@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://adams-review/schema-v1.json",
   "title": "adams-review artifact (v1)",
-  "description": "Canonical machine-state artifact produced by /adams-review and mutated by /adams-review-fix. Codifies docs/archive/DESIGN.md §5 (state model) and §6 (artifact schema). Rev 8.",
+  "description": "Canonical machine-state artifact produced by /adams-review:review and mutated by /adams-review:fix. Codifies docs/archive/DESIGN.md §5 (state model) and §6 (artifact schema). Rev 8.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -287,7 +287,7 @@
           ]
         },
         "human_confirmation": {
-          "description": "Set by /adams-review-promote. Present-and-non-null means a human has promoted this finding to auto-fixable; Phase 8 eligibility (§5.2.1) bypasses the impact_type lane filter and score threshold. Optional/nullable — pre-promote findings omit the field entirely.",
+          "description": "Set by /adams-review:promote. Present-and-non-null means a human has promoted this finding to auto-fixable; Phase 8 eligibility (§5.2.1) bypasses the impact_type lane filter and score threshold. Optional/nullable — pre-promote findings omit the field entirely.",
           "anyOf": [
             { "type": "null" },
             {

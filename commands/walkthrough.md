@@ -1,12 +1,12 @@
 ---
 allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(repo-slug.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(include:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(cat:*), Bash(printf:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(tr:*), Bash(awk:*), Bash(mktemp:*), Agent, Read, AskUserQuestion
 argument-hint: "[threshold]"
-description: Walk interactively through findings /adams-review-fix would skip. Per-finding briefing + options + recommendation, then batch re-render/re-publish and post a decisions-log PR comment.
+description: Walk interactively through findings /adams-review:fix would skip. Per-finding briefing + options + recommendation, then batch re-render/re-publish and post a decisions-log PR comment.
 disable-model-invocation: false
 ---
 
-Walk the reviewer through every finding in the latest `/adams-review`
-artifact that `/adams-review-fix [threshold]` would **skip** at the
+Walk the reviewer through every finding in the latest `/adams-review:review`
+artifact that `/adams-review:fix [threshold]` would **skip** at the
 chosen threshold: deep-manual, light-manual, light-report, light-auto
 that fails the impact_type lane filter, and any `confirmed_auto`
 below the score threshold. For each finding, dispatch a Sonnet
@@ -22,7 +22,7 @@ for the design rationale.
 ## Arguments
 
 - `[threshold]` (optional, positional) — non-negative integer matching
-  the threshold the reviewer plans to use for `/adams-review-fix`.
+  the threshold the reviewer plans to use for `/adams-review:fix`.
   Default: 60 (DESIGN §13.2). Determines which `confirmed_auto`
   findings would "already be fixed" by the fix command and are
   therefore excluded from the walkthrough scope.
@@ -49,8 +49,8 @@ for the design rationale.
 10. Appends a `## walkthrough (<ts>)` block to `trace.md`.
 11. Prints a user-visible summary.
 
-Does NOT run `/adams-review-fix`. Does NOT surface `disposition=disproven`
-findings (those require an explicit `/adams-review-promote <id> --force`).
+Does NOT run `/adams-review:fix`. Does NOT surface `disposition=disproven`
+findings (those require an explicit `/adams-review:promote <id> --force`).
 
 ## Execution
 
@@ -82,7 +82,7 @@ If `latest.txt` is missing or empty, error-as-prompt:
 
 > ERROR: no review found for branch `$head_branch` under
 > `$reviews_root/$repo_slug/`.
-> Action: run /adams-review against this branch first.
+> Action: run /adams-review:review against this branch first.
 
 Otherwise:
 
@@ -118,7 +118,7 @@ paths from unnecessarily reading it.)
 
 ### 3. Compute walkthrough scope
 
-The walkthrough surfaces findings `/adams-review-fix` would SKIP at
+The walkthrough surfaces findings `/adams-review:fix` would SKIP at
 `$threshold`. Compute three parallel id sets so the preflight at step
 4 can offer a tiered choice (default Qualifying) and step 6.5 can
 handle `pre_existing_report` findings on a separate track.
@@ -228,7 +228,7 @@ If **all three** are empty, exit cleanly:
 ```
 No findings to walk through at threshold=$threshold.
 
-Either every finding is already auto-eligible (run /adams-review-fix
+Either every finding is already auto-eligible (run /adams-review:fix
 $threshold to apply them) or the review has no actionable findings
 left. Nothing to do.
 ```
@@ -244,7 +244,7 @@ work the run can't perform:
 ```
 $scope_preexisting_count pre-existing finding(s) in this review, but
 local mode has no PR to file issues against. Re-run
-/adams-review-walkthrough on the PR branch (or use the GitHub UI)
+/adams-review:walkthrough on the PR branch (or use the GitHub UI)
 to file them. Nothing to do here.
 ```
 
@@ -267,7 +267,7 @@ gates → Gate terminology):
   Failures get `disposition=below_gate` and no `score_phase4`.
 - **Phase 4 confirmation gate (45/60/75)** — maps `score_phase4` into
   `disproven` / `uncertain` / `confirmed_*`.
-- **Phase 8 fix gate (default 60)** — what `/adams-review-fix` touches:
+- **Phase 8 fix gate (default 60)** — what `/adams-review:fix` touches:
   confirmed_auto + deep lane + score ≥ threshold.
 
 The walkthrough surfaces what Phase 8 would SKIP. `below_gate` is a
@@ -737,8 +737,8 @@ patches stand; the user can manually re-render.
 Issue-filing in §6.5 below dispatches another batch of sub-agents
 after this point; those land in `tokens.jsonl` (and generate further
 orchestrator turns) but the walkthrough does not re-render after §6.5,
-so their cost will only surface on the next `/adams-review-fix` (or
-subsequent `/adams-review-add` / `/adams-review-walkthrough`) run when
+so their cost will only surface on the next `/adams-review:fix` (or
+subsequent `/adams-review:add` / `/adams-review:walkthrough`) run when
 that command re-tallies. This is acceptable — issue-filing is terminal
 and no further re-publish follows it.
 
@@ -1008,7 +1008,7 @@ Ns processed of M." Mirrors the §5.6 cadence for the main loop.
 
 Note on partial runs: any issues filed before an interruption stand
 — these are durable side effects. If the reviewer later re-runs
-`/adams-review-walkthrough`, the same `pre_existing_report` findings
+`/adams-review:walkthrough`, the same `pre_existing_report` findings
 will re-appear (they don't set `human_confirmation`, and the
 artifact has no `filed_issue_url` field per our no-schema-change
 decision). The reviewer can close duplicates manually on GitHub. The
@@ -1028,8 +1028,8 @@ still written so the run is auditable locally.
 In PR mode, render a decisions-log markdown block from `decisions`
 and POST it as a NEW PR comment (separate from the main review
 comment). DO NOT mutate `artifact.comment_id` — that stays pointing
-at the main review comment so future `/adams-review-fix` and
-`/adams-review-promote` runs edit the right comment.
+at the main review comment so future `/adams-review:fix` and
+`/adams-review:promote` runs edit the right comment.
 
 #### 7.1. Build the decisions-log markdown
 
@@ -1045,7 +1045,7 @@ array.
 
 Walking the **$scope_tier_title** scope: of **$scope_count** non-auto-eligible finding(s), **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
 
-Promoted findings will be picked up by the next `/adams-review-fix $threshold` run via the `human_confirmation` bypass (DESIGN §27.6).
+Promoted findings will be picked up by the next `/adams-review:fix $threshold` run via the `human_confirmation` bypass (DESIGN §27.6).
 
 ---
 
@@ -1067,7 +1067,7 @@ Promoted findings will be picked up by the next `/adams-review-fix $threshold` r
 
 - **F023** — [first line of claim]
   - Reviewer requested stop at this finding. Not mutated.
-  - Resume with `/adams-review-walkthrough $threshold`.
+  - Resume with `/adams-review:walkthrough $threshold`.
 
 #### Pre-existing issues filed
 
@@ -1077,7 +1077,7 @@ Promoted findings will be picked up by the next `/adams-review-fix $threshold` r
 ---
 
 Decisions log: this comment is append-only audit — it's never edited
-in place. Each `/adams-review-walkthrough` run posts a fresh entry.
+in place. Each `/adams-review:walkthrough` run posts a fresh entry.
 Current state: see the main review comment and `artifact.md`.
 ```
 
@@ -1098,7 +1098,7 @@ only when non-empty" rule. Similarly, omit the `$unreviewed_count
 unreviewed` clause from the header sentence when `$unreviewed_count
 == 0` (i.e., every scoped finding was promoted, skipped, or stopped
 at). Omit the "Promoted findings will be picked up by the next
-`/adams-review-fix`…" sentence entirely when `$promote_count == 0`
+`/adams-review:fix`…" sentence entirely when `$promote_count == 0`
 — with zero promotes it describes a non-event (and misleadingly
 hints that a fix run is pending when it isn't).
 
@@ -1196,12 +1196,12 @@ Cumulative orchestrator spend: <cache_read> cache-read / <output> output / <cach
 Promoted findings are now auto-fix-eligible via the human_confirmation
 bypass (§27.6). To apply them:
 
-  /adams-review-fix $threshold
+  /adams-review:fix $threshold
 
 Decisions log comment: <url to the POSTed comment, if PR mode>
 Main review comment: updated in place.
 
-You can resume later by re-running /adams-review-walkthrough — the
+You can resume later by re-running /adams-review:walkthrough — the
 scope filter naturally excludes anything you already promoted, so the
 $unreviewed_count unreviewed finding(s) plus any newly-added ones
 will be what you see.
@@ -1243,19 +1243,19 @@ summary block:
 
 ```
 Note: $scope_preexisting_count pre-existing finding(s) not filed as issues.
-Re-run /adams-review-walkthrough to revisit.
+Re-run /adams-review:walkthrough to revisit.
 ```
 
 On any step failure earlier in the run, append a `Note:` section
 listing the deferred failures and their recovery actions (same
-pattern as `/adams-review-promote` step 10).
+pattern as `/adams-review:promote` step 10).
 
 ## What this command does NOT do
 
 - **No fix-run.** Walkthrough is metadata-only (via promote's patch
-  primitive). Run `/adams-review-fix [threshold]` afterward to apply.
+  primitive). Run `/adams-review:fix [threshold]` afterward to apply.
 - **No `disposition=disproven` handling.** Disproven findings need
-  `/adams-review-promote <id> --force` with a conscious justification;
+  `/adams-review:promote <id> --force` with a conscious justification;
   the walkthrough scope filter excludes them.
 - **No cross-branch walkthrough.** Operates on `latest.txt` for the
   current branch — same as promote and fix.

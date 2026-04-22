@@ -36,10 +36,10 @@ touched, and repeat invocations are idempotent.
 `tokens: null` entries (§11 parse-failure fallback) coerce to 0 in
 totals; an empty log produces a zero rollup rather than an error, so
 the helper is safe to call at any terminus. The three lifecycle
-commands (`/adams-review-fix`, `/adams-review-add`,
-`/adams-review-walkthrough`) each re-invoke it before their final
+commands (`/adams-review:fix`, `/adams-review:add`,
+`/adams-review:walkthrough`) each re-invoke it before their final
 render so the published PR comment reflects cumulative sub-agent
-spend, not just the initial `/adams-review` snapshot.
+spend, not just the initial `/adams-review:review` snapshot.
 
 ### 6.2b. Tally `orchestrator_tokens` from the session transcript(s)
 
@@ -69,8 +69,8 @@ worktrees where the session was started from the worktree path.
 The helper is safe to call when the transcript directory is absent —
 it emits a zero rollup rather than erroring. Same "cumulative across
 every lifecycle terminus" pattern as the sub-agent tally:
-`/adams-review-fix`, `/adams-review-add`, and
-`/adams-review-walkthrough` each re-invoke it before their final
+`/adams-review:fix`, `/adams-review:add`, and
+`/adams-review:walkthrough` each re-invoke it before their final
 render.
 
 Soft over-count modes (unrelated same-cwd sessions, intermission chat
@@ -130,7 +130,7 @@ now_epoch=$(date +%s)
 elapsed=$((now_epoch - start_epoch))
 
 # At review time (Stage 2), phase_9_verified_pct and required_followup
-# are null — they're set by /adams-review-fix's Phase 9.
+# are null — they're set by /adams-review:fix's Phase 9.
 metrics=$(jq -n \
   --argjson elapsed "$elapsed" \
   --argjson files_changed "$num_files" \
@@ -199,7 +199,7 @@ be called in every mode, with local mode as a no-op.
 **PR mode:**
 
 First capture any `comment_id` that was persisted to the artifact
-during this run. On a fresh `/adams-review` this is normally empty —
+during this run. On a fresh `/adams-review:review` this is normally empty —
 the seed at step 0.15 writes `comment_id: null` unless step 0.14's
 recovery prompt populated `existing_comment_id` (user chose "replace
 prior comment in place"):
@@ -228,7 +228,7 @@ publish_args=(
 # from step 0.14's existing_comment_id if the user opted into
 # "replace prior" recovery). Fall back to existing_comment_id directly
 # for defense-in-depth if the seed missed it for any reason.
-# Omitting --comment-id on a fresh /adams-review is intentional: the
+# Omitting --comment-id on a fresh /adams-review:review is intentional: the
 # publisher will POST a new comment. See DESIGN §13.4.
 if [[ -n "$comment_id_from_artifact" ]]; then
     publish_args+=(--comment-id "$comment_id_from_artifact")
@@ -299,12 +299,12 @@ default):
 
 **Next steps**
 
-- **Apply the auto-eligible findings** — `/adams-review-fix 60`
+- **Apply the auto-eligible findings** — `/adams-review:fix 60`
   applies every finding in the deep-lane "✓ Auto-fixable" table
   that scores at or above the threshold. Light-lane rows are
   skipped by default; promote them first with the walkthrough.
 
-- **Walk through the skipped findings** — `/adams-review-walkthrough`
+- **Walk through the skipped findings** — `/adams-review:walkthrough`
   presents each deep-lane manual finding and every light-lane row
   one at a time with a briefing (what it's about, options, a
   recommendation) and promotes the ones you approve with tailored
@@ -319,7 +319,7 @@ Then add (still chat-only, not in `artifact.md`):
 
 - If PR mode: a one-line "Full artifact: `$artifact_path`" (so the user
   knows where the JSON lives).
-- If local mode: "Fix commit will land locally if you run /adams-review-fix.
+- If local mode: "Fix commit will land locally if you run /adams-review:fix.
   It will not be pushed without `--push` (Stage 3 future flag)."
 
 (None of these trailing lines are part of `artifact.md` itself — keeps

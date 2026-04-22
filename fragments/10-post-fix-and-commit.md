@@ -412,7 +412,7 @@ After the agent returns:
 Dispatched when `$overlap_choice == inspect`. The user wants to look
 at the post-Phase-8 tree themselves — no `--apply-fix-outcomes` call,
 no revert, no commit. Findings stay `current_state=attempted` on disk;
-the next `/adams-review-fix` invocation's Phase 7 step 4 hard abort is
+the next `/adams-review:fix` invocation's Phase 7 step 4 hard abort is
 the recovery path. Unlike `abort`, no audit fix_attempts are appended
 — the user may hand-resolve and wants a clean slate.
 
@@ -542,7 +542,7 @@ original abort logic unchanged from prior revisions.
 5. Jump to 9e **no-commit branch** (step numbering 9e.no-commit
    below). User-visible error after terminal cleanup:
 
-   > ERROR: /adams-review-fix aborted before commit — fix agents
+   > ERROR: /adams-review:fix aborted before commit — fix agents
    > touched overlapping files across groups.
    >
    > Overlapping files: `<files>`
@@ -555,13 +555,13 @@ original abort logic unchanged from prior revisions.
    >   3. Reset each affected finding's current_state:
    >      artifact-patch.py --finding-id <id> --set current_state=open
    >      (ids listed in `trace.md`)
-   >   4. Re-run /adams-review-fix.
+   >   4. Re-run /adams-review:fix.
 
    For `reconcile_fallback`, swap the first line for the variant
    below, interpolating `$reconcile_fallback_reason` (set in
    §9.pre.reconcile step 3):
 
-   > ERROR: /adams-review-fix — reconcile attempt failed, aborted
+   > ERROR: /adams-review:fix — reconcile attempt failed, aborted
    > before commit. Reason: `$reconcile_fallback_reason`. The working
    > tree still holds the Phase-8 agent edits plus any partial edits
    > the merge agent made before failing; recovery steps 1–4 above
@@ -881,7 +881,7 @@ reconciled_flag=$(echo "$fix_groups" | jq -r '.[0].id == "FG-RECON"')
     partial_count=$(echo "$group_outcomes" | jq '[.[] | select(.outcome == "partial")] | length')
     echo "Post-fix review: $verified_count/$surviving_count groups verified complete; $partial_count group(s) partial; $reverted_count group(s) reverted."
     if [[ "$partial_count" -gt 0 || "$reverted_count" -gt 0 ]]; then
-        echo "Re-run /adams-review-fix to address partial and regression findings (retry with revised_fix_proposal context)."
+        echo "Re-run /adams-review:fix to address partial and regression findings (retry with revised_fix_proposal context)."
     fi
 } > "$msg_file"
 ```
@@ -1000,7 +1000,7 @@ each step's outcome is logged; failures do not abort the block.
 1. **fix_attempts + state transitions** — done in 9d above.
 
 2. **Re-tally `subagent_tokens` and `orchestrator_tokens`** so the
-   published artifact reflects cumulative spend across `/adams-review`
+   published artifact reflects cumulative spend across `/adams-review:review`
    + this fix run (Phase 9a/9b/9c reviewer + any 9.pre.reconcile agent,
    plus every orchestrator turn since `review_started_at`).
    `tokens.jsonl` is append-only and the transcript files on disk are
@@ -1159,7 +1159,7 @@ each step's outcome is logged; failures do not abort the block.
    true`), swap the first two lines for a reconcile-specific summary
    naming the original group count and the overlap:
 
-   > `/adams-review-fix complete (reconciled).`
+   > `/adams-review:fix complete (reconciled).`
    >
    > Reconciled one merge pass covering $reconciled_finding_count
    > finding(s) across $reconciled_file_count file(s), merged from
@@ -1169,7 +1169,7 @@ each step's outcome is logged; failures do not abort the block.
 
    Otherwise (non-reconciled run):
 
-   > `/adams-review-fix complete.`
+   > `/adams-review:fix complete.`
    >
    > Committed: $surviving_count groups ($(attempted-count-verified+partial) findings → $verified_count verified, $partial_count partial).
    > Reverted:  $reverted_count groups ($regression-count findings → regression detected).
@@ -1177,7 +1177,7 @@ each step's outcome is logged; failures do not abort the block.
    Either variant ends with the same trailing block:
 
    > $((partial_count + regression_count)) findings remain open and retry-eligible.
-   > Re-run /adams-review-fix to attempt again with revised_fix_proposal context.
+   > Re-run /adams-review:fix to attempt again with revised_fix_proposal context.
    >
    > Commit: `$commit_sha`
    > PR comment: (URL if PR mode AND publish succeeded)
@@ -1305,7 +1305,7 @@ an extra `reconcile_fallback=true` flag that step 8 reads.
    - `overlap_inspect` → "Working tree left as-is for manual review.
      Overlapping files: `$overlap_files_snapshot_summary`. Findings
      remain `current_state=attempted` on disk — the next
-     /adams-review-fix run will hard-abort with a leftover-attempted
+     /adams-review:fix run will hard-abort with a leftover-attempted
      recovery prompt. When you're ready: either commit what you want
      manually and run `artifact-patch.py --finding-id <id> --set
      current_state=open` on the affected findings, or `git restore .
@@ -1314,7 +1314,7 @@ an extra `reconcile_fallback=true` flag that step 8 reads.
    - `all_regression` → "All $reverted_count fix groups regressed.
      Working tree restored; no commit made.
      `$(partial-plus-regression count)` findings are retry-eligible
-     with revised_fix_proposal context. Re-run /adams-review-fix."
+     with revised_fix_proposal context. Re-run /adams-review:fix."
      (On a reconciled all-regression, the reconciled merge was
      reverted atomically — one "group" of many findings. Same
      message applies.)
@@ -1324,7 +1324,7 @@ an extra `reconcile_fallback=true` flag that step 8 reads.
      (if any) is preserved at `git stash list`. See
      `$trace_log_path` for the full revert log. Once you've resolved
      manually, reset `current_state` on the affected findings and
-     re-run /adams-review-fix."
+     re-run /adams-review:fix."
    - `no_eligible` → "No fix-eligible findings at threshold=$threshold.
      Nothing to do." (No error prefix — it's a clean no-op.)
 
