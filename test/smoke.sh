@@ -2722,14 +2722,24 @@ else
     fail "RA-8: Phase 4 dispatch incomplete in $ADD_MD"
 fi
 
-# RA-9: install.sh includes adams-review-add in the symlink loop AND
-# the verify/output blocks. Without this, /adams-review-add isn't
-# discoverable by Claude Code after install.
-if grep -qF 'adams-review-add' "$REPO/scripts/install.sh" \
-    && grep -qF 'adams-review-add' "$REPO/scripts/uninstall.sh"; then
-    pass "RA-9: install/uninstall scripts include adams-review-add symlink"
+# PL-1: scripts/dev-run.sh exists and is executable. The old
+# install.sh/uninstall.sh symlink flow is obsolete under the plugin
+# runtime — Claude Code discovers commands from the plugin package
+# directly. dev-run.sh is the plugin-author iteration wrapper.
+if [[ -x "$REPO/scripts/dev-run.sh" ]]; then
+    pass "PL-1: scripts/dev-run.sh exists and is executable"
 else
-    fail "RA-9: install or uninstall script missing adams-review-add entry"
+    fail "PL-1: scripts/dev-run.sh missing or not executable"
+fi
+
+# PL-2: .claude-plugin/plugin.json is present and valid JSON. Required
+# by the Claude Code plugin runtime; a malformed file silently prevents
+# plugin load.
+if [[ -f "$REPO/.claude-plugin/plugin.json" ]] \
+    && jq empty "$REPO/.claude-plugin/plugin.json" >/dev/null 2>&1; then
+    pass "PL-2: .claude-plugin/plugin.json present and valid JSON"
+else
+    fail "PL-2: .claude-plugin/plugin.json missing or invalid JSON"
 fi
 
 # RA-10: allowed-tools front-matter grants every Bash binary the command
