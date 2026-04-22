@@ -41,6 +41,37 @@ commands (`/adams-review-fix`, `/adams-review-add`,
 render so the published PR comment reflects cumulative sub-agent
 spend, not just the initial `/adams-review` snapshot.
 
+### 6.2b. Tally `orchestrator_tokens` from the session transcript(s)
+
+```bash
+~/.claude/commands/_shared/tools/orchestrator-tokens.sh \
+  --artifact "$artifact_path" \
+  --since    "$review_started_at" \
+  --cwd      "$repo_root"
+```
+
+Companion to the sub-agent tally. Scans every Claude Code transcript
+under `~/.claude/projects/<cwd-slug>/` whose assistant-line timestamps
+fall in the review window and sums the main-session (orchestrator)
+`message.usage` counters into `<artifact>.orchestrator_tokens`.
+Complements `subagent_tokens` — the two are non-overlapping: sub-agent
+tokens are the sub-agents' own internal API calls, orchestrator tokens
+are the main session's per-turn usage. Together they cover the full
+spend of a review.
+
+`<cwd-slug>` derivation uses `tr '/.' '-'` (both `/` and `.` map to
+`-`; Claude Code's own convention). The helper is safe to call when
+the transcript directory is absent — it emits a zero rollup rather
+than erroring. Same "cumulative across every lifecycle terminus"
+pattern as the sub-agent tally: `/adams-review-fix`,
+`/adams-review-add`, and `/adams-review-walkthrough` each re-invoke
+it before their final render.
+
+Soft over-count modes (unrelated same-cwd sessions, intermission chat
+between lifecycle commands) are accepted for v1 — both bias towards
+over-count, never under-count. See the helper header for the full
+list.
+
 ### 6.3a. Recompute `reviewer_sources` from actual findings
 
 DESIGN §6 defines top-level `reviewer_sources` as the union of
