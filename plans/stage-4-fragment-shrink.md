@@ -203,26 +203,59 @@ The observed failure mode — silent 2 KB preview with no error surface — is s
 
 ## Appendix B — Close-out measurement
 
-*(To be filled in at stage close.)*
+Stage 4 commit range: `84c96ee..0179791` (20 commits on branch `stage-4-fragment-shrink`). Populated 2026-04-23.
 
-Before / after by command (mirrors the Baseline table in this file):
+### Command invocation cost
 
-| Command | Before chars | After chars | Δ |
+Under 4.0's chosen (c) manifest-style, the command file is what gets inlined at invocation time; fragments enter context via `Read` as phases reach them. Two numbers matter:
+
+1. **Invocation-time prompt cost** — what's loaded when `/adamsreview:<cmd>` starts. Fragment bodies no longer participate.
+2. **Aggregate fragment cost** — sum of fragment content that would be Read during a full command run.
+
+| Command | Before (inlined) | After (command file only) | Δ invocation | Notes |
+|---|---|---|---|---|
+| `/adamsreview:review` | ~151k chars | **8,503** chars | −94.4% | Fragments 00-07 now Read on-demand. Under `!include` two phases truncated silently on 2026-04-22; after (c) that failure mode is gone. |
+| `/adamsreview:fix` | ~89k chars | **9,875** chars | −88.9% | Fragments 08-10 now Read on-demand. |
+| `/adamsreview:walkthrough` | ~60k chars | **50,851** chars | −15.3% | Self-contained command body; only `promote-core.md` (~10k) deferred. Walkthrough-specific prose compression deferred to future pass (§3 backlog). |
+| `/adamsreview:add` | ~41k chars | **40,675** chars | −0.8% | No transcluded fragments pre-4.A.0; change limited to 4.B.1 prelude Read directive. |
+| `/adamsreview:promote` | ~20k chars | **10,383** chars | −48.1% | `promote-core.md` (~10k) now Read on-demand. |
+
+### Fragment body cost (per Read-time)
+
+| File | Before chars | After chars | Δ | Notes |
+|---|---|---|---|---|
+| `fragments/10-post-fix-and-commit.md` | 56,016 | 50,369 | **−10.1%** | 4.B.3 prose compression; 0 executable-line changes. |
+| `fragments/01-detection.md` | 42,827 | 44,883 | +4.8% | Net growth from 4.B.2 shared-invariants block + 4.C lazy-Read directives. Individual lens sub-sections trimmed; shared block additive. |
+| `fragments/00-preflight.md` | 27,415 | 22,248 | **−18.9%** | 4.A.1 (freshness-gate) + 4.A.2 (trivial-check) + 4.A.3 (artifact-seed) all carved blocks out of step 0.2a / 0.11 / 0.15 into helpers. |
+| `fragments/05-validation.md` | 23,044 | 23,044 | 0% | Untouched in Stage 4. |
+| `fragments/_prelude-shared.md` | — | 1,500 | +NEW | 4.B.1 consolidation; Read once per command invocation that needs it. |
+
+### Helpers added
+
+| Helper | Stage | Source | Smoke assertions |
 |---|---|---|---|
-| `/adamsreview:review` |  |  |  |
-| `/adamsreview:fix` |  |  |  |
-| `/adamsreview:walkthrough` |  |  |  |
-| `/adamsreview:add` |  |  |  |
-| `/adamsreview:promote` |  |  |  |
+| `bin/freshness-gate.sh` (~11 KB) | 4.A.1 | Phase 0.2a §13.10 freshness reconciliation (was ~130 lines inline bash) | `FG-1/2/3` — happy / no-remote / fetch-failure |
+| `bin/trivial-check.sh` (~4 KB) | 4.A.2 | Phase 0.11 §13.9 trivial-diff classifier (was ~27 lines inline bash) | `TC-1/2/3` — docs-only trivial / mixed non-trivial / empty-diff vacuous |
+| `bin/artifact-seed.sh` (~9 KB) | 4.A.3 | Phase 0.15 main 48-line `jq -n` artifact-seed builder | `AS-1/2/3` — happy+schema-validation / missing-arg / malformed JSON |
 
-Before / after by largest fragment:
+### Smoke assertion delta
 
-| File | Before | After | Δ |
-|---|---|---|---|
-| `fragments/10-post-fix-and-commit.md` |  |  |  |
-| `fragments/01-detection.md` |  |  |  |
-| `fragments/00-preflight.md` |  |  |  |
-| `fragments/05-validation.md` |  |  |  |
+**Before (4aa0267):** 236 assertions. **After (Stage 4 close):** 246 assertions (+10).
 
-Helpers added: (list)
-Smoke assertion delta: (before count → after count)
+Breakdown of additions:
+- 4.A.0 manifest conversion: 0 (pure restructuring; WT-5 grep survived unchanged).
+- 4.A.1 freshness-gate: +3 (`FG-1`, `FG-2`, `FG-3`).
+- 4.A.2 trivial-check: +3 (`TC-1`, `TC-2`, `TC-3`).
+- 4.A.3 artifact-seed: +3 (`AS-1`, `AS-2`, `AS-3`).
+- 4.A.4: SKIPPED (+0).
+- 4.B.1 prelude: +0.
+- 4.B.2 lens invariants: +0.
+- 4.B.3 post-fix compression: +0 (but caught two smoke regressions from reflow-driven literal-grep breakage, both fixed).
+- 4.C lens-reference lazy-load: +1 (`FR-LENS-REF-LAZY-1`).
+
+### Headline wins
+
+- **Silent-truncation failure mode eliminated.** Pre-4.A.0, the `!include` preprocessor could persist fragments > ~10 KB to disk and substitute a 2 KB `<persisted-output>` preview in the prompt. Seven fragments were already over that threshold. Post-4.A.0, fragments are Read via the tool (no preview clipping); failures are loud (`Read` errors) instead of silent.
+- **Invocation-time prompt cost for `/adamsreview:review` dropped ~94%** (151k → 8.5k chars at invocation).
+- **Three ~40-130-line inline bash blocks externalized into helpers**, each with explicit JSON contracts, error-as-prompt stderr, smoke coverage, and CLAUDE.md Helper-index rows.
+- **Post-fix fragment compressed 10.1%** (5,650 chars removed from the largest fragment) while preserving every bash-executable line byte-exact.
