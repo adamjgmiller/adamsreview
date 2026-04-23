@@ -2646,6 +2646,29 @@ else
     fail "LR-4: expected 0 kept + missing-file trace; got kept=$kept stderr=$(cat "$WORK/lr4.err")"
 fi
 
+# LR-6: fragments/01-detection.md §1.2.1 shared-invariants blockquote
+# carries the file-absolute + in-bounds + hunk-header prohibition for
+# `line_range`. Prompt-level guard against the L5-ux classification from
+# GH #2 (P3) where lenses copied hunk-header numbers verbatim and
+# produced out-of-bounds ranges. The invariant lives inside the shared
+# blockquote (dispatched to every lens sub-agent), not lens-specific.
+DETECT_MD_LR6="$REPO/fragments/01-detection.md"
+lr6_missing=()
+for phrase in \
+    '`line_range` must be file-absolute' \
+    "the file's total line count" \
+    'Do not copy the numbers inside unified-' \
+    '@@ -a,b +c,d @@'; do
+    if ! grep -qF "$phrase" "$DETECT_MD_LR6"; then
+        lr6_missing+=("$phrase")
+    fi
+done
+if [[ ${#lr6_missing[@]} -eq 0 ]]; then
+    pass "LR-6: §1.2.1 line_range invariant requires file-absolute + hunk-header prohibition (P3, GH #2)"
+else
+    fail "LR-6: missing §1.2.1 invariant phrases: ${lr6_missing[*]}"
+fi
+
 # ------------------------------------------------------------------ Stage 2.6.E
 # Polish / below-gate cluster renderer section. Dense runs of below_gate
 # findings in one area are hidden by default (Phase 3 parks them so the

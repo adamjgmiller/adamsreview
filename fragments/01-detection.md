@@ -87,6 +87,15 @@ follow has to live inside the blockquote.
 >
 > Each lens's section below specifies the `impact_type` and
 > `source_family` values to use. Other fields follow the shapes above.
+>
+> `line_range` must be file-absolute. `line_range[0]` and `line_range[1]`
+> refer to actual line numbers in the reviewed file at `$reviewed_sha`,
+> counted from 1. Required: `line_range[0]` >= 1 and `line_range[1]` <=
+> the file's total line count. Do not copy the numbers inside unified-
+> diff hunk headers (`@@ -a,b +c,d @@`) — those describe hunk positions,
+> not where a finding lives. To cite a line, read the `+`-prefixed lines
+> in the hunk and count forward from the hunk's post-image start; do
+> not reuse `a` or `c` verbatim.
 
 Lens-specific extensions the shared block does **not** cover (keep
 inline in each lens sub-section):
