@@ -104,6 +104,44 @@ Ordered list of every step. Each step's "Success criteria" is what the review le
 - **Smoke:** not applicable (no code diff).
 - **Commit message:** `plans/stage-4-fragment-shrink: Appendix A — !include ceiling investigation + decision (a/b/c)` (substitute chosen letter).
 
+### 4.A.0 — Manifest-style conversion *(added 2026-04-23 after 4.0 chose (c))*
+
+- **Scope:** every `!`include <name>.md` `` site in the five command files — `commands/review.md`, `commands/fix.md`, `commands/add.md`, `commands/walkthrough.md`, `commands/promote.md` — converted to a manifest-style `Read` directive. `bin/include` itself is not removed; `promote-core.md` and the prelude (post-4.B.1) may still legitimately use it.
+- **Action:**
+  1. `grep -n '^!`include' commands/*.md` to enumerate every site.
+  2. For each site, replace the preprocessor line with a human-readable directive of the form:
+     ```
+     **Phase N — <short name>.** Read `fragments/<name>.md` and execute the
+     instructions inside before proceeding.
+     ```
+     Preserve surrounding `---` separators, argument-parsing blocks, and any pre-existing Phase headers. Fragment body contents are **not edited** in this step — only the splice point.
+  3. Handle conditional `!include`s (if any) by making the directive conditional: *"If `--ensemble` was passed, read `fragments/02-ensemble-adapter.md` and execute the instructions inside; otherwise skip."*
+  4. For each command file, audit `allowed-tools`: if the file no longer references `!`include …` `` anywhere, remove `Bash(include:*)` from the grant list. If it still has *any* `!include` site (e.g., for the shared prelude block that 4.B.1 will introduce, or existing `promote-core.md` transclusion in `walkthrough.md` / `promote.md`), keep the grant.
+  5. Add `Read` to `allowed-tools` anywhere it isn't already granted — orchestrator now reads fragments during the turn.
+- **Blast-radius checks:**
+  - **Prelude duplication inside fragments.** Several fragments open with a short "Phase N prelude" restating working-set variables, phase position, etc. Those are unaffected — they live inside fragment bodies, not at `!include` splice points.
+  - **Cross-fragment references.** If a fragment's body assumes the prior fragment is already "in prompt" (e.g., references a variable by name without re-deriving it), that assumption still holds under (c) — each `Read` tool-result enters the orchestrator's context and persists through the rest of the turn. No fragment rewrites needed.
+  - **`walkthrough.md` + `promote.md`** both transclude `promote-core.md` (~10 KB, borderline). Under (c) those sites also get converted to `Read fragments/promote-core.md`-style directives, or — since `promote-core.md` is ≤10 KB — they can stay as `!include` if we want to preserve their existing behavior and `promote-core.md` keeps it size. Convert them for consistency; zero behavior change.
+  - **Smoke assertions.** `test/smoke.sh` grep-tests on command-file content may reference `!`include …` `` patterns — audit and update. Do **not** change test semantics, only update patterns to match the new directive text.
+- **Success criteria:**
+  - `grep -rn '^!\`include' commands/` returns zero hits (or only the shared-prelude site that 4.B.1 will introduce).
+  - Every `Read fragments/<name>.md and execute the instructions inside` directive matches a real file under `fragments/`.
+  - Each command file still reads as a coherent procedural document — the converted directives preserve phase ordering, conditional branches, and separator structure.
+  - `allowed-tools` audit complete on all five command files; `Bash(include:*)` removed where no `!include` remains; `Read` present where needed.
+  - Smoke passes unchanged (or with pattern-only updates to any `!include`-referencing assertions).
+- **Smoke:** passes; assertion count **unchanged** (this step is pure restructuring — no new helper to sanity-check).
+- **Commit message:** `commands/*: convert !include sites to manifest-style Read directives per 4.0 decision (c)`.
+
+### Context for all downstream steps (post-4.A.0)
+
+After 4.A.0 lands, every fragment is reached via `Read`, not `!include`. Downstream steps should:
+
+- **Not** assume the fragment they are editing is inlined in the command prompt. Helper extractions and prose compression still shrink fragment *content*; they just don't change the loading mechanism.
+- **Not** re-introduce `!include` splice points in command files. If a new shared block is needed (4.B.1 prelude), it can use `!include` *only if* the shared block is kept under the persist-to-disk ceiling (~10 KB current, likely tightening) — otherwise use a `Read` directive.
+- **Still honor the CLAUDE.md Helper index** — any new helper added by 4.A.1-4 gets a row (Script | Lang | Purpose), same shape as today.
+- **Still honor the smoke-assertion naming scheme** (OC-*/FR-*/RH-*/FX-*/MP-*/WT-*).
+- **Read the affected fragment before editing it.** The fragment is no longer "already in your prompt" — sub-agents tasked with editing need to open it explicitly. This is implementation hygiene for any 4.A/4.B sub-agent dispatch.
+
 ### 4.A.1 — Extract `freshness-gate.sh`
 
 - **Scope:** `fragments/00-preflight.md` step 0.2a (~80 lines of bash across lines ~77–184) → new `bin/freshness-gate.sh`.
@@ -154,10 +192,10 @@ Ordered list of every step. Each step's "Success criteria" is what the review le
 
 ### 4.B.1 — Prelude consolidation across 5 commands
 
-- **Scope:** `commands/{review,fix,walkthrough,add,promote}.md` prelude sections + the abbreviated duplicates inside fragments.
-- **Action:** identify prose that is semantically identical across ≥3 command preludes (sub-agent dispatch pattern, working-set rules, effort-is-session-wide). Consolidate into one shared block; reference it by name from each command. Prefer `!include fragments/_prelude-shared.md` (new fragment) if 4.0 chose (a)/(b); for (c) manifest style, use an explicit `Read` pointer.
+- **Scope:** `commands/{review,fix,walkthrough,add,promote}.md` prelude sections (the prose *above* the first phase splice point — not the phase directives themselves, which 4.A.0 already converted) + any abbreviated duplicates inside fragments.
+- **Action:** identify prose that is semantically identical across ≥3 command preludes (sub-agent dispatch pattern, working-set rules, effort-is-session-wide). Consolidate into one shared block at `fragments/_prelude-shared.md`. Each command's prelude retains only command-specific opening prose; the shared rules move behind a single directive at the top of the command: *"Read `fragments/_prelude-shared.md` — these rules apply to every phase of this command."* (Under 4.0's chosen (c), this is a `Read` directive, not an `!include`. If the resulting `_prelude-shared.md` comes out under ~10 KB, `!include` would also be safe on current Claude Code versions, but the manifest-style directive is more durable against future threshold tightening.)
 - **Success criteria:**
-  - Consolidation yields a shared block + trimmed preludes across all 5 commands.
+  - Consolidation yields a shared block (`fragments/_prelude-shared.md`) + trimmed preludes across all 5 commands.
   - No semantic change: each consolidated rule is preserved in the shared block.
   - Review leg verifies the before/after prose communicates the same instructions (sample 2 rules and check they still fire).
   - smoke passes; assertion count unchanged (or +1 if consolidation deserves a sanity assertion).
@@ -189,10 +227,7 @@ Ordered list of every step. Each step's "Success criteria" is what the review le
 ### 4.C — Lens-reference lazy load
 
 - **Scope:** `fragments/lens-ux-reference.md` (3k chars) + `fragments/lens-security-reference.md` (1.8k chars).
-- **Action:** load the UX reference only when L4 is in the lens-selection set (step 1.1); same for security reference when L5 runs. Implementation depends on 4.0's chosen structural response:
-  - (a) `!include`: inline conditional removed; lens agent prompt reads the reference via `Read` only when that lens is dispatched.
-  - (b) split: similar to (a), plus any orchestrator-side gating needed.
-  - (c) manifest: each lens's `Read` list is already scoped; lens-reference file moves into the lens's own `Read` list.
+- **Action:** load the UX reference only when L4 is in the lens-selection set (step 1.1); same for security reference when L5 runs. Under 4.0's chosen (c), this is implemented by moving each lens-reference file into the respective lens agent's dispatch prompt: the L4 lens agent's prompt includes *"Read `fragments/lens-ux-reference.md` before forming candidates"*, and the L5 lens agent's prompt does the same for security. When L4 (or L5) is not in the lens-selection set, no Read call is issued, so the reference file never enters any context.
 - **Success criteria:**
   - When neither L4 nor L5 runs, neither lens-reference file is loaded into the review invocation.
   - When L4 runs but L5 doesn't (or vice-versa), only the relevant reference loads.
@@ -221,7 +256,7 @@ Ordered list of every step. Each step's "Success criteria" is what the review le
 
 ## §4 — Progress ledger
 
-**Next pending step:** `4.A.1`
+**Next pending step:** `4.A.0`
 
 ### Log
 
