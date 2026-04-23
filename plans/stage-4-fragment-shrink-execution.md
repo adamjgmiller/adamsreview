@@ -37,27 +37,28 @@ Each step runs this loop. Max **3 build→review rounds** per step; after round 
 
 **1. Reload context.** Read the plan, this file's §3 for the step's scope + success criteria, and any `CLAUDE.md` sections that apply to the step's files.
 
-**2. Build round (sub-agent dispatch).**
+**2. Build round (sub-agent dispatch — fresh Opus).**
 
-Use `Agent` tool with `subagent_type: "general-purpose"`. Prompt must include:
+Use `Agent` tool with `subagent_type: "general-purpose"` and `model: "opus"`. Each round is a separate `Agent` invocation — no memory carries across rounds; the next build agent gets prior-round review findings via its prompt. Prompt must include:
 - The step ID + name + exact scope from §3.
 - Success criteria from §3 (verbatim).
 - Relative paths of files to touch (absolute paths in the agent's environment).
 - Blast-radius discipline (from CLAUDE.md §Blast-radius discipline): every writer, every consumer, parallel code paths, full function bodies, stale comments. "Trace the blast radius before you change anything."
 - Constraint: **purely representational, no behavior change** (exception: the 4.0 investigation step produces no diff).
 - Instruction: **do not commit**. Leave changes in the working tree.
-- Findings from prior rounds (if round > 1).
+- Findings from prior rounds (if round > 1) — paste the review agent's finding list verbatim into the prompt.
 
 **3. Verify shape.** After the build agent returns, run:
 - `git status --porcelain` — confirm only expected files changed, no deletions/renames (Operational rule 9).
 - `git diff --stat` — confirm line counts are roughly in the expected range.
 
-**4. Review round (sub-agent dispatch).**
+**4. Review round (sub-agent dispatch — fresh Opus, separate invocation from the build).**
 
-Use `Agent` tool with `subagent_type: "general-purpose"` (or `coderabbit:code-reviewer` for code-heavy helper-extraction steps). Prompt must include:
+Use `Agent` tool with `subagent_type: "general-purpose"` and `model: "opus"`. Must be a *new* `Agent` invocation — a fresh Opus context with no memory of the build round's reasoning. This is the whole point: the reviewer forms an independent judgment from the diff + success criteria alone. Prompt must include:
 - The step's success criteria verbatim.
 - Explicit criteria: behavior neutrality, no lost invariants, smoke assertions present where required, CLAUDE.md Helper index row present for new helpers, stale comments/docs updated.
 - Instruction: read the working-tree diff via `git diff`, compare against success criteria, return either `CLEAN` or a bulleted list of findings with `severity` (`blocker` / `major` / `minor`) + file:line + description.
+- Do **not** pass the build-agent's self-report into the reviewer's prompt — reviewer reads the diff itself. Passing the build agent's summary would leak its reasoning and defeat the independent-review purpose.
 
 **5. Decide.**
 - **CLEAN:** proceed to step 6.
