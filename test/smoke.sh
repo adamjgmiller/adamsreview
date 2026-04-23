@@ -3964,6 +3964,48 @@ else
     fail "FG-3: expected no_fetch/main/warn_len=1/'fetch_failed ...'; got freshness=$fg3_freshness compref=$fg3_compref warn_len=$fg3_warn_len warn_head='$fg3_warn_head'"
 fi
 
+# ------------------------------------------------------------------ TC-* trivial-check.sh
+# Stage 4.A.2 — Phase 0.11 trivial-diff classification extracted into a
+# helper. Covers trivial docs-only case, non-trivial mixed case, and
+# empty-diff edge case (vacuously trivial; matches pre-extraction
+# fragment behavior).
+
+# TC-1: trivial docs-only — every file in the doc/config allow-list,
+# num_files <= 3, lines_changed <= 30.
+tc1_out=$(printf '%s\n' "README.md" "CHANGELOG.md" ".gitignore" \
+    | "$TOOLS/trivial-check.sh" --num-files 3 --lines-changed 20)
+tc1_mode=$(echo "$tc1_out" | jq -r '.trivial_mode')
+tc1_reason=$(echo "$tc1_out" | jq -r '.reason')
+if [[ "$tc1_mode" == "true" && "$tc1_reason" == "docs_only" ]]; then
+    pass "TC-1 (§13.9): trivial docs-only — trivial_mode=true, reason=docs_only"
+else
+    fail "TC-1: expected true/docs_only; got mode=$tc1_mode reason=$tc1_reason"
+fi
+
+# TC-2: non-trivial mixed — one doc file + one source file fails the
+# allow-list walk; reason must be null.
+tc2_out=$(printf '%s\n' "README.md" "src/foo.ts" \
+    | "$TOOLS/trivial-check.sh" --num-files 2 --lines-changed 10)
+tc2_mode=$(echo "$tc2_out" | jq -r '.trivial_mode')
+tc2_reason=$(echo "$tc2_out" | jq -r '.reason')
+if [[ "$tc2_mode" == "false" && "$tc2_reason" == "null" ]]; then
+    pass "TC-2 (§13.9): non-trivial mixed — trivial_mode=false, reason=null"
+else
+    fail "TC-2: expected false/null; got mode=$tc2_mode reason=$tc2_reason"
+fi
+
+# TC-3: empty-diff edge case — no files on stdin, zero counts. Vacuously
+# trivial (allow-list walk never trips, 0<=3, 0<=30). Matches pre-
+# extraction fragment behavior exactly.
+tc3_out=$(printf '' | "$TOOLS/trivial-check.sh" --num-files 0 --lines-changed 0)
+tc3_mode=$(echo "$tc3_out" | jq -r '.trivial_mode')
+tc3_reason=$(echo "$tc3_out" | jq -r '.reason')
+if [[ "$tc3_mode" == "true" && "$tc3_reason" == "docs_only" ]]; then
+    pass "TC-3 (§13.9): empty-diff edge case — vacuously trivial, reason=docs_only"
+else
+    fail "TC-3: expected true/docs_only; got mode=$tc3_mode reason=$tc3_reason"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

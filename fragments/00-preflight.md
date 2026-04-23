@@ -232,31 +232,15 @@ This is the staleness-envelope anchor.
 
 ### 0.11. Trivial-diff check (§13.9)
 
-If `force_full=true`, set `trivial_mode=false` and skip the rest of this
-step. Counts from 0.6 are used unchanged.
-
-Otherwise, run this Bash check against the file list from 0.6:
+If `force_full=true`, set `trivial_mode=false` and `trivial_reason=null`
+and skip the rest of this step. Otherwise delegate to `trivial-check.sh`
+(allow-list walk + count thresholds + reason emission):
 
 ```bash
-# Every changed file must match the doc/config allow-list for trivial.
-# Allow-list: *.md *.mdx *.txt *.rst *.yaml *.yml *.json *.jsonc
-#             *.toml *.ini *.cfg *.conf LICENSE LICENSE.* CHANGELOG*
-#             NOTICE* .gitignore .editorconfig .npmrc .nvmrc
-all_trivial=true
-while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    case "$f" in
-        *.md|*.mdx|*.txt|*.rst|*.yaml|*.yml|*.json|*.jsonc|\
-        *.toml|*.ini|*.cfg|*.conf|\
-        LICENSE|LICENSE.*|CHANGELOG*|NOTICE*|\
-        .gitignore|.editorconfig|.npmrc|.nvmrc) ;;
-        *) all_trivial=false; break ;;
-    esac
-done <<<"$reviewed_files_all"
+tc_json=$(printf '%s\n' $reviewed_files_all | trivial-check.sh --num-files "$num_files" --lines-changed "$lines_changed")
+trivial_mode=$(printf '%s' "$tc_json" | jq -r '.trivial_mode')
+trivial_reason=$(printf '%s' "$tc_json" | jq -r '.reason')
 ```
-
-If `num_files <= 3 AND lines_changed <= 30 AND all_trivial == true`:
-set `trivial_mode=true`. Otherwise `trivial_mode=false`.
 
 ### 0.12. User-facing-change classifier (Sonnet — skipped in trivial mode)
 
