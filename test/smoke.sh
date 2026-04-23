@@ -3919,17 +3919,18 @@ else
 fi
 
 # PF-INT-5: commands/review.md frontmatter grants bare-name Bash permissions
-# for the three new helpers. Catches the permissions-vs-usage drift class.
+# for the Phase 1 detection helpers invoked in transcluded fragments.
+# Catches the permissions-vs-usage drift class.
 REVIEW_CMD="$REPO/commands/review.md"
 review_front=$(awk '/^---$/{c++; next} c==1{print}' "$REVIEW_CMD")
 rh_missing=()
-for helper in parse-with-repair.py parse-validator-result.py source-family-map.py; do
+for helper in parse-with-repair.py parse-validator-result.py source-family-map.py assign-finding-ids.sh origin-crosscheck.sh; do
     if ! echo "$review_front" | grep -qF "Bash($helper:"; then
         rh_missing+=("$helper")
     fi
 done
 if [[ ${#rh_missing[@]} -eq 0 ]]; then
-    pass "PF-INT-5: commands/review.md allowed-tools grants the three new helpers"
+    pass "PF-INT-5: commands/review.md allowed-tools grants Phase 1 detection helpers"
 else
     fail "PF-INT-5: missing Bash grants for: ${rh_missing[*]}"
 fi
