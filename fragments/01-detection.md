@@ -491,17 +491,18 @@ additionally reads the current content of every modified file):
 
 #### L5 — UX (Sonnet; skipped if `trivial_mode` or `user_facing == false`)
 
-Launch one `Agent` tool-use with `model: sonnet`. Inline the UX reference
-content into the prompt via a preprocessor include — in the fragment as
-consumed, the reference is inlined by the top-level command file via
-`` !`include lens-ux-reference.md` `` so the
-sub-agent sees the full reference in its prompt.
+Launch one `Agent` tool-use with `model: sonnet`. Before dispatching L5,
+the orchestrator Reads `fragments/lens-ux-reference.md` and embeds its
+contents into the sub-agent's prompt under the "UX reference" heading
+below. The Read happens only when L5 is in the lens-selection set from
+step 1.1 — when the lens is skipped (`trivial_mode` or
+`user_facing == false`), the reference file is never fetched.
 
 Prompt essence (prepended with the shared invariants from step 1.2.1):
 
 > UX reference:
 >
-> !`include lens-ux-reference.md`
+> <contents of `fragments/lens-ux-reference.md`>
 >
 > Also read the CLAUDE.md files in `$claude_md_paths` (project-specific UX
 > conventions take precedence over the generic reference above).
@@ -515,14 +516,17 @@ Prompt essence (prepended with the shared invariants from step 1.2.1):
 
 #### L6 — lightweight security (Sonnet; skipped if `trivial_mode`)
 
-Launch one `Agent` tool-use with `model: sonnet`. Inline the security
-reference via preprocessor include (same mechanism as L5).
+Launch one `Agent` tool-use with `model: sonnet`. Before dispatching L6,
+the orchestrator Reads `fragments/lens-security-reference.md` and embeds
+its contents into the sub-agent's prompt under the "Security reference"
+heading below. Same lazy-load pattern as L5 — when L6 is skipped
+(`trivial_mode`), the reference file is never fetched.
 
 Prompt essence (prepended with the shared invariants from step 1.2.1):
 
 > Security reference:
 >
-> !`include lens-security-reference.md`
+> <contents of `fragments/lens-security-reference.md`>
 >
 > If structural reasoning (similar to L2 — walking callers and writers)
 > suggests a security implication, flag it even when the immediate code

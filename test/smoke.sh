@@ -3236,14 +3236,35 @@ else
 fi
 
 # UXT-1 guards the L5-ux diagnostic-message-quality addition (Stage
-# 2.9.B). Content lives in lens-ux-reference.md which L5 inlines via
-# `!`cat`` preprocessor, so grep the reference file directly.
+# 2.9.B). Content lives in lens-ux-reference.md, which L5's dispatch
+# Reads and embeds into its sub-agent prompt (Stage 4.C lazy load —
+# fetched only when L5 is in the lens-selection set), so grep the
+# reference file directly.
 if grep -qF 'Diagnostic message quality' "$REPO/fragments/lens-ux-reference.md" \
     && grep -qF 'parseDate' "$REPO/fragments/lens-ux-reference.md" \
     && grep -qF 'empty-buffer' "$REPO/fragments/lens-ux-reference.md"; then
     pass "UXT-1 (§2.9.B): lens-ux-reference.md includes diagnostic-message-quality section"
 else
     fail "UXT-1: diagnostic-message-quality content missing from lens-ux-reference.md"
+fi
+
+# FR-LENS-REF-LAZY-1 guards Stage 4.C: the L5 and L6 dispatch sub-
+# sections in fragments/01-detection.md must each contain an explicit
+# `Read` directive naming the corresponding lens-reference file. Under
+# the lazy-load model the orchestrator Reads the reference only when
+# its lens is in the lens-selection set from step 1.1; if a lens is
+# skipped (L5 on trivial_mode / user_facing==false; L6 on
+# trivial_mode), no Read happens and the reference never enters
+# context. A regression that deletes the Read directive would silently
+# strip the reference from the dispatched prompt, because nested
+# !include inside fragment bodies isn't recursively expanded (4.0
+# Appendix A).
+DETECT_MD="$REPO/fragments/01-detection.md"
+if grep -qF 'Reads `fragments/lens-ux-reference.md`' "$DETECT_MD" \
+    && grep -qF 'Reads `fragments/lens-security-reference.md`' "$DETECT_MD"; then
+    pass "FR-LENS-REF-LAZY-1 (§4.C): L5/L6 dispatch lazy-Reads lens references"
+else
+    fail "FR-LENS-REF-LAZY-1: lazy Read directive missing from L5/L6 dispatch in $DETECT_MD"
 fi
 
 # LT-1..LT-3 guard the L2 prompt tune (Stage 2.9.A). Stage-2.9 closes
