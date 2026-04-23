@@ -179,9 +179,21 @@ Fresh session: the orchestrator appends one entry per project as it goes. Keep e
 - Ended: 2026-04-23T01:25:10Z
 - Builder iterations: 1
 - Smoke assertions: baseline 208 → post 208 (no new assertions for prose-only edits)
-- Commit: <filled below after commit>
+- Commit: f0d7f19
 - Summary: Six prose one-liners from the 2026-04-22 run — Phase 4a 0–100 rubric fence (#11, `fragments/05-validation.md`), Codex `ready` → `setup --json` JSON-parsed readiness gate (#13, `fragments/01-detection.md` — the baseline pattern actually lived here, not in `02-ensemble-adapter.md` as the plan's file-list guessed), prior-PR-comment retention notice in §0.14 (#18, `fragments/00-preflight.md`), Codex stderr-vs-stdout comment near the poll loop (#19, `fragments/02-ensemble-adapter.md`), Phase 0 foreground-only prescription (#23, `fragments/00-preflight.md`), walkthrough between-iteration anti-instruction (#27, `commands/walkthrough.md` step 5.3).
 - Verifier findings: PASS first-try. All six greps confirmed, zero remaining `node "$CODEX_COMPANION" ready` hits in source tree, smoke held at 208.
+- Inter-project sanity smoke (post-B, pre-C): PASS (208 assertions).
+
+### Project C — Infra housekeeping
+- Status: COMPLETE
+- Started: 2026-04-23T01:25:10Z
+- Ended: 2026-04-23T01:31:27Z
+- Builder iterations: 1
+- Smoke assertions: baseline 208 → post 208
+- Commit: <filled below after commit>
+- Summary: Five infra one-liners — Phase 2 dedup `jq -r '.[1:][]' | xargs -n 1` replaces shell word-splitting (#15, `fragments/03-dedup.md`); Phase 4.4.5 tree sweep excludes `.claude/` in BOTH probe and restore clauses (#16, `fragments/05-validation.md` — restore needs the same pathspec or it un-does files the probe ignored); `Bash(line-range-check.sh:*)` added to `commands/review.md` allowed-tools (#21); `bin/include text eol=lf` added to `.gitattributes` (#22); `metadata.description` added to `.claude-plugin/marketplace.json` (#25 — plan said top-level `description` but validator only accepts `metadata.description`; `claude plugin validate .` now passes with zero warnings).
+- Verifier findings: PASS first-try. All five greps confirmed.
+- Follow-up observation (out of Project C scope): `assign-finding-ids.sh` and `origin-crosscheck.sh` are also invoked bare in `fragments/01-detection.md` / `fragments/02-ensemble-adapter.md` and missing from `commands/review.md` allowed-tools — same class of pre-existing gap as #21. Flag for future backlog addition.
 
 ---
 

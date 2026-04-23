@@ -316,14 +316,19 @@ already forbid it. This catches a prompt-override and restores the
 tree before Phase 5 so a misbehaving validator cannot poison the
 commit `/adamsreview:fix` will later produce.
 
+The `:!.claude/` pathspec excludes the worktree's `.claude/` directory
+from the sweep. Claude Code's own infrastructure (ScheduleWakeup locks,
+session state) writes there during a run — flagging those is a false
+positive, since `.claude/` is never substantive to a code review.
+
 ```bash
-dirty=$(git -C "$repo_root" status --porcelain 2>/dev/null)
+dirty=$(git -C "$repo_root" status --porcelain -- . ':!.claude/' 2>/dev/null)
 if [[ -n "$dirty" ]]; then
     printf 'phase_4_tree_dirty_reverted: %s\n' \
         "$(printf '%s\n' "$dirty" | awk '{print $2}' | paste -sd, -)" \
         >> "$trace_log_path"
-    # Restore tracked-file modifications.
-    git -C "$repo_root" checkout -- . 2>/dev/null || true
+    # Restore tracked-file modifications (respect the .claude/ exclusion).
+    git -C "$repo_root" checkout -- . ':!.claude/' 2>/dev/null || true
     # Remove anything the sub-agent created that git doesn't know about.
     printf '%s\n' "$dirty" | awk '/^\?\?/ {print $2}' \
         | while IFS= read -r p; do rm -f "$repo_root/$p"; done

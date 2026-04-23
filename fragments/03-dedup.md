@@ -157,14 +157,18 @@ Concretely, for each group `[K, D1, D2, ...]` (K = keeper, Di = dupes):
       --set "actionability=$max_act"
     ```
 
-5. Delete each dupe:
+5. Delete each dupe. Pipe the group's dupe ids (everything past the
+   keeper) through `xargs -n 1` — no shell `for ... in $var` loops; bash
+   3.2 + macOS zsh word-splitting footguns make that pattern unreliable
+   for multi-dupe groups:
 
     ```bash
-    for dupe in D1 D2; do
-        artifact-patch.py \
-          --path "$artifact_path" --delete-finding "$dupe"
-    done
+    jq -r '.[1:][]' <<<'["K","D1","D2"]' \
+      | xargs -n 1 -I '{}' \
+          artifact-patch.py --path "$artifact_path" --delete-finding '{}'
     ```
+
+    (Substitute the actual group-id array for `["K","D1","D2"]`.)
 
 Each `artifact-patch.py` call re-validates the full artifact (§13.7). A
 merge that produces an invalid state fails loudly rather than silently

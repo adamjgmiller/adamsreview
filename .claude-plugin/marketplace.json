@@ -1,5 +1,8 @@
 {
   "name": "adamsreview",
+  "metadata": {
+    "description": "Adam Miller's personal Claude Code plugins."
+  },
   "owner": { "name": "Adam Miller" },
   "plugins": [
     {
