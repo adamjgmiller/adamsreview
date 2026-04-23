@@ -88,12 +88,9 @@ Scope-trimmed from the original plan — some 4.A wins have already been banked 
 
 ### 4.C — Lens-reference lazy load
 
-Previously out of scope in the original plan; bundled here because 4.0's chosen structural response likely touches the loading path already.
+Previously out of scope in the original plan; bundled here because 4.0's chosen structural response (manifest-style — see Appendix A) already touches the loading path.
 
-`fragments/lens-ux-reference.md` (3k chars) and `fragments/lens-security-reference.md` (1.8k chars) are currently available to every lens pass. Load them only when L4 / L5 are actually selected in step 1.1. Implementation depends on 4.0:
-
-- Under (a) `!include`: replace transclusion with a conditional `Read` from the lens agent prompt.
-- Under (c) manifest: lens references become ordinary `Read` calls gated by lens selection — falls out naturally.
+`fragments/lens-ux-reference.md` (3k chars) and `fragments/lens-security-reference.md` (1.8k chars) are currently available to every lens pass. Load them only when L4 / L5 are actually selected in step 1.1. Under 4.0's chosen (c), lens references become ordinary `Read` calls gated by lens selection — falls out naturally from the manifest-style command body.
 
 ### Not in scope for this stage
 
@@ -133,13 +130,76 @@ Previously out of scope in the original plan; bundled here because 4.0's chosen 
 
 ## Appendix A — 4.0 investigation findings
 
-*(To be filled in during 4.0.)*
+Filled in 2026-04-22. Research was conclusive — no manual repro needed.
 
-- **Sources consulted:**
-- **Observed behavior:**
-- **Root cause / ceiling characterization:**
-- **Chosen response:** (a) / (b) / (c)
-- **Rationale:**
+### Sources consulted
+
+- Claude Code docs — **Skills** page, section "Inject dynamic context." Documents the `` !`<command>` `` slash-command / skill preprocessor: "runs shell commands before the skill content is sent to Claude. The command output replaces the placeholder." Confirms `` !`command` `` is a thin preprocessor whose output is the command's stdout. No size cap is mentioned on this page. <https://code.claude.com/docs/en/skills>
+- Claude Code docs — **Environment variables** page. Documents `BASH_MAX_OUTPUT_LENGTH` as "Maximum number of characters in bash outputs before they are middle-truncated." No default value, no documented maximum. <https://code.claude.com/docs/en/env-vars>
+- Claude Code docs — **Slash commands** page. No mention of an output cap on the `!` preprocessor. <https://code.claude.com/docs/en/slash-commands>
+- GitHub issue [anthropics/claude-code#19901](https://github.com/anthropics/claude-code/issues/19901) — "[DOCS] Missing documentation on Bash tool output limits (30k characters) and truncation behavior." Confirms the **Bash tool's** 30,000-character default cap and middle-truncation semantics, with `BASH_MAX_OUTPUT_LENGTH` as the knob.
+- GitHub issue [anthropics/claude-code#17944](https://github.com/anthropics/claude-code/issues/17944) — "[BUG] `BASH_MAX_OUTPUT_LENGTH` ignored after v2.1.2 — large outputs persisted to disk regardless of setting." **The critical finding.** As of ≈v2.1.2, Claude Code replaced the middle-truncation path with an on-disk spill-over:
+  > Output too large (50.2KB). Full output saved to: `/home/user/.claude/projects/.../tool-results/toolu_xxx.txt`
+  > Preview (first 2KB): `{"output": [...beginning of output only...]`
+
+  Persistence triggers at "as small as ~30–50 KB" (and per later search summaries, effectively ~10 KB in very recent versions). `BASH_MAX_OUTPUT_LENGTH=150000` does **not** prevent persistence. The bash output in the prompt is replaced by "a file path + a first-~2 KB preview."
+- GitHub issue [anthropics/claude-code#11155](https://github.com/anthropics/claude-code/issues/11155) — bash-output-in-memory pathology, corroborates the persistence mechanism exists but with no numeric detail.
+- GitHub issue [anthropics/claude-code#23948](https://github.com/anthropics/claude-code/issues/23948) — corroborates `<persisted-output>` tag wraps the preview + file path; threshold behavior evolved across versions.
+- Community summary (via web search, not primary source): "Recent versions of Claude Code (≥ v2.1.88) appear to limit persisted output to 10 KB; larger than 10 KB → saved to file + trimmed to 2 KB preview." Not grep-able in official docs; treat as indicative.
+- Manual repro not attempted — a sub-agent cannot launch slash commands, so a Claude-Code-to-Claude-Code repro needs a fresh session. Evidence is strong enough to decide without it. Follow-up if we need a hard number: throwaway `/adamsreview:test-include` command that `!include`s a generated fragment at 5 / 10 / 20 / 30 / 50 KB and reports which sizes got replaced by a `<persisted-output>` block.
+
+### Observed behavior (2026-04-22 truncation)
+
+During the `/adamsreview:review` run on 2026-04-22:
+
+- The `!include` preprocessor persisted Phases 0, 1.5, and 2–6 inline as expected.
+- Two phases (among the larger fragments — consistent with `fragments/01-detection.md` at 43 KB and `fragments/10-post-fix-and-commit.md` at 56 KB, or `fragments/00-preflight.md` at 27 KB) were silently replaced in the prompt by ~2 KB "previews."
+- The orchestrator recovered by directly `Read`-ing the affected fragments from disk — recovery worked, but only because the orchestrator noticed the content was suspiciously thin. No error, no warning, no `<persisted-output>` tag surfaced in a way that the command author could pattern-match on in advance.
+
+### Root cause / ceiling characterization
+
+The `` !`<command>` `` slash-command preprocessor shares its output plumbing with the Bash tool. When the command's stdout exceeds Claude Code's internal persist-to-disk threshold (v2.1.88-era ≈ 10 KB per the community summary; issue #17944 reports persistence triggering at 30–50 KB under an earlier configuration), Claude Code:
+
+1. Writes the full stdout to `~/.claude/projects/.../tool-results/toolu_*.txt`.
+2. Replaces the output in the prompt with a `<persisted-output>` wrapper containing:
+   - The file path.
+   - A **first-~2 KB preview**.
+3. Ignores `BASH_MAX_OUTPUT_LENGTH` (post-v2.1.2).
+
+Our `bin/include` wrapper is just `cat "$fragment"` — its stdout volume equals the fragment's file size. Fragments `> ~10 KB` on current Claude Code therefore get clipped to a 2 KB preview. **Seven of our fragments are over 10 KB** (`01-detection.md` 43 KB, `10-post-fix-and-commit.md` 56 KB, `00-preflight.md` 27 KB, `05-validation.md` 23 KB, `02-ensemble-adapter.md` 16 KB, `07-finalize.md` 13 KB, `09-fix-execution.md` 13 KB). Even the ones that survived on 2026-04-22 are living on borrowed time — the threshold has been getting tighter across Claude Code minor versions, and nothing in our plumbing guards against a future tightening.
+
+Characterization: **not a per-invocation bash cap we can turn off, not a cumulative cap, not a shell subprocess pipe limit — it is a Claude-Code-side persist-to-disk threshold that replaces the preprocessor's output with a `<persisted-output>` preview in the assembled prompt.** `BASH_MAX_OUTPUT_LENGTH` does not fix it.
+
+### Chosen response: **(c) Manifest-style command bodies**
+
+### Rationale
+
+The three options, judged against (i) durability, (ii) blast radius, (iii) interaction with 4.C, and (iv) fit to the observed failure mode:
+
+- **(a) Stay on `!include`, compress.** Compression alone is not viable. To fit `10-post-fix-and-commit.md` (56 KB) under a ~10 KB ceiling requires a 5.6× reduction without removing content; the same math applies to `01-detection.md` (4.3×) and `00-preflight.md` (2.7×). Best-case compression lands each fragment close to the cliff; the next Anthropic-side threshold tightening re-breaks us silently (this already happened once between v2.1.2 and now). Also: the threshold is undocumented in official docs, so we would be fitting to a number from a GitHub issue. Fails on durability.
+
+- **(b) Split oversized fragments into sub-fragments.** Each `!include` is its own preprocessor invocation so the cap is per-invocation, and splitting does work mechanically. But the splits are semantically arbitrary — `01-detection-part-1.md` + `01-detection-part-2.md` reads worse as a standalone document than the current `01-detection.md`, and every future edit has to re-check that no sub-fragment has crept past 10 KB. We'd also be preserving the `!include` dependency long-term, which means 4.C (lens-reference lazy load) still needs its own conditional-read implementation inside the lens agent prompts. Medium durability, medium blast radius, doesn't help 4.C.
+
+- **(c) Manifest-style.** Command body says "Phase 1: read `fragments/01-detection.md` and follow the instructions inside" — fragment content is reached via the `Read` tool, not the `!` preprocessor. `Read`'s limits are measured in thousands of lines (default 2000), which is orders of magnitude above any fragment we would write. Fragment size then only matters for the orchestrator's prompt token budget — exactly the problem 4.B prose compression is already sized to solve. Biggest one-time blast radius (all five command files), but:
+  - **Durable.** Sidesteps the `<persisted-output>` mechanism entirely; immune to future threshold changes.
+  - **4.C falls out for free.** Lens references become ordinary `Read` calls inside the lens agent prompt, gated on lens selection. No separate "conditional `!include`" machinery needed — which is the plan's own stated outcome for option (c).
+  - **Blast radius is contained and one-pass.** The conversion is mechanical: each `!include <name>.md` becomes "Read `fragments/<name>.md` and execute the instructions inside." The fragment bodies don't change; only the splice point moves. Semantics of the orchestrator contract shift from "fragment prose was inlined in my prompt" to "fragment prose is in a file I'm instructed to read and follow" — a distinction the fragments already honor, since they are written as procedural instructions (e.g., "Phase 9.pre — overlap scan") not inline prose.
+  - **No new behavior.** Every `!include` site becomes one `Read` + a "follow the instructions inside" directive. Trace-log boilerplate, helper invocations, and Phase numbering are unchanged.
+
+The observed failure mode — silent 2 KB preview with no error surface — is specifically what (c) eliminates: `Read` failures are loud and recoverable, whereas `<persisted-output>` previews are indistinguishable from successful `!include` output until the model notices the content is truncated. For a command that matters to correctness (reviews can't afford to silently skip half of Phase 9), moving off the preprocessor is the right trade.
+
+### Implementation notes for 4.A–4.C under (c)
+
+- 4.A helpers don't care — they get called from fragment bodies either way. Extractions still land.
+- 4.B prose compression targets fragment size for prompt-token reasons, not ceiling-avoidance reasons. The two largest fragments don't need to reach 10 KB — they need to reach "small enough that the orchestrator doesn't balloon." Net compression target relaxes; structural compression (dedupe, invariant extraction) remains the primary lever.
+- 4.C becomes: lens-reference fragments (`lens-ux-reference.md`, `lens-security-reference.md`) move into each lens agent's `Read` list, gated on lens selection — exactly as the plan's (c) branch already specified.
+- `bin/include` can stay in place for any remaining `!include` sites that are genuinely small and local (e.g., the shared prelude block if it lands under 10 KB). `Bash(include:*)` grants can be removed from command files that no longer `!include` anything — note for close-out pass.
+- One subtle blast-radius point for the conversion PR: the `!include` preprocessor runs **once, at command-invocation time, before the orchestrator sees any content**. Manifest-style `Read` calls run **inside the orchestrator turn**. That means for any fragment whose instructions were written assuming prior fragments were already in prompt (cross-fragment references), the manifest style needs each fragment either (a) self-contained, or (b) read in order by the top-level command. The current fragments are already numbered and sequential, so this is mostly a naming discipline rather than a refactor.
+
+### Open follow-ups
+
+- Threshold number is not officially documented. If 4.B compression targets are tight, run the throwaway-repro command described above to pin the exact current threshold on the installed Claude Code version. Non-blocking for (c), which is immune to the threshold.
+- If Anthropic later exposes a `DISABLE_BASH_PERSIST` or similar env var that fully disables the persist-to-disk path, (a) + aggressive compression becomes viable again. Worth revisiting at the next major Claude Code release.
 
 ## Appendix B — Close-out measurement
 

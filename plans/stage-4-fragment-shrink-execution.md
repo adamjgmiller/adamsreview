@@ -221,10 +221,10 @@ Ordered list of every step. Each step's "Success criteria" is what the review le
 
 ## §4 — Progress ledger
 
-**Next pending step:** `4.0`
+**Next pending step:** `4.A.1`
 
 ### Log
 
 *(Append one entry per completed step. Format: `[YYYY-MM-DDTHH:MMZ] <step-id> rounds=<n> commit=<sha> notes=<...>`.)*
 
-*(No entries yet.)*
+- `[2026-04-23T04:35Z] 4.0 rounds=1 commit=<pending> notes=Decision: (c) manifest-style command bodies. Research conclusive via Claude Code docs + GitHub #17944 (persist-to-disk threshold ignores BASH_MAX_OUTPUT_LENGTH post-v2.1.2, ~10 KB on current versions replaces preprocessor output with ~2 KB <persisted-output> preview). 7 fragments already over 10 KB. Seven fragments already over 10 KB makes (a) non-durable; (b) works mechanically but locks in !include long-term and doesn't help 4.C; (c) sidesteps the preprocessor and makes 4.C fall out trivially. Accepted review's 1 minor finding inline (stale §4.C prose framing (a)/(c) as live alternatives — rewrote to reference chosen (c) with Appendix A backref).`
