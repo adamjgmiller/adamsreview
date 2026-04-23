@@ -3248,23 +3248,23 @@ else
     fail "UXT-1: diagnostic-message-quality content missing from lens-ux-reference.md"
 fi
 
-# FR-LENS-REF-LAZY-1 guards Stage 4.C: the L5 and L6 dispatch sub-
-# sections in fragments/01-detection.md must each contain an explicit
-# `Read` directive naming the corresponding lens-reference file. Under
-# the lazy-load model the orchestrator Reads the reference only when
-# its lens is in the lens-selection set from step 1.1; if a lens is
-# skipped (L5 on trivial_mode / user_facing==false; L6 on
-# trivial_mode), no Read happens and the reference never enters
-# context. A regression that deletes the Read directive would silently
-# strip the reference from the dispatched prompt, because nested
-# !include inside fragment bodies isn't recursively expanded (4.0
-# Appendix A).
+# FR-LENS-REF-INLINE-1 (formerly FR-LENS-REF-LAZY-1): the L5 and L6
+# dispatch sub-sections in fragments/01-detection.md must contain the
+# lens-reference content verbatim (inlined, not lazy-Read). F013
+# replaced the Stage 4.C lazy-Read directive with full inlining so the
+# placeholder `<contents of fragments/lens-*-reference.md>` pattern can
+# never ship to a dispatched sub-agent. Grep for a distinctive phrase
+# from each reference file; if both phrases are present the inlining is
+# intact, and a regression that deletes the inlined content (or
+# reverts to a placeholder) would fail this assertion. The reference
+# files themselves remain on disk for future delta-editing and any
+# other call sites.
 DETECT_MD="$REPO/fragments/01-detection.md"
-if grep -qF 'Reads `fragments/lens-ux-reference.md`' "$DETECT_MD" \
-    && grep -qF 'Reads `fragments/lens-security-reference.md`' "$DETECT_MD"; then
-    pass "FR-LENS-REF-LAZY-1 (§4.C): L5/L6 dispatch lazy-Reads lens references"
+if grep -qF 'empty-buffer or mid-flush failure' "$DETECT_MD" \
+    && grep -qF 'Input validation & injection' "$DETECT_MD"; then
+    pass "FR-LENS-REF-INLINE-1: L5/L6 dispatch inlines lens-reference content"
 else
-    fail "FR-LENS-REF-LAZY-1: lazy Read directive missing from L5/L6 dispatch in $DETECT_MD"
+    fail "FR-LENS-REF-INLINE-1: inlined lens-reference content missing from $DETECT_MD"
 fi
 
 # LT-1..LT-3 guard the L2 prompt tune (Stage 2.9.A). Stage-2.9 closes
@@ -3738,8 +3738,11 @@ else
     fail "VR-6: expected exit 2 on malformed; got $vr6_exit" "$vr6_out"
 fi
 
-# VR-7: deep-lane validation_result passthrough.
-vr7_out=$(echo '{"score_phase4": 80, "actionability": "auto_fixable", "decision": "confirmed", "validation_result": {"evidence": ["e1"], "blast_radius": {}, "fix_proposal": {}, "verification_context": {}}}' \
+# VR-7: deep-lane validation_result passthrough. Post-VR-10 the helper
+# schema-checks vr against #/$defs/validation_result, so this fixture is
+# a fully-shaped object (the old stub {"blast_radius": {}} pattern would
+# now route to vr=null — correctly — and is covered by VR-10).
+vr7_out=$(echo '{"score_phase4": 80, "actionability": "auto_fixable", "decision": "confirmed", "validation_result": {"evidence": ["e1"], "blast_radius": {"writers": [], "consumers": [], "parallel_paths": [], "invariants_at_stake": []}, "fix_proposal": {"approach": "x", "files_to_modify": []}, "verification_context": {"how_to_verify_fix": [], "edge_cases_to_preserve": [], "what_would_break_if_incomplete": []}}}' \
     | "$TOOLS/parse-validator-result.py" --lane deep 2>&1)
 if [[ $? -eq 0 ]] \
     && echo "$vr7_out" | jq -e '.validation_result.evidence[0] == "e1" and .confirmed_strength == "strong"' >/dev/null; then
@@ -3773,6 +3776,48 @@ if [[ $? -eq 0 ]] \
     pass "VR-9: in-band score_phase4 (72) wins over out-of-band overall_numeric"
 else
     fail "VR-9: in-band score_phase4 precedence failed" "$vr9_out"
+fi
+
+# VR-10: deep-lane drifted validation_result is schema-checked and dropped
+# to null with a "shape unrecoverable" note, rather than passing through
+# malformed (F005-drift case: files_planned/sketch/risk/alternative_rejected
+# instead of the schema's evidence/blast_radius/fix_proposal/verification_context
+# shape). This prevents the downstream --apply-decisions batch-halt that
+# the stage-4 regression surfaced.
+vr10_out=$(echo '{"score_phase4": 80, "actionability": "auto_fixable", "decision": "confirmed", "validation_result": {"files_planned": ["a"], "sketch": "x", "risk": "r", "alternative_rejected": "alt"}}' \
+    | "$TOOLS/parse-validator-result.py" --lane deep 2>&1)
+if [[ $? -eq 0 ]] \
+    && echo "$vr10_out" | jq -e '.validation_result == null and (.notes | contains("validation_result shape unrecoverable"))' >/dev/null; then
+    pass "VR-10: drifted deep-lane validation_result → null + shape-unrecoverable note"
+else
+    fail "VR-10: expected vr=null + note on drift" "$vr10_out"
+fi
+
+# VR-11: valid deep-lane validation_result passes schema check and
+# passes through unchanged — ensures VR-10's guard didn't break the
+# happy path. Uses fully-shaped sub-objects so every required key is
+# present per schema-v1.json#/$defs/validation_result.
+vr11_out=$(echo '{"score_phase4": 72, "actionability": "auto_fixable", "decision": "confirmed", "validation_result": {"evidence": ["file:12 — observation"], "blast_radius": {"writers": ["a.py:1"], "consumers": [], "parallel_paths": [], "invariants_at_stake": []}, "fix_proposal": {"approach": "fix x", "files_to_modify": [{"file":"a.py","what":"change","why":"required"}]}, "verification_context": {"how_to_verify_fix": ["grep x"], "edge_cases_to_preserve": [], "what_would_break_if_incomplete": []}}}' \
+    | "$TOOLS/parse-validator-result.py" --lane deep 2>&1)
+if [[ $? -eq 0 ]] \
+    && echo "$vr11_out" | jq -e '.validation_result.evidence[0] == "file:12 — observation" and .validation_result.fix_proposal.approach == "fix x" and (.notes | contains("shape unrecoverable") | not)' >/dev/null; then
+    pass "VR-11: valid deep-lane validation_result passes through unchanged"
+else
+    fail "VR-11: valid vr failed to pass through" "$vr11_out"
+fi
+
+# VR-12: top-level lift still fires when validation_result is absent but
+# the raw carries evidence/blast_radius/fix_proposal/verification_context
+# at the top level (legitimate recoverable shape drift). The lift runs
+# BEFORE the schema check, so a well-shaped lift still reaches the
+# passthrough without a "shape unrecoverable" note.
+vr12_out=$(echo '{"score_phase4": 72, "actionability": "auto_fixable", "decision": "confirmed", "evidence": ["x"], "blast_radius": {"writers": [], "consumers": [], "parallel_paths": [], "invariants_at_stake": []}, "fix_proposal": {"approach": "x", "files_to_modify": []}, "verification_context": {"how_to_verify_fix": [], "edge_cases_to_preserve": [], "what_would_break_if_incomplete": []}}' \
+    | "$TOOLS/parse-validator-result.py" --lane deep 2>&1)
+if [[ $? -eq 0 ]] \
+    && echo "$vr12_out" | jq -e '.validation_result.evidence[0] == "x" and (.notes | contains("lifted from top-level"))' >/dev/null; then
+    pass "VR-12: top-level lift still fires when validation_result absent"
+else
+    fail "VR-12: top-level lift regressed" "$vr12_out"
 fi
 
 # --- SF-* source-family-map.py

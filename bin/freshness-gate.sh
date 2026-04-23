@@ -40,10 +40,14 @@
 # Side effects on the working tree:
 #   - Initial invocation runs `git fetch origin <base_branch>` (no ref
 #     update — just `FETCH_HEAD`).
-#   - `--after-choice a` runs `git fetch origin <base>:<base>` which
-#     fast-forwards the local branch (git refuses non-FF updates, which
-#     the helper catches and reports as pending_user_gate with
-#     ff_available=false).
+#   - `--after-choice a` fast-forwards the local base branch. When HEAD
+#     is on a different branch, it runs `git fetch origin <base>:<base>`.
+#     When HEAD is already on <base-branch> (git refuses to update the
+#     currently-checked-out ref via a fetch refspec), it falls back to
+#     `git merge --ff-only origin/<base-branch>` instead — `origin/<base>`
+#     was already populated by the initial fetch earlier in the helper.
+#     Git refuses non-FF updates, which the helper catches and reports
+#     as pending_user_gate with ff_available=false.
 #   - `--after-choice b` and `--after-choice c` have no working-tree
 #     side effects (they only change the emitted `comparison_ref` and
 #     `base_freshness`).
@@ -89,9 +93,15 @@ AFTER_CHOICE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --base-branch)  BASE_BRANCH="${2:-}";  shift 2 ;;
-        --head-branch)  HEAD_BRANCH="${2:-}";  shift 2 ;;
-        --after-choice) AFTER_CHOICE="${2:-}"; shift 2 ;;
+        --base-branch)
+            [[ $# -ge 2 ]] || die_usage "--base-branch requires a value"
+            BASE_BRANCH="${2:-}";  shift 2 ;;
+        --head-branch)
+            [[ $# -ge 2 ]] || die_usage "--head-branch requires a value"
+            HEAD_BRANCH="${2:-}";  shift 2 ;;
+        --after-choice)
+            [[ $# -ge 2 ]] || die_usage "--after-choice requires a value"
+            AFTER_CHOICE="${2:-}"; shift 2 ;;
         -h|--help)      usage; exit 0 ;;
         *)              die_usage "unknown arg '$1'" ;;
     esac
@@ -193,7 +203,31 @@ fi
 if [[ "$AFTER_CHOICE" == "a" ]]; then
     # Fast-forward local base; git refuses non-FF updates → re-emit
     # pending with ff_available=false so orchestrator re-asks with b/c/d.
-    ff_err_file="/tmp/adams_ff_err.$$"
+    #
+    # HEAD-on-base fallback: if HEAD is currently on $BASE_BRANCH, git
+    # refuses to update the checked-out ref via `fetch origin base:base`,
+    # so use `git merge --ff-only origin/$BASE_BRANCH` — origin/$BASE_BRANCH
+    # is already populated by the initial fetch earlier in the helper.
+    current_branch=$(git symbolic-ref --short HEAD 2>/dev/null || true)
+    if [[ "$current_branch" == "$BASE_BRANCH" ]]; then
+        ff_err_file=$(mktemp -t adams-ff-err.XXXXXX)
+        ff_rc=0
+        git merge --ff-only "origin/$BASE_BRANCH" --quiet 2>"$ff_err_file" || ff_rc=$?
+        if [[ $ff_rc -eq 0 ]]; then
+            remote_sha=$(git rev-parse "origin/$BASE_BRANCH" 2>/dev/null || true)
+            emit_terminal "fast_forwarded" "$BASE_BRANCH" "$remote_sha" "0" '[]'
+            rm -f "$ff_err_file"
+            exit 0
+        fi
+        err_msg=$(tr '\n' ' ' < "$ff_err_file" 2>/dev/null || true)
+        rm -f "$ff_err_file"
+        remote_sha=$(git rev-parse "origin/$BASE_BRANCH" 2>/dev/null || true)
+        behind_count=$(git rev-list --count "$BASE_BRANCH..origin/$BASE_BRANCH" 2>/dev/null || echo 0)
+        warnings_json=$(printf '%s\n' "fast_forward_failed base=$BASE_BRANCH rc=$ff_rc err=$err_msg" | lines_to_json_array)
+        emit_pending "$remote_sha" "$behind_count" "$warnings_json" "false"
+        exit 0
+    fi
+    ff_err_file=$(mktemp -t adams-ff-err.XXXXXX)
     ff_rc=0
     git fetch origin "$BASE_BRANCH:$BASE_BRANCH" --quiet 2>"$ff_err_file" || ff_rc=$?
     if [[ $ff_rc -eq 0 ]]; then
@@ -224,7 +258,7 @@ fi
 
 # Remote exists. Fetch with a 30s soft timeout. GNU `timeout` when
 # available; a background+watchdog pattern on macOS where it isn't.
-fetch_err_file="/tmp/adams_fetch_err.$$"
+fetch_err_file=$(mktemp -t adams-fetch-err.XXXXXX)
 fetch_rc=0
 if command -v timeout >/dev/null 2>&1; then
     timeout 30 git fetch origin "$BASE_BRANCH" --quiet 2>"$fetch_err_file" || fetch_rc=$?

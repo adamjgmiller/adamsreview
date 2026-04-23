@@ -74,8 +74,12 @@ LINES_CHANGED=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --num-files)     NUM_FILES="${2:-}";     shift 2 ;;
-        --lines-changed) LINES_CHANGED="${2:-}"; shift 2 ;;
+        --num-files)
+            [[ $# -ge 2 ]] || die_usage "--num-files requires a value"
+            NUM_FILES="${2:-}";     shift 2 ;;
+        --lines-changed)
+            [[ $# -ge 2 ]] || die_usage "--lines-changed requires a value"
+            LINES_CHANGED="${2:-}"; shift 2 ;;
         -h|--help)       usage; exit 0 ;;
         *)               die_usage "unknown arg '$1'" ;;
     esac
@@ -92,8 +96,6 @@ case "$LINES_CHANGED" in
 esac
 
 # Walk stdin; if any non-blank line fails the allow-list, flip the flag
-# and drain the rest of stdin (break keeps `set -o pipefail` happy with
-# upstream producers that don't care about SIGPIPE).
 all_trivial=true
 while IFS= read -r f; do
     [[ -z "$f" ]] && continue

@@ -112,6 +112,40 @@ def validate(artifact):
     return errors
 
 
+def validation_result_validator():
+    """Return a Draft202012Validator bound to `#/$defs/validation_result`.
+
+    The sub-schema carries `{"$ref": "#/$defs/fix_proposal"}` internally; to
+    keep that ref resolving we register the full schema-v1 document with a
+    `referencing` Registry and validate against a `$ref` into it. The
+    returned validator is suitable for `iter_errors(sub_doc)` on a
+    candidate `validation_result` object.
+
+    Used by `parse-validator-result.py` to schema-check the deep-lane
+    passthrough before writing it into the artifact — drift caught here
+    is dropped to None with an audit note (see that helper's docstring)
+    rather than halting the Phase 4 batch downstream.
+    """
+    schema, Validator = _load_validator()
+    try:
+        from referencing import Registry, Resource
+        from referencing.jsonschema import DRAFT202012
+    except ImportError:
+        err_prompt(
+            "missing Python dependency 'referencing'",
+            context=[
+                "Ships transitively with jsonschema>=4.18; appears missing.",
+                "This helper expects uv to resolve deps from the caller's PEP 723 header."
+            ],
+            action="verify the calling script's inline `# /// script` dep list includes 'jsonschema'."
+        )
+        sys.exit(EXIT_MISSING_DEP)
+    resource = Resource(contents=schema, specification=DRAFT202012)
+    registry = Registry().with_resource(uri=schema.get("$id", ""), resource=resource)
+    ref_schema = {"$ref": f"{schema.get('$id', '')}#/$defs/validation_result"}
+    return Validator(ref_schema, registry=registry)
+
+
 def _pretty_path(absolute_path):
     """Convert jsonschema's path deque to a dotted/bracketed string.
 

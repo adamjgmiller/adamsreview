@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["json-repair"]
+# dependencies = ["json-repair", "jsonschema"]
 # ///
 """parse-validator-result.py — canonicalize Phase 4 validator output.
 
@@ -60,10 +60,25 @@ Deep-lane passthrough:
   - `validation_result` (the nested object with evidence/blast_radius/
     fix_proposal/verification_context) is carried through verbatim when
     present; `null` otherwise.
+  - After any top-level lift (see below), the deep-lane `validation_result`
+    is schema-checked against `bin/schema-v1.json#/$defs/validation_result`.
+    On mismatch — drifted keys, missing required sub-objects, malformed
+    shape — `vr` is dropped to `None` and a concise
+    "validation_result shape unrecoverable: <first two error paths>"
+    note is appended. This preserves the finding (routing it to
+    `uncertain` in combination with a 45-59 score, or to
+    `confirmed_*` with vr=null at >= 60) rather than letting the
+    downstream `artifact-patch.py --apply-decisions` reject the whole
+    tuple and halt the batch.
+  - Top-level lift: if `validation_result` is absent but the raw carries
+    `evidence` / `blast_radius` / `fix_proposal` / `verification_context`
+    at the top level (a known validator shape drift), those are lifted
+    into `vr` BEFORE the schema check — so a legitimately-recoverable
+    drift still passes through.
   - `related_candidates_to_investigate` passthrough for Wave 2 seeding.
 
 Light-lane outputs typically don't carry either of those — the canonical
-emits `null` / `[]`.
+emits `null` / `[]`. Schema check fires only on the deep lane.
 """
 from __future__ import annotations
 
@@ -73,7 +88,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import err_prompt, EXIT_OK, EXIT_VALIDATION, EXIT_SCORE_UNRECOVERABLE  # noqa: E402
+from _common import (  # noqa: E402
+    err_prompt,
+    validation_result_validator,
+    EXIT_OK,
+    EXIT_VALIDATION,
+    EXIT_SCORE_UNRECOVERABLE,
+)
 
 
 # ----- score coercion ----------------------------------------------------
@@ -238,6 +259,41 @@ def canonicalize(raw: dict, lane: str) -> dict:
         if lifted:
             vr = lifted
             notes.append("validation_result lifted from top-level fields")
+
+    # Schema-check the deep-lane validation_result after any top-level
+    # lift. Drift (missing sub-objects, alternative keys, malformed
+    # blast_radius shape) drops vr to None with an audit note rather
+    # than raising — downstream `artifact-patch.py --apply-decisions`
+    # would otherwise halt the whole batch on one drifted finding.
+    # Light lane is unchanged (vr stays None; nothing to check).
+    if lane == "deep" and vr is not None:
+        if not isinstance(vr, dict):
+            notes.append(
+                f"validation_result shape unrecoverable: expected object, got {type(vr).__name__}"
+            )
+            vr = None
+        else:
+            try:
+                validator = validation_result_validator()
+                errors = list(validator.iter_errors(vr))
+            except Exception as exc:  # pragma: no cover — defensive
+                errors = []
+                notes.append(f"validation_result schema-check skipped ({exc})")
+            if errors:
+                # Two sibling errors at the root (e.g. one additionalProperties
+                # plus one missing-required) both report absolute_path = [],
+                # so render a short message snippet alongside the path to
+                # keep the note informative. First two errors only — that's
+                # enough to identify the drift class in an audit trail.
+                bits = []
+                for e in errors[:2]:
+                    p = "/".join(str(x) for x in e.absolute_path) or "(root)"
+                    msg = (e.message or "").splitlines()[0][:80]
+                    bits.append(f"{p}: {msg}" if msg else p)
+                notes.append(
+                    "validation_result shape unrecoverable: " + "; ".join(bits)
+                )
+                vr = None
 
     related = raw.get("related_candidates_to_investigate", []) if lane == "deep" else []
     if not isinstance(related, list):

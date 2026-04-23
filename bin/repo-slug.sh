@@ -44,7 +44,9 @@ die_usage() { echo "ERROR: $1" >&2; usage; exit 64; }
 REPO_ROOT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --repo-root) REPO_ROOT="${2:-}"; shift 2 ;;
+        --repo-root)
+            [[ $# -ge 2 ]] || die_usage "--repo-root requires a value"
+            REPO_ROOT="${2:-}"; shift 2 ;;
         -h|--help)   usage; exit 0 ;;
         *)           die_usage "unknown arg '$1'" ;;
     esac

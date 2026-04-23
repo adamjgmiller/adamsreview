@@ -157,6 +157,31 @@ Prompt essence (per §19.5):
 > `"disproven"` or `"uncertain"`, omit the `validation_result` object
 > entirely (set it to `null` in the outer return). The orchestrator
 > only persists `validation_result` for confirmed findings.
+>
+> **Exact inner keys — no substitutions.** The canonical shape is
+> defined at `bin/schema-v1.json` lines 330-393 (`#/$defs/validation_result`
+> + `#/$defs/fix_proposal`). Required keys, verbatim:
+>
+> - `validation_result.evidence` (array of strings)
+> - `validation_result.blast_radius.writers` (array of strings)
+> - `validation_result.blast_radius.consumers` (array of strings)
+> - `validation_result.blast_radius.parallel_paths` (array of strings)
+> - `validation_result.blast_radius.invariants_at_stake` (array of strings)
+> - `validation_result.fix_proposal.approach` (string — non-empty when `decision == "confirmed"`)
+> - `validation_result.fix_proposal.files_to_modify` (array of `{file, what, why}` objects — each string, `file` non-empty)
+> - `validation_result.verification_context.how_to_verify_fix` (array of strings)
+> - `validation_result.verification_context.edge_cases_to_preserve` (array of strings)
+> - `validation_result.verification_context.what_would_break_if_incomplete` (array of strings)
+>
+> **Do NOT emit** alternative / renamed keys — the schema has
+> `additionalProperties: false`, and the orchestrator's
+> `parse-validator-result.py` will drop the whole `validation_result`
+> to `null` with a "shape unrecoverable" note if it sees any of:
+> `severity_assessment`, `exploitability`, `affected_locations`
+> (top-level alternative shapes); `files_planned`, `sketch`, `risk`,
+> `alternative_rejected` (fix-proposal alternative shapes). Pack that
+> information into `evidence[]`, `blast_radius.invariants_at_stake[]`,
+> and `fix_proposal.{approach,files_to_modify}` instead.
 
 ### 4.3. Wave 1 — light lane (Sonnet per candidate)
 

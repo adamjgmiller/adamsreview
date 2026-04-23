@@ -43,12 +43,24 @@ RECORD=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --review-dir) REVIEW_DIR="${2:-}"; shift 2 ;;
-        --phase)      PHASE="${2:-}"; shift 2 ;;
-        --name)       NAME="${2:-}"; shift 2 ;;
-        --summary)    SUMMARY="${2:-}"; shift 2 ;;
-        --elapsed)    ELAPSED="${2:-}"; shift 2 ;;
-        --record)     RECORD="${2:-}"; shift 2 ;;
+        --review-dir)
+            [[ $# -ge 2 ]] || die_usage "--review-dir requires a value"
+            REVIEW_DIR="${2:-}"; shift 2 ;;
+        --phase)
+            [[ $# -ge 2 ]] || die_usage "--phase requires a value"
+            PHASE="${2:-}"; shift 2 ;;
+        --name)
+            [[ $# -ge 2 ]] || die_usage "--name requires a value"
+            NAME="${2:-}"; shift 2 ;;
+        --summary)
+            [[ $# -ge 2 ]] || die_usage "--summary requires a value"
+            SUMMARY="${2:-}"; shift 2 ;;
+        --elapsed)
+            [[ $# -ge 2 ]] || die_usage "--elapsed requires a value"
+            ELAPSED="${2:-}"; shift 2 ;;
+        --record)
+            [[ $# -ge 2 ]] || die_usage "--record requires a value"
+            RECORD="${2:-}"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            die_usage "unknown arg '$1'" ;;
     esac

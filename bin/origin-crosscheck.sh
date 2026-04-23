@@ -64,8 +64,12 @@ CANDIDATES_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --comparison-ref) COMPARISON_REF="${2:-}"; shift 2 ;;
-        --candidates)     CANDIDATES_ARG="${2:-}"; shift 2 ;;
+        --comparison-ref)
+            [[ $# -ge 2 ]] || die_usage "--comparison-ref requires a value"
+            COMPARISON_REF="${2:-}"; shift 2 ;;
+        --candidates)
+            [[ $# -ge 2 ]] || die_usage "--candidates requires a value"
+            CANDIDATES_ARG="${2:-}"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *) die_usage "unknown arg '$1'" ;;
     esac

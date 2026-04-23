@@ -79,10 +79,18 @@ FIXTURES_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --pr)             PR_NUM="${2:-}"; shift 2 ;;
-        --reviewed-files) FILES_ARG="${2:-}"; shift 2 ;;
-        --comments)       COMMENTS_ARG="${2:-}"; shift 2 ;;
-        --fixtures-dir)   FIXTURES_DIR="${2:-}"; shift 2 ;;
+        --pr)
+            [[ $# -ge 2 ]] || die_usage "--pr requires a value"
+            PR_NUM="${2:-}"; shift 2 ;;
+        --reviewed-files)
+            [[ $# -ge 2 ]] || die_usage "--reviewed-files requires a value"
+            FILES_ARG="${2:-}"; shift 2 ;;
+        --comments)
+            [[ $# -ge 2 ]] || die_usage "--comments requires a value"
+            COMMENTS_ARG="${2:-}"; shift 2 ;;
+        --fixtures-dir)
+            [[ $# -ge 2 ]] || die_usage "--fixtures-dir requires a value"
+            FIXTURES_DIR="${2:-}"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *) die_usage "unknown arg '$1'" ;;
     esac

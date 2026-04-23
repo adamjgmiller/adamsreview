@@ -49,8 +49,12 @@ FILES_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --reviewed-sha)   REVIEWED_SHA="${2:-}"; shift 2 ;;
-        --reviewed-files) FILES_ARG="${2:-}"; shift 2 ;;
+        --reviewed-sha)
+            [[ $# -ge 2 ]] || die_usage "--reviewed-sha requires a value"
+            REVIEWED_SHA="${2:-}"; shift 2 ;;
+        --reviewed-files)
+            [[ $# -ge 2 ]] || die_usage "--reviewed-files requires a value"
+            FILES_ARG="${2:-}"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *)                die_usage "unknown arg '$1'" ;;
     esac

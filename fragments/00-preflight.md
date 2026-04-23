@@ -57,12 +57,17 @@ downstream lenses / blame. `freshness-gate.sh` owns remote detect, fetch,
 and behind-count; orchestrator owns `AskUserQuestion`.
 
 ```bash
+# Initialize preflight_warnings ONCE — prior-call warnings must survive
+# across a --after-choice re-invocation. The jq-extraction loop below
+# runs after EACH freshness-gate.sh call (first + any --after-choice)
+# and appends; it must not reset the array.
+preflight_warnings=()
+
 fg_out=$(freshness-gate.sh --base-branch "$base_branch" --head-branch "$head_branch")
 comparison_ref=$(echo "$fg_out" | jq -r '.comparison_ref // empty')
 base_freshness=$(echo "$fg_out" | jq -r '.base_freshness')
 remote_sha=$(echo "$fg_out" | jq -r '.remote_sha // empty')
 behind_count=$(echo "$fg_out" | jq -r '.behind_count // empty')
-preflight_warnings=()
 while IFS= read -r w; do
     [[ -n "$w" ]] && preflight_warnings+=("$w")
 done < <(echo "$fg_out" | jq -r '.preflight_warnings[]?')
@@ -74,7 +79,9 @@ to `trace.md` at 0.15 (after `trace_log_path` exists). If `base_freshness ==
 [drop when `ff_available: false`], (b) Compare against `origin/$base_branch`,
 (c) Proceed with stale local `$base_branch` (discouraged), (d) Abort; include
 `behind_count` in the prompt. Re-invoke `freshness-gate.sh ... --after-choice
-<a|b|c>` and re-run the same jq extractions on the new `fg_out`; a second
+<a|b|c>` and re-run the **same jq extractions** on the new `fg_out` — do NOT
+reset `preflight_warnings` (the array is initialized once above); the while
+loop appends any additional warnings to the prior-call set. A second
 `pending_user_gate` (non-FF on (a)) re-asks with only (b)/(c)/(d). (d) exits 0
 with a one-line message — no `review_dir` exists yet.
 
@@ -149,7 +156,10 @@ Run `gh pr view --json number,state,isDraft,url,author,headRefName,baseRefName`
     ```
   - Set `mode=pr`.
 - If it exits non-zero with "no pull requests found for branch" (or similar):
-  set `mode=local`, `pr_number=null`, `pr_state=null`, `pr_author=null`.
+  set `mode=local`, `pr_number=""`, `pr_state=""`, `pr_author=""` (empty-string
+  sentinels matching the `pr_state=""` branch above; the `${var:-}` expansions
+  at step 0.15's `artifact-seed.sh` call turn `""` into JSON null. Do NOT use
+  the literal string `null` — the helper rejects it at argument validation).
 - Any other `gh` error (auth, network): stop and surface stderr per §24.2.
 
 ### 0.5. Capture `review_started_at`

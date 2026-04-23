@@ -45,8 +45,12 @@ ARTIFACT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --tokens-log) TOKENS_LOG="${2:-}"; shift 2 ;;
-        --artifact)   ARTIFACT="${2:-}"; shift 2 ;;
+        --tokens-log)
+            [[ $# -ge 2 ]] || die_usage "--tokens-log requires a value"
+            TOKENS_LOG="${2:-}"; shift 2 ;;
+        --artifact)
+            [[ $# -ge 2 ]] || die_usage "--artifact requires a value"
+            ARTIFACT="${2:-}"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            die_usage "unknown arg '$1'" ;;
     esac

@@ -69,9 +69,15 @@ LOOKBACK_DAYS="365"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --comparison-ref) COMPARISON_REF="${2:-}"; shift 2 ;;
-        --reviewed-files) FILES_ARG="${2:-}"; shift 2 ;;
-        --lookback-days)  LOOKBACK_DAYS="${2:-}"; shift 2 ;;
+        --comparison-ref)
+            [[ $# -ge 2 ]] || die_usage "--comparison-ref requires a value"
+            COMPARISON_REF="${2:-}"; shift 2 ;;
+        --reviewed-files)
+            [[ $# -ge 2 ]] || die_usage "--reviewed-files requires a value"
+            FILES_ARG="${2:-}"; shift 2 ;;
+        --lookback-days)
+            [[ $# -ge 2 ]] || die_usage "--lookback-days requires a value"
+            LOOKBACK_DAYS="${2:-}"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *) die_usage "unknown arg '$1'" ;;
     esac

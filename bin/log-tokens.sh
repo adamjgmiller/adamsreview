@@ -46,14 +46,30 @@ LENS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --review-dir) REVIEW_DIR="${2:-}"; shift 2 ;;
-        --phase)      PHASE="${2:-}"; shift 2 ;;
-        --agent-role) ROLE="${2:-}"; shift 2 ;;
-        --agent-id)   AGENT_ID="${2:-}"; shift 2 ;;
-        --model)      MODEL="${2:-}"; shift 2 ;;
-        --tokens)     TOKENS="${2:-}"; shift 2 ;;
-        --finding-id) FINDING_ID="${2:-}"; shift 2 ;;
-        --lens)       LENS="${2:-}"; shift 2 ;;
+        --review-dir)
+            [[ $# -ge 2 ]] || die_usage "--review-dir requires a value"
+            REVIEW_DIR="${2:-}"; shift 2 ;;
+        --phase)
+            [[ $# -ge 2 ]] || die_usage "--phase requires a value"
+            PHASE="${2:-}"; shift 2 ;;
+        --agent-role)
+            [[ $# -ge 2 ]] || die_usage "--agent-role requires a value"
+            ROLE="${2:-}"; shift 2 ;;
+        --agent-id)
+            [[ $# -ge 2 ]] || die_usage "--agent-id requires a value"
+            AGENT_ID="${2:-}"; shift 2 ;;
+        --model)
+            [[ $# -ge 2 ]] || die_usage "--model requires a value"
+            MODEL="${2:-}"; shift 2 ;;
+        --tokens)
+            [[ $# -ge 2 ]] || die_usage "--tokens requires a value"
+            TOKENS="${2:-}"; shift 2 ;;
+        --finding-id)
+            [[ $# -ge 2 ]] || die_usage "--finding-id requires a value"
+            FINDING_ID="${2:-}"; shift 2 ;;
+        --lens)
+            [[ $# -ge 2 ]] || die_usage "--lens requires a value"
+            LENS="${2:-}"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            die_usage "unknown arg '$1'" ;;
     esac

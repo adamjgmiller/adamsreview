@@ -491,18 +491,74 @@ additionally reads the current content of every modified file):
 
 #### L5 — UX (Sonnet; skipped if `trivial_mode` or `user_facing == false`)
 
-Launch one `Agent` tool-use with `model: sonnet`. Before dispatching L5,
-the orchestrator Reads `fragments/lens-ux-reference.md` and embeds its
-contents into the sub-agent's prompt under the "UX reference" heading
-below. The Read happens only when L5 is in the lens-selection set from
-step 1.1 — when the lens is skipped (`trivial_mode` or
-`user_facing == false`), the reference file is never fetched.
+Launch one `Agent` tool-use with `model: sonnet`.
 
 Prompt essence (prepended with the shared invariants from step 1.2.1):
 
 > UX reference:
 >
-> <contents of `fragments/lens-ux-reference.md`>
+> # UX lens reference
+>
+> You are reviewing whether this diff produces a good user experience —
+> distinct from whether it is technically correct.
+>
+> ## What to check (when the diff is user-facing)
+>
+> **Destructive actions.** Does confirmation match blast radius? A single-click
+> that irreversibly destroys user data is a finding. A heavyweight typed-confirm
+> on something fully reversible is also a finding (wrong direction).
+>
+> **State coverage.** Are empty, loading, error, and in-progress states handled?
+> Missing empty states; generic "Loading..." with no progress on long operations;
+> errors that silently swallow; intermediate states the UI doesn't represent.
+>
+> **Feedback.** When the user acts, is it visibly clear the action worked (or
+> clear why it failed)? Actions that complete with no visible change; errors
+> that disappear before the user can read them; async ops with no progress.
+>
+> **Affordances.** Is it obvious what's interactive vs. static? Clickable things
+> that don't look clickable; non-clickable things that do; ambiguous icons
+> without labels; buttons whose label doesn't predict the action.
+>
+> **Keyboard & accessibility.** Escape closes modals; Enter submits; focus lands
+> sensibly (not on the destructive button by default); tab order matches visual
+> order; ARIA labels for icon-only controls; sufficient color contrast.
+>
+> **Copy.** Microcopy is clear, concise, and consistent with project voice.
+> Errors say what happened AND what the user can do. Button labels are verbs
+> describing the action, not generic "OK"/"Yes".
+>
+> **Diagnostic message quality.** When the diff adds or modifies a warning,
+> error, or toast — especially ones triggered by parsing, validation, or
+> input rejection — check whether the message helps the user diagnose and
+> fix the problem:
+>
+> - Does the message reveal the expected format when input is rejected?
+>   A `parseDate` that only accepts `MM/DD/YYYY` should say so in the
+>   warning, not "Invalid date."
+> - Does the message name the specific value that failed? "Invalid amount"
+>   is weaker than `"'abc' is not a valid amount — expected a number like
+>   42.50."`
+> - When upstream context is available (file path, row number, column name,
+>   field name, source system), is it in the message? A parser error that
+>   buries line number in debug logs while showing the user "Something went
+>   wrong" is a diagnostic-quality gap.
+> - For batch / buffered operations (flush-after-N-errors, debounced save),
+>   does an empty-buffer or mid-flush failure produce a generic message
+>   when a specific one is cheap? "Save failed" on an empty buffer suggests
+>   data loss the user didn't actually experience.
+>
+> Flag as `impact_type: "ux"`. Fix proposals should include concrete message-
+> text suggestions.
+>
+> **Visual consistency.** Uses the project's existing design tokens, CSS
+> variables, or utility classes rather than ad-hoc values. CLAUDE.md and the
+> existing codebase take precedence over generic examples above.
+>
+> ## Scope guard
+>
+> If the PR has no user-facing surface, return an empty list. Do not reach for
+> UX findings that don't apply.
 >
 > Also read the CLAUDE.md files in `$claude_md_paths` (project-specific UX
 > conventions take precedence over the generic reference above).
@@ -516,17 +572,54 @@ Prompt essence (prepended with the shared invariants from step 1.2.1):
 
 #### L6 — lightweight security (Sonnet; skipped if `trivial_mode`)
 
-Launch one `Agent` tool-use with `model: sonnet`. Before dispatching L6,
-the orchestrator Reads `fragments/lens-security-reference.md` and embeds
-its contents into the sub-agent's prompt under the "Security reference"
-heading below. Same lazy-load pattern as L5 — when L6 is skipped
-(`trivial_mode`), the reference file is never fetched.
+Launch one `Agent` tool-use with `model: sonnet`.
 
 Prompt essence (prepended with the shared invariants from step 1.2.1):
 
 > Security reference:
 >
-> <contents of `fragments/lens-security-reference.md`>
+> # Security lens reference
+>
+> You are doing a **lightweight** security scan on this diff. This is not a
+> full audit — flag issues where the code change creates or worsens a security
+> risk. Over-flag; Phase 4 will filter.
+>
+> ## Categories to check
+>
+> **Authorization & authentication.**
+> - New routes, API endpoints, or mutations without an auth check
+> - New fields exposed through responses that shouldn't be (e.g. internal IDs,
+>   credentials, PII)
+> - Permission checks that accept a broader role than intended
+> - Session handling changes (token lifetime, invalidation, refresh)
+>
+> **Input validation & injection.**
+> - User-controlled input concatenated into SQL, shell commands, or HTML without
+>   escaping/parameterization
+> - File paths built from user input without sanitization (path traversal)
+> - Regex or parser changes that accept previously-rejected malformed input
+>
+> **Secrets & sensitive data.**
+> - Hardcoded API keys, tokens, passwords, or connection strings
+> - Sensitive values logged (passwords, tokens, PII, auth headers)
+> - Debug output or error messages that leak internal structure or secrets
+>
+> **Cryptography.**
+> - New crypto primitives (if the project already has conventions, flag
+>   deviation; do not recommend specific algorithms beyond that)
+> - Random values used where cryptographic randomness is required
+>
+> **Cross-cutting security patterns.**
+> - Race conditions in access checks (TOCTOU)
+> - Error paths that bypass normal auth/validation flow
+> - New code that handles untrusted input and calls into a structural pattern
+>   the rest of the code assumes is trusted (structural-family reasoning)
+>
+> ## Scope guard
+>
+> If the diff touches no security-adjacent surface (pure UI tweak, pure test
+> refactor, etc.), return an empty list. Do not reach for security findings
+> that don't apply.
 >
 > If structural reasoning (similar to L2 — walking callers and writers)
 > suggests a security implication, flag it even when the immediate code

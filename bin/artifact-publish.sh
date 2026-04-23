@@ -79,14 +79,30 @@ DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --mode)       MODE="${2:-}"; shift 2 ;;
-        --review-id)  REVIEW_ID="${2:-}"; shift 2 ;;
-        --pr)         PR_NUM="${2:-}"; shift 2 ;;
-        --md-path)    MD_PATH="${2:-}"; shift 2 ;;
-        --comment-id) COMMENT_ID="${2:-}"; shift 2 ;;
-        --review-dir) REVIEW_DIR="${2:-}"; shift 2 ;;
-        --repo-slug)  REPO_SLUG="${2:-}"; shift 2 ;;
-        --branch)     BRANCH="${2:-}"; shift 2 ;;
+        --mode)
+            [[ $# -ge 2 ]] || die_usage "--mode requires a value"
+            MODE="${2:-}"; shift 2 ;;
+        --review-id)
+            [[ $# -ge 2 ]] || die_usage "--review-id requires a value"
+            REVIEW_ID="${2:-}"; shift 2 ;;
+        --pr)
+            [[ $# -ge 2 ]] || die_usage "--pr requires a value"
+            PR_NUM="${2:-}"; shift 2 ;;
+        --md-path)
+            [[ $# -ge 2 ]] || die_usage "--md-path requires a value"
+            MD_PATH="${2:-}"; shift 2 ;;
+        --comment-id)
+            [[ $# -ge 2 ]] || die_usage "--comment-id requires a value"
+            COMMENT_ID="${2:-}"; shift 2 ;;
+        --review-dir)
+            [[ $# -ge 2 ]] || die_usage "--review-dir requires a value"
+            REVIEW_DIR="${2:-}"; shift 2 ;;
+        --repo-slug)
+            [[ $# -ge 2 ]] || die_usage "--repo-slug requires a value"
+            REPO_SLUG="${2:-}"; shift 2 ;;
+        --branch)
+            [[ $# -ge 2 ]] || die_usage "--branch requires a value"
+            BRANCH="${2:-}"; shift 2 ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)            die_usage "unknown arg '$1'" ;;

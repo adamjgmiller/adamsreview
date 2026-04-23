@@ -39,8 +39,12 @@ FILES_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --repo-root) REPO_ROOT="${2:-}"; shift 2 ;;
-        --files)     FILES_ARG="${2:-}"; shift 2 ;;
+        --repo-root)
+            [[ $# -ge 2 ]] || die_usage "--repo-root requires a value"
+            REPO_ROOT="${2:-}"; shift 2 ;;
+        --files)
+            [[ $# -ge 2 ]] || die_usage "--files requires a value"
+            FILES_ARG="${2:-}"; shift 2 ;;
         -h|--help)   usage; exit 0 ;;
         *)           die_usage "unknown arg '$1'" ;;
     esac

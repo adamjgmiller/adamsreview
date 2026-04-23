@@ -69,11 +69,21 @@ TRANSCRIPT_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --artifact)        ARTIFACT="${2:-}"; shift 2 ;;
-        --since)           SINCE="${2:-}"; shift 2 ;;
-        --projects-root)   PROJECTS_ROOT="${2:-}"; shift 2 ;;
-        --cwd)             CWD="${2:-}"; shift 2 ;;
-        --transcript-dir)  TRANSCRIPT_DIR="${2:-}"; shift 2 ;;
+        --artifact)
+            [[ $# -ge 2 ]] || die_usage "--artifact requires a value"
+            ARTIFACT="${2:-}"; shift 2 ;;
+        --since)
+            [[ $# -ge 2 ]] || die_usage "--since requires a value"
+            SINCE="${2:-}"; shift 2 ;;
+        --projects-root)
+            [[ $# -ge 2 ]] || die_usage "--projects-root requires a value"
+            PROJECTS_ROOT="${2:-}"; shift 2 ;;
+        --cwd)
+            [[ $# -ge 2 ]] || die_usage "--cwd requires a value"
+            CWD="${2:-}"; shift 2 ;;
+        --transcript-dir)
+            [[ $# -ge 2 ]] || die_usage "--transcript-dir requires a value"
+            TRANSCRIPT_DIR="${2:-}"; shift 2 ;;
         -h|--help)         usage; exit 0 ;;
         *)                 die_usage "unknown arg '$1'" ;;
     esac

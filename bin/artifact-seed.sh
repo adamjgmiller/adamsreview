@@ -122,21 +122,51 @@ have_claude_md_paths=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --review-id)           REVIEW_ID="${2:-}";           shift 2 ;;
-        --review-started-at)   REVIEW_STARTED_AT="${2:-}";   shift 2 ;;
-        --reviewed-sha)        REVIEWED_SHA="${2:-}";        shift 2 ;;
-        --base-branch)         BASE_BRANCH="${2:-}";         shift 2 ;;
-        --head-branch)         HEAD_BRANCH="${2:-}";         shift 2 ;;
-        --mode)                MODE="${2:-}";                shift 2 ;;
-        --pr-state)            PR_STATE="${2:-}";            have_pr_state=1;            shift 2 ;;
-        --pr-number)           PR_NUMBER="${2:-}";           have_pr_number=1;           shift 2 ;;
-        --comment-id)          COMMENT_ID="${2:-}";          have_comment_id=1;          shift 2 ;;
-        --trivial-mode)        TRIVIAL_MODE="${2:-}";        shift 2 ;;
-        --base-context)        BASE_CONTEXT="${2:-}";        shift 2 ;;
-        --reviewed-files-all)  REVIEWED_FILES_ALL="${2:-}";  have_reviewed_files_all=1;  shift 2 ;;
-        --claude-md-paths)     CLAUDE_MD_PATHS="${2:-}";     have_claude_md_paths=1;     shift 2 ;;
-        --files-changed)       FILES_CHANGED="${2:-}";       shift 2 ;;
-        --lines-changed)       LINES_CHANGED="${2:-}";       shift 2 ;;
+        --review-id)
+            [[ $# -ge 2 ]] || die_usage "--review-id requires a value"
+            REVIEW_ID="${2:-}";           shift 2 ;;
+        --review-started-at)
+            [[ $# -ge 2 ]] || die_usage "--review-started-at requires a value"
+            REVIEW_STARTED_AT="${2:-}";   shift 2 ;;
+        --reviewed-sha)
+            [[ $# -ge 2 ]] || die_usage "--reviewed-sha requires a value"
+            REVIEWED_SHA="${2:-}";        shift 2 ;;
+        --base-branch)
+            [[ $# -ge 2 ]] || die_usage "--base-branch requires a value"
+            BASE_BRANCH="${2:-}";         shift 2 ;;
+        --head-branch)
+            [[ $# -ge 2 ]] || die_usage "--head-branch requires a value"
+            HEAD_BRANCH="${2:-}";         shift 2 ;;
+        --mode)
+            [[ $# -ge 2 ]] || die_usage "--mode requires a value"
+            MODE="${2:-}";                shift 2 ;;
+        --pr-state)
+            [[ $# -ge 2 ]] || die_usage "--pr-state requires a value"
+            PR_STATE="${2:-}";            have_pr_state=1;            shift 2 ;;
+        --pr-number)
+            [[ $# -ge 2 ]] || die_usage "--pr-number requires a value"
+            PR_NUMBER="${2:-}";           have_pr_number=1;           shift 2 ;;
+        --comment-id)
+            [[ $# -ge 2 ]] || die_usage "--comment-id requires a value"
+            COMMENT_ID="${2:-}";          have_comment_id=1;          shift 2 ;;
+        --trivial-mode)
+            [[ $# -ge 2 ]] || die_usage "--trivial-mode requires a value"
+            TRIVIAL_MODE="${2:-}";        shift 2 ;;
+        --base-context)
+            [[ $# -ge 2 ]] || die_usage "--base-context requires a value"
+            BASE_CONTEXT="${2:-}";        shift 2 ;;
+        --reviewed-files-all)
+            [[ $# -ge 2 ]] || die_usage "--reviewed-files-all requires a value"
+            REVIEWED_FILES_ALL="${2:-}";  have_reviewed_files_all=1;  shift 2 ;;
+        --claude-md-paths)
+            [[ $# -ge 2 ]] || die_usage "--claude-md-paths requires a value"
+            CLAUDE_MD_PATHS="${2:-}";     have_claude_md_paths=1;     shift 2 ;;
+        --files-changed)
+            [[ $# -ge 2 ]] || die_usage "--files-changed requires a value"
+            FILES_CHANGED="${2:-}";       shift 2 ;;
+        --lines-changed)
+            [[ $# -ge 2 ]] || die_usage "--lines-changed requires a value"
+            LINES_CHANGED="${2:-}";       shift 2 ;;
         -h|--help)             usage; exit 0 ;;
         *)                     die_usage "unknown arg '$1'" ;;
     esac
@@ -262,6 +292,14 @@ jq -n \
         subagent_tokens: {
             total: 0, invocations: 0, by_phase: {}, by_model: {},
             by_lens: {}, by_finding_phase4: {}
+        },
+        orchestrator_tokens: {
+            total_input: 0,
+            total_output: 0,
+            cache_read: 0,
+            cache_creation: 0,
+            turn_count: 0,
+            sessions: []
         },
         metrics: {
             phase_9_verified_pct: null,
