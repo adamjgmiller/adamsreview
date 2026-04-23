@@ -17,6 +17,10 @@ Flags (optional):
 - `--full` forces `trivial_mode=false` for this run (overrides the
   §13.9 doc/config-PR early-exit).
 
+**Read `fragments/_prelude-shared.md` before proceeding — it lists
+rules that apply to every phase below (sub-agent return handling,
+helper-script error-as-prompt).**
+
 ## Execution overview — read this first
 
 This command orchestrates DESIGN §4 Phases 0–6 in order. Each phase is
@@ -70,26 +74,10 @@ Every Agent tool-use specifies:
 in a single orchestrator turn. Waiting a turn between each dispatch
 serializes them. Always batch within one turn.
 
-**After every sub-agent returns**, immediately (before branching on its
-content):
-
-1. Extract the token count. The Agent tool result exposes a structured
-   `usage` field when available; otherwise parse
-   `<usage>total_tokens: N</usage>` from the sub-agent's output text.
-   On parse failure, log with `--tokens null` per §11.
-2. Call `log-tokens.sh` with the
-   phase, agent_role, agent_id, model, finding_id (when applicable),
-   and the tokens value. This invariant (§24.4) ensures every agent's
-   cost is accounted even when its output fails to parse.
-3. Parse the sub-agent's structured output per the fragment's schema.
-   Light repair (strip code fences, extract JSON block) is OK.
-   One retry allowed on parse failure with a prompt addendum.
-   Drop-with-note on second failure.
-
-**Helper-script errors** follow DESIGN §8.6's error-as-prompt convention:
-ERROR → context → Valid values → Did you mean → Action. When a helper
-exits non-zero, parse the stderr, adjust your inputs per the guidance,
-retry ONCE. Only escalate to the user if the second retry also fails.
+Token extraction, `log-tokens.sh`, structured-output parse, and
+helper-script error-as-prompt behaviour are all covered by rules §1
+and §2 of `fragments/_prelude-shared.md` — apply them after every
+sub-agent returns and on every non-zero helper exit.
 
 ## Effort is session-wide (§10.1)
 

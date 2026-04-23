@@ -19,6 +19,10 @@ decisions-log comment to the PR for audit.
 See DESIGN §28 for the full contract and `plans/walkthrough-mode.md`
 for the design rationale.
 
+**Read `fragments/_prelude-shared.md` before proceeding — it lists
+rules that apply to every step below (sub-agent return handling,
+helper-script error-as-prompt).**
+
 ## Arguments
 
 - `[threshold]` (optional, positional) — non-negative integer matching

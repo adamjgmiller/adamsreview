@@ -11,6 +11,10 @@ branch to `disposition=confirmed_mechanical`, recording full provenance in
 run. See DESIGN §27 for the contract and §5.2.1 for how the Phase 8
 eligibility bypass works.
 
+**Read `fragments/_prelude-shared.md` before proceeding — it lists
+rules that apply to every step below (sub-agent return handling,
+helper-script error-as-prompt).**
+
 ## Arguments
 
 - `<finding_id>` (required, positional) — matches `^F[0-9]+$`. The id

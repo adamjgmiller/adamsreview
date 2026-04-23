@@ -47,6 +47,10 @@ Optional flags:
   reviewer is confident the input is fresh, or when the artifact has
   many findings and the dedup call would be expensive.
 
+**Read `fragments/_prelude-shared.md` before proceeding — it lists
+rules that apply to every step below (sub-agent return handling,
+helper-script error-as-prompt).**
+
 ## Execution overview — read this first
 
 This command runs against an artifact that ALREADY exists. The
@@ -77,7 +81,7 @@ sequencing matters:
 
 ## Sub-agent dispatch pattern
 
-Two sub-agent dispatches in this command:
+Sub-agent dispatches in this command:
 
 - **Paste normalizer** (Sonnet, step 4) — only fires in paste mode.
 - **Dedup** (Sonnet, step 5) — only fires when `--no-dedup` is unset
@@ -86,22 +90,10 @@ Two sub-agent dispatches in this command:
   sub-agent per surviving candidate, dispatched in a single
   orchestrator turn for concurrency.
 
-After every sub-agent returns, immediately:
-
-1. Extract the token count from the structured `usage` field or the
-   `<usage>total_tokens: N</usage>` fallback; log `null` on parse
-   failure per §11.
-2. Call `log-tokens.sh` with phase,
-   agent_role, agent_id, model, finding_id (when applicable), and the
-   tokens value.
-3. Parse the sub-agent's structured output. Light repair (strip code
-   fences, extract JSON block) is OK. One retry allowed on parse
-   failure with a prompt addendum. Drop-with-note on second failure.
-
-Helper-script errors follow DESIGN §8.6's error-as-prompt convention:
-ERROR → context → Valid values → Did you mean → Action. Parse the
-stderr, adjust per the guidance, retry ONCE. Only escalate to the user
-if the second retry also fails.
+Token extraction, `log-tokens.sh`, structured-output parse, and
+helper-script error-as-prompt behaviour are all covered by rules §1
+and §2 of `fragments/_prelude-shared.md` — apply them after every
+sub-agent returns and on every non-zero helper exit.
 
 ## Execution
 
