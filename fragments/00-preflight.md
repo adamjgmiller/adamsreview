@@ -385,12 +385,14 @@ log paths:
 - `tokens_log_path = "$review_dir/tokens.jsonl"`
 - `trace_log_path = "$review_dir/trace.md"`
 
-Build the initial seed doc. Use `jq -n` so you don't have to hand-escape JSON:
-
-`base_context` encodes the §13.10 freshness reconciliation. `remote_sha`
-and `behind_count` may be null (offline / no-remote paths); the schema
-allows that. Build the subobject separately so the null cases stay
-clean:
+Build the initial seed doc. `base_context` encodes the §13.10 freshness
+reconciliation; `remote_sha` / `behind_count` may be null on the
+offline / no-remote paths. Build that sub-object inline (jq keeps the
+null cases clean), then hand the rest of the seed shape to
+`artifact-seed.sh`, which emits schema-shaped JSON for `artifact-patch.py
+--init -` to persist. `reviewer_sources: ["internal"]` seeds as Phase
+6.3a's pre-image; Phase 6.3a recomputes the authoritative list from
+`findings[].sources[]` union per DESIGN §6.
 
 ```bash
 base_context_json=$(jq -n \
@@ -404,58 +406,17 @@ base_context_json=$(jq -n \
     remote_sha: (if $remote_sha == "" then null else $remote_sha end),
     behind_count: (if $behind_count == "" then null else ($behind_count | tonumber) end)
   }')
-```
 
-Then the main seed:
-
-```bash
-jq -n \
-  --arg review_id "$review_id" \
-  --arg generated_at "$review_started_at" \
-  --arg review_started_at "$review_started_at" \
-  --arg reviewed_sha "$reviewed_sha" \
-  --arg base_branch "$base_branch" \
-  --arg head_branch "$head_branch" \
-  --arg mode "$mode" \
-  --arg pr_state "${pr_state:-}" \
-  --argjson pr_number "${pr_number:-null}" \
-  --argjson comment_id "${existing_comment_id:-null}" \
-  --argjson trivial_mode "$trivial_mode" \
-  --argjson base_context "$base_context_json" \
-  --argjson reviewed_files_all "$(printf '%s' "$reviewed_files_all" | jq -Rn '[inputs | select(length>0)]')" \
-  --argjson claude_md_paths "$(printf '%s' "$claude_md_paths" | jq -Rn '[inputs | select(length>0)]')" \
-  --argjson files_changed "$num_files" \
-  --argjson lines_changed "$lines_changed" \
-  '{
-    schema_version: 1,
-    review_id: $review_id,
-    generated_at: $generated_at,
-    review_started_at: $review_started_at,
-    reviewed_sha: $reviewed_sha,
-    base_branch: $base_branch,
-    head_branch: $head_branch,
-    mode: $mode,
-    pr_state: (if $pr_state == "" then null else $pr_state end),
-    pr_number: $pr_number,
-    comment_id: $comment_id,
-    trivial_mode: $trivial_mode,
-    base_context: $base_context,
-    reviewer_sources: ["internal"],    # seed — Phase 6.3a recomputes the authoritative list from findings[].sources[] union per DESIGN §6
-    reviewed_files_all: $reviewed_files_all,
-    claude_md_paths: $claude_md_paths,
-    findings: [],
-    cross_cutting_groups: [],
-    subagent_tokens: {
-      total: 0, invocations: 0, by_phase: {}, by_model: {},
-      by_lens: {}, by_finding_phase4: {}
-    },
-    metrics: {
-      phase_9_verified_pct: null,
-      required_followup: null,
-      time_elapsed_seconds: null,
-      pr_size_buckets: {files_changed: $files_changed, lines_changed: $lines_changed}
-    }
-  }' \
+artifact-seed.sh \
+  --review-id "$review_id" --review-started-at "$review_started_at" \
+  --reviewed-sha "$reviewed_sha" \
+  --base-branch "$base_branch" --head-branch "$head_branch" \
+  --mode "$mode" --pr-state "${pr_state:-}" \
+  --pr-number "${pr_number:-}" --comment-id "${existing_comment_id:-}" \
+  --trivial-mode "$trivial_mode" --base-context "$base_context_json" \
+  --reviewed-files-all "$reviewed_files_all" \
+  --claude-md-paths "$claude_md_paths" \
+  --files-changed "$num_files" --lines-changed "$lines_changed" \
   | artifact-patch.py --init - --path "$artifact_path"
 ```
 

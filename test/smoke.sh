@@ -4006,6 +4006,97 @@ else
     fail "TC-3: expected true/docs_only; got mode=$tc3_mode reason=$tc3_reason"
 fi
 
+# ------------------------------------------------------------------ AS-* artifact-seed.sh
+# Stage 4.A.3 — Phase 0.15 artifact seed construction extracted into a
+# helper. Covers happy-path (seed schema-validates via `artifact-patch.py
+# --init -` and carries the expected top-level shape), missing-required-
+# arg failure (error-as-prompt stderr + exit 64), and malformed
+# `--base-context` failure (error-as-prompt stderr + exit 1).
+
+AS_DIR="$WORK/artifact-seed"
+mkdir -p "$AS_DIR"
+
+# AS-1: happy-path — helper output satisfies schema-v1.json via
+# `artifact-patch.py --init -`, and the resulting artifact carries the
+# expected top-level fields (schema_version, review_id, mode, nullable
+# comment_id persisted as null, reviewer_sources seeded to ["internal"],
+# pr_size_buckets nested under metrics).
+as1_base_ctx='{"freshness":"fresh","comparison_ref":"main","remote_sha":"def5678","behind_count":0}'
+as1_art="$AS_DIR/as1.json"
+as1_err="$AS_DIR/as1.err"
+if "$TOOLS/artifact-seed.sh" \
+    --review-id "rev_01HXAS1TESTIDENTIFIER" \
+    --review-started-at "2026-04-22T12:34:56Z" \
+    --reviewed-sha "abc1234" \
+    --base-branch "main" --head-branch "feature/foo" \
+    --mode "pr" --pr-state "open" \
+    --pr-number "42" --comment-id "" \
+    --trivial-mode "false" --base-context "$as1_base_ctx" \
+    --reviewed-files-all "$(printf 'a.py\nb.py\n')" \
+    --claude-md-paths "$(printf '/CLAUDE.md\n')" \
+    --files-changed "2" --lines-changed "10" \
+    | "$TOOLS/artifact-patch.py" --init - --path "$as1_art" 2>"$as1_err" >/dev/null; then
+    as1_schema=$(jq -r '.schema_version' "$as1_art")
+    as1_rid=$(jq -r '.review_id' "$as1_art")
+    as1_mode=$(jq -r '.mode' "$as1_art")
+    as1_cid=$(jq -r '.comment_id' "$as1_art")
+    as1_rs=$(jq -r '.reviewer_sources | join(",")' "$as1_art")
+    as1_files=$(jq -r '.metrics.pr_size_buckets.files_changed' "$as1_art")
+    if [[ "$as1_schema" == "1" && "$as1_rid" == "rev_01HXAS1TESTIDENTIFIER" \
+        && "$as1_mode" == "pr" && "$as1_cid" == "null" \
+        && "$as1_rs" == "internal" && "$as1_files" == "2" ]]; then
+        pass "AS-1 (§0.15): happy-path — seed schema-validates via --init and carries expected top-level shape"
+    else
+        fail "AS-1: shape mismatch — schema=$as1_schema rid=$as1_rid mode=$as1_mode cid=$as1_cid rs=$as1_rs files=$as1_files"
+    fi
+else
+    fail "AS-1: --init rejected helper output" "$(cat "$as1_err" 2>/dev/null)"
+fi
+
+# AS-2: missing-required-arg — omit --review-started-at; expect usage
+# error (exit 64) with error-as-prompt stderr (`ERROR:` + `Usage:`).
+as2_err="$AS_DIR/as2.err"
+"$TOOLS/artifact-seed.sh" \
+    --review-id "rev_abc" \
+    --reviewed-sha "abc1234" \
+    --base-branch "main" --head-branch "hb" \
+    --mode "pr" --pr-state "" --pr-number "" --comment-id "" \
+    --trivial-mode "false" \
+    --base-context '{"freshness":"fresh","comparison_ref":"main","remote_sha":null,"behind_count":null}' \
+    --reviewed-files-all "" --claude-md-paths "" \
+    --files-changed "0" --lines-changed "0" \
+    >/dev/null 2>"$as2_err"
+as2_rc=$?
+if [[ "$as2_rc" == "64" ]] \
+    && grep -q '^ERROR: --review-started-at is required' "$as2_err" \
+    && grep -q '^Usage: ' "$as2_err"; then
+    pass "AS-2 (§0.15): missing --review-started-at → exit 64 + error-as-prompt stderr"
+else
+    fail "AS-2: expected rc=64 with ERROR/Usage stderr; got rc=$as2_rc" "$(cat "$as2_err" 2>/dev/null)"
+fi
+
+# AS-3: malformed --base-context — not JSON; expect validation error
+# (exit 1) with error-as-prompt stderr (`ERROR:` + `Action:`).
+as3_err="$AS_DIR/as3.err"
+"$TOOLS/artifact-seed.sh" \
+    --review-id "rev_abc" \
+    --review-started-at "2026-04-22T00:00:00Z" \
+    --reviewed-sha "abc1234" \
+    --base-branch "main" --head-branch "hb" \
+    --mode "pr" --pr-state "" --pr-number "" --comment-id "" \
+    --trivial-mode "false" --base-context "not-json" \
+    --reviewed-files-all "" --claude-md-paths "" \
+    --files-changed "0" --lines-changed "0" \
+    >/dev/null 2>"$as3_err"
+as3_rc=$?
+if [[ "$as3_rc" == "1" ]] \
+    && grep -q '^ERROR: --base-context must be a JSON object' "$as3_err" \
+    && grep -q '^Action: ' "$as3_err"; then
+    pass "AS-3 (§0.15): malformed --base-context → exit 1 + error-as-prompt stderr"
+else
+    fail "AS-3: expected rc=1 with ERROR/Action stderr; got rc=$as3_rc" "$(cat "$as3_err" 2>/dev/null)"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
