@@ -94,18 +94,21 @@ During the 2026-04-22 run, the `!include` preprocessor persisted Phases 0, 1.5, 
 
 Items surfaced during in-session execution or filed as GitHub issues that aren't in `plans/post-conversion-ideas.md`. FU-1..FU-3 came from the 2026-04-22 session (journaled in `plans/post-plugin-improvements.md` §6 close-out); P2 and P3 came from the 2026-04-19 ray-finance run and were filed as GH issue #2 on 2026-04-20.
 
-### FU-1 — Transcluded-fragment `allowed-tools` gap (extend Project C's #21 fix)
+### FU-1 — Transcluded-fragment `allowed-tools` gap (extend Project C's #21 fix) *(CLOSED 2026-04-23)*
 
 Project C closed #21 by granting `Bash(line-range-check.sh:*)` in `commands/review.md` frontmatter. During that work the Builder noted that `assign-finding-ids.sh` and `origin-crosscheck.sh` are also invoked bare in transcluded fragments (`fragments/01-detection.md`, `fragments/02-ensemble-adapter.md`) and are likewise missing from `commands/review.md` `allowed-tools` — same class of pre-existing gap as #21.
 
-**Fix:** one-line addition each to `commands/review.md` `allowed-tools`:
+**Fix (shipped):** one-line addition each to `commands/review.md` `allowed-tools`:
 ```
 Bash(assign-finding-ids.sh:*)
 Bash(origin-crosscheck.sh:*)
 ```
 
-- **Effort:** S. Literally two lines + a smoke assertion mirroring the one that covers #21's `line-range-check.sh` grant.
-- **Trigger:** if a permission prompt interrupts a review run for one of these, OR bundle with any future `commands/review.md` frontmatter touch.
+Smoke assertion `PF-INT-5` was already parameterized over three helpers (Shape A); extended the loop to cover both new grants — assertion count unchanged, coverage broadened from 3 → 5 Phase 1 detection helpers.
+
+- **Effort:** S (realized). Two-line diff in `commands/review.md` frontmatter + 2-line edit to `test/smoke.sh` PF-INT-5 loop.
+- **Commit:** `36b2481` on branch `FU1_P3` (bundled with P3 below).
+- **Blast-radius verified:** `commands/fix.md` already grants both helpers; `commands/add.md` grants `assign-finding-ids.sh` (doesn't invoke `origin-crosscheck.sh`); `walkthrough.md` / `promote.md` don't invoke either. No follow-up gaps.
 
 ### FU-2 — Broader `parse-with-repair.py` call-site migration
 
@@ -136,18 +139,20 @@ Phase 3 `demote_rate` + `score_phase3_histogram` are now in `phases.jsonl` on ev
 - **Effort:** M. New fragment + prompt tuning + one smoke assertion + a fixture.
 - **Trigger:** next time a fix-introduced bug resurfaces in a later review on one of your real projects — a third observation in the wild would make the class persistent rather than incidental. If ensemble becomes default (GH #1) and Codex/CR reliably catch these via L7 + ensemble normalizer, this trigger moves further out.
 
-### P3 — Root-cause L5-ux line-range hallucination (from GH #2)
+### P3 — Root-cause L5-ux line-range hallucination (from GH #2) *(CLOSED 2026-04-23 — prompt-side invariant shipped)*
 
 **Source:** GH issue #2. On the ray-finance run, L5-ux contributed 4 unique findings; 3 had `line_range` past the file's actual end (file 1042 lines, ranges 1815-1826 / 1912-1916 / 1941-1960). Phase 4 validators still confirmed the underlying claims because they re-read files for the claim pattern — but a 75% hallucination rate on unique contributions in a single run is concerning.
 
-**Status:** `bin/line-range-check.sh` (Phase 1 step 2 in `fragments/01-detection.md:762-778`) silently drops overshoot ranges, which means real findings get filtered out. This item is about preventing the bad output at the source, not filtering after the fact.
+**Original status:** `bin/line-range-check.sh` (Phase 1 step 2 in `fragments/01-detection.md`) silently drops overshoot ranges, which means real findings get filtered out. This item is about preventing the bad output at the source, not filtering after the fact.
 
-**Direction:** investigation-first. Re-run L5-ux in isolation against the ray-finance snapshot with trace enabled; inspect raw output to identify where the bogus line numbers come from. Hypotheses: Sonnet confusing unified-diff hunk headers (`@@ -a,b +c,d @@`) with absolute new-file line numbers; or under token pressure on a large diff, summarizing the region and guessing positional numbers. Fix is likely either (a) reformatting lens input (feed full-file snapshots, not just diff hunks), or (b) tightening the prompt to force a post-generation self-verification step ("for every candidate, verify `line_range[0..1]` lies within the actual file; reject otherwise").
+**Resolution (investigation + fix, 2026-04-23).** `Explore` sub-agent inspected `tokens.jsonl` from `rev_01KPMBB6KR5P19N4WHCHNFHXZE` (2026-04-20 re-run of ray-finance `feat/import-apple`). Root cause: **classification (a) — diff-hunk-header confusion.** The hallucinated ranges exactly match `[start, start+span]` arithmetic from typical unified-diff hunk headers like `@@ -1815,12 +1815,12 @@`. L5-ux (and potentially any lens under token pressure) was treating hunk-header line numbers as file-absolute — the L5 prompt had no explicit distinction. Non-L5 lenses on the same file cited in-range lines, so the failure was lens-behavioral, not input-structural.
 
-**Surfaces:** investigation-only at first. If the fix is prompt-side, `fragments/01-detection.md` §L5 prompt. If input-side, the L5 dispatch in the same fragment.
+Fix landed the normative invariant in `fragments/01-detection.md` §1.2.1 **shared-lens-invariants blockquote** so every lens (L1..L7) receives it, not just L5. Three load-bearing clauses: (a) `line_range` is file-absolute + counted from 1, (b) `line_range[1] <= file's total line count`, (c) do not copy numbers inside `@@ -a,b +c,d @@` verbatim. `bin/line-range-check.sh` remains as the runtime downstream filter (preventive + corrective, complementary).
 
-- **Effort:** S–M. Investigation first (raw outputs captured in the prior run's `tokens.jsonl`); fix is likely a small prompt change once the cause is known.
-- **Trigger:** next review where `line-range-check.sh` emits more than one `lens_hallucinated_line_range:` audit line attributed to L5-ux. First such recurrence moves the fix from "nice to have" to "root-cause now."
+- **Commit:** `3a8f64e` on branch `FU1_P3` (bundled with FU-1 above).
+- **Smoke coverage:** new `LR-6` assertion in `test/smoke.sh` (Shape A parameterized grep) checks all three clauses are present in the `fragments/01-detection.md` blockquote.
+- **Effort realized:** S. +9-line prompt addition + +23-line smoke assertion.
+- **Residual monitoring trigger:** next review where `line-range-check.sh` emits `lens_hallucinated_line_range:` audit lines despite the invariant being in place indicates the prompt fix is insufficient; escalate to input-shape reformatting (the hypothesis-(a) path from the original Direction paragraph — feed full-file snapshots instead of raw diff hunks).
 
 ---
 
