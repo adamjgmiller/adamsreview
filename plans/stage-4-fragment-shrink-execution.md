@@ -256,10 +256,12 @@ After 4.A.0 lands, every fragment is reached via `Read`, not `!include`. Downstr
 
 ## §4 — Progress ledger
 
-**Next pending step:** `4.A.0`
+**Next pending step:** `4.A.1`
 
 ### Log
 
 *(Append one entry per completed step. Format: `[YYYY-MM-DDTHH:MMZ] <step-id> rounds=<n> commit=<sha> notes=<...>`.)*
 
 - `[2026-04-23T04:35Z] 4.0 rounds=1 commit=84c96ee notes=Decision: (c) manifest-style command bodies. Research conclusive via Claude Code docs + GitHub #17944 (persist-to-disk threshold ignores BASH_MAX_OUTPUT_LENGTH post-v2.1.2, ~10 KB on current versions replaces preprocessor output with ~2 KB <persisted-output> preview). 7 fragments already over 10 KB. Seven fragments already over 10 KB makes (a) non-durable; (b) works mechanically but locks in !include long-term and doesn't help 4.C; (c) sidesteps the preprocessor and makes 4.C fall out trivially. Accepted review's 1 minor finding inline (stale §4.C prose framing (a)/(c) as live alternatives — rewrote to reference chosen (c) with Appendix A backref).`
+- `[2026-04-23T04:35Z] scope-expand commit=f4596e4 notes=User approved Option A (insert 4.A.0 — Manifest-style conversion before helper extractions) after 4.0 surfaced that the (c) decision requires a discrete !include→Read conversion step that the original §3 manifest didn't list. Added 4.A.0 entry + a "Context for all downstream steps (post-4.A.0)" block so later build-agent dispatches know fragments are now Read-loaded, not inlined. Tightened 4.B.1 scope (phase directives already converted by 4.A.0) and simplified 4.C action description.`
+- `[2026-04-23T05:10Z] 4.A.0 rounds=1 commit=5b95bb6 notes=Converted 13 !include sites across 5 command files to manifest-style Read directives; removed Bash(include:*) from all 5 allowed-tools grants (none still use !include post-conversion — CLAUDE.md Op-Rule 10 now stale, flagged for 4.Z); updated stale execution-overview prose in review.md, fix.md, walkthrough.md, add.md. Smoke 236/236 unchanged. Review leg returned 2 minor findings, both accepted without re-round: (1) conditional Phase 1.5 directive skips 02-ensemble-adapter.md's own "Phase 1.5 skipped" trace-log line on non-ensemble runs — cosmetic audit-trail drift, not a behavior change. (2) fragments/01-detection.md lines 454-458, 480-481 still describe !`include lens-ux-reference.md` being "inlined by the top-level command" — already stale pre-4.A.0 (nested !include inside fragment bodies were never recursively expanded; docs confirm single-pass substitution), and 4.C will rewrite these sites anyway. Smoke flake caught once: parse-with-repair.py PR-1 fails when uv's "Installed 1 package" first-run message leaks into stdout; re-running passes cleanly. Unrelated to this step — pre-existing issue.`
