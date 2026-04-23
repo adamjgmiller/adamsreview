@@ -3868,6 +3868,102 @@ else
     fail "PF-INT-5: missing Bash grants for: ${rh_missing[*]}"
 fi
 
+# ------------------------------------------------------------------ FG-* freshness-gate.sh
+# Stage 4.A.1 — Phase 0.2a freshness reconciliation extracted into a
+# helper. Covers happy path (clean remote, zero behind), no-remote case,
+# and fetch-failure case.
+
+FG_DIR="$WORK/freshness-gate"
+
+# FG-1: happy path — origin exists, local base is up-to-date, behind=0.
+mkdir -p "$FG_DIR/fg1/origin"
+(
+    cd "$FG_DIR/fg1/origin"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email smoke@example.com
+    git config user.name smoke
+    printf 'a\n' > f.txt
+    git add f.txt && git commit --quiet -m "initial"
+)
+git clone --quiet "$FG_DIR/fg1/origin" "$FG_DIR/fg1/repo" 2>/dev/null
+(
+    cd "$FG_DIR/fg1/repo"
+    git config user.email smoke@example.com
+    git config user.name smoke
+    git checkout --quiet -b feat
+    printf 'b\n' > f.txt
+    git commit --quiet -am "feature"
+)
+out=$(cd "$FG_DIR/fg1/repo" && "$TOOLS/freshness-gate.sh" \
+    --base-branch main --head-branch feat 2>/dev/null)
+fg1_freshness=$(echo "$out" | jq -r '.base_freshness')
+fg1_compref=$(echo "$out" | jq -r '.comparison_ref')
+fg1_behind=$(echo "$out" | jq -r '.behind_count')
+fg1_warn_len=$(echo "$out" | jq '.preflight_warnings | length')
+if [[ "$fg1_freshness" == "fresh" && "$fg1_compref" == "main" \
+    && "$fg1_behind" == "0" && "$fg1_warn_len" == "0" ]]; then
+    pass "FG-1 (§13.10): happy path — origin fresh, behind=0 → base_freshness=fresh"
+else
+    fail "FG-1: expected fresh/main/0/[]; got freshness=$fg1_freshness compref=$fg1_compref behind=$fg1_behind warn_len=$fg1_warn_len"
+fi
+
+# FG-2: no-remote case — repo has no `origin` remote at all.
+mkdir -p "$FG_DIR/fg2"
+(
+    cd "$FG_DIR/fg2"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email smoke@example.com
+    git config user.name smoke
+    printf 'a\n' > f.txt
+    git add f.txt && git commit --quiet -m "initial"
+    git checkout --quiet -b feat
+    printf 'b\n' > f.txt
+    git commit --quiet -am "feature"
+)
+out=$(cd "$FG_DIR/fg2" && "$TOOLS/freshness-gate.sh" \
+    --base-branch main --head-branch feat 2>/dev/null)
+fg2_freshness=$(echo "$out" | jq -r '.base_freshness')
+fg2_compref=$(echo "$out" | jq -r '.comparison_ref')
+fg2_remote_sha=$(echo "$out" | jq -r '.remote_sha')
+fg2_behind=$(echo "$out" | jq -r '.behind_count')
+if [[ "$fg2_freshness" == "no_remote" && "$fg2_compref" == "main" \
+    && "$fg2_remote_sha" == "null" && "$fg2_behind" == "null" ]]; then
+    pass "FG-2 (§13.10): no-remote case — base_freshness=no_remote, remote_sha/behind_count null"
+else
+    fail "FG-2: expected no_remote/main/null/null; got freshness=$fg2_freshness compref=$fg2_compref rsha=$fg2_remote_sha behind=$fg2_behind"
+fi
+
+# FG-3: fetch-failure case — `origin` remote points at a nonexistent path.
+mkdir -p "$FG_DIR/fg3"
+(
+    cd "$FG_DIR/fg3"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email smoke@example.com
+    git config user.name smoke
+    printf 'a\n' > f.txt
+    git add f.txt && git commit --quiet -m "initial"
+    git remote add origin "$FG_DIR/fg3/nonexistent_remote_xyz"
+    git checkout --quiet -b feat
+    printf 'b\n' > f.txt
+    git commit --quiet -am "feature"
+)
+out=$(cd "$FG_DIR/fg3" && "$TOOLS/freshness-gate.sh" \
+    --base-branch main --head-branch feat 2>/dev/null)
+fg3_freshness=$(echo "$out" | jq -r '.base_freshness')
+fg3_compref=$(echo "$out" | jq -r '.comparison_ref')
+fg3_warn_len=$(echo "$out" | jq '.preflight_warnings | length')
+fg3_warn_head=$(echo "$out" | jq -r '.preflight_warnings[0] // ""')
+if [[ "$fg3_freshness" == "no_fetch" && "$fg3_compref" == "main" \
+    && "$fg3_warn_len" == "1" ]] \
+    && echo "$fg3_warn_head" | grep -q '^fetch_failed '; then
+    pass "FG-3 (§13.10): fetch-failure case — base_freshness=no_fetch, fetch_failed warning buffered"
+else
+    fail "FG-3: expected no_fetch/main/warn_len=1/'fetch_failed ...'; got freshness=$fg3_freshness compref=$fg3_compref warn_len=$fg3_warn_len warn_head='$fg3_warn_head'"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
