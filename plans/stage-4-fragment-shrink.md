@@ -1,8 +1,6 @@
 # Stage 4 plan — Fragment shrink + helper externalization
 
-**Status:** not started. Revised 2026-04-22 after a validation pass — see commit log on this file for the pre-revision version.
-
-**Plan-approval round-trip required** before execution — non-trivial representational change across many files.
+**Status:** closed 2026-04-23. Commit range `84c96ee..f9ccda0` on branch `stage-4-fragment-shrink` (close-out `e1af3e9`; `f9ccda0` is a post-close self-review reconcile). See Appendix B for the measurement snapshot and `plans/stage-4-fragment-shrink-execution.md` §4 for the per-step ledger. Original draft was 2026-04-19, revised 2026-04-22 after a validation pass (see commit log on this file); the scope below is what was executed.
 
 ---
 
@@ -203,7 +201,7 @@ The observed failure mode — silent 2 KB preview with no error surface — is s
 
 ## Appendix B — Close-out measurement
 
-Stage 4 commit range: `84c96ee..0179791` (20 commits on branch `stage-4-fragment-shrink`). Populated 2026-04-23.
+Stage 4 commit range: `84c96ee..f9ccda0` (21 commits on branch `stage-4-fragment-shrink`; close-out at `e1af3e9`, `f9ccda0` is a post-close self-review reconcile). Appendix B populated 2026-04-23.
 
 ### Command invocation cost
 
@@ -240,9 +238,9 @@ Under 4.0's chosen (c) manifest-style, the command file is what gets inlined at 
 
 ### Smoke assertion delta
 
-**Before (4aa0267):** 236 assertions. **After (Stage 4 close):** 246 assertions (+10).
+**Before (4aa0267):** 236 assertions. **After (Stage 4 close, e1af3e9):** 246 assertions (+10). **After post-close code-review reconcile (f9ccda0):** 249 assertions (+3 more on top of close).
 
-Breakdown of additions:
+Breakdown of additions through close (e1af3e9):
 - 4.A.0 manifest conversion: 0 (pure restructuring; WT-5 grep survived unchanged).
 - 4.A.1 freshness-gate: +3 (`FG-1`, `FG-2`, `FG-3`).
 - 4.A.2 trivial-check: +3 (`TC-1`, `TC-2`, `TC-3`).
@@ -251,7 +249,9 @@ Breakdown of additions:
 - 4.B.1 prelude: +0.
 - 4.B.2 lens invariants: +0.
 - 4.B.3 post-fix compression: +0 (but caught two smoke regressions from reflow-driven literal-grep breakage, both fixed).
-- 4.C lens-reference lazy-load: +1 (`FR-LENS-REF-LAZY-1`).
+- 4.C lens-reference lazy-load: +1 (`FR-LENS-REF-LAZY-1`, since renamed to `FR-LENS-REF-INLINE-1` by the f9ccda0 reconcile).
+
+Post-close additions (f9ccda0 — addressed findings from the self-reviewed `/adamsreview:review` run against the branch): +3, covering hardening of the newly-extracted helpers (`bin/artifact-seed.sh`, `bin/freshness-gate.sh`, `bin/trivial-check.sh`) plus related fixes across existing helpers.
 
 ### Headline wins
 

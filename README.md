@@ -29,7 +29,7 @@ Steps 2–4 can land days or weeks after step 1 — the review artifact persists
 
 - **`CLAUDE.md`** — operational guide for Claude Code sessions working in this repo. Self-contained for routine work; read first on a fresh session.
 - **`docs/archive/`** — frozen design + build docs (2026-04-19 onward). `DESIGN.md` (rev 8) is the original normative spec; `BUILD.md` is the stage-by-stage journal. Not maintained; consult only for historical rationale behind a specific decision. See `docs/archive/README.md`.
-- **`plans/`** — per-stage plan files. Stages 1–3 + 2.5/2.6/2.7/2.8 are closed. `stage-4-fragment-shrink.md` is the one live plan.
+- **`plans/`** — per-stage plan files. All original-roadmap stages are closed (1–3 + 2.5/2.6/2.7/2.8, plugin-conversion, post-plugin-improvements, stage-4-fragment-shrink). Forward-looking work lives in `plans/backlog.md`.
 
 ## Dependencies
 
@@ -195,4 +195,4 @@ or the `$env:CLAUDE_CODE_GIT_BASH_PATH = ...` equivalent in PowerShell.
 
 ## Status
 
-`/adamsreview:review`, `/adamsreview:add`, `/adamsreview:walkthrough`, `/adamsreview:fix`, and `/adamsreview:promote` are all built and in use. Stages 1, 2, 2.5, 2.6, 2.7, 2.8, and 3 closed between 2026-04-17 and 2026-04-18 (see `docs/archive/BUILD.md` for the full history); walkthrough merged 2026-04-19 from branch `walkthrough-mode`; `/adamsreview:add` was added 2026-04-20 on branch `review-add` (plan: `plans/review-add.md`); plugin conversion (repackaging as a Claude Code plugin, `/adams-review-<stem>` → `/adamsreview:<stem>` namespacing) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`). The only unexecuted scope from the original roadmap is Stage 4 (fragment shrink — `plans/stage-4-fragment-shrink.md`), still pending plan approval.
+`/adamsreview:review`, `/adamsreview:add`, `/adamsreview:walkthrough`, `/adamsreview:fix`, and `/adamsreview:promote` are all built and in use. Stages 1, 2, 2.5, 2.6, 2.7, 2.8, and 3 closed between 2026-04-17 and 2026-04-18 (see `docs/archive/BUILD.md` for the full history); walkthrough merged 2026-04-19 from branch `walkthrough-mode`; `/adamsreview:add` was added 2026-04-20 on branch `review-add` (plan: `plans/review-add.md`); plugin conversion (repackaging as a Claude Code plugin, `/adams-review-<stem>` → `/adamsreview:<stem>` namespacing) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`); Stage 4 (fragment shrink — manifest-style command bodies, helper extractions, prose compression) closed 2026-04-23 on branch `stage-4-fragment-shrink` (plan: `plans/stage-4-fragment-shrink.md`). All original-roadmap scope is now executed; forward-looking work lives in `plans/backlog.md`.

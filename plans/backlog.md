@@ -14,7 +14,7 @@ Forward-looking consolidation of everything still on the adamsreview plugin's ba
 | Class | Items | Unblocks when |
 |---|---|---|
 | **§1. Data-driven decisions** | #1B, #1C, #24 (threshold-decision portion) | ~10 reviews of Phase 3 telemetry data accumulate (instrumentation shipped 2026-04-22 in `ee81715`) |
-| **§2. Already-planned, dedicated session** | #2, #14 (Stage 4 fragment shrink) | Fragment count feels like it's costing more than it saves; see `plans/stage-4-fragment-shrink.md` for the approval round-trip |
+| **§2. Already-planned, dedicated session** | #2, #14 (Stage 4 fragment shrink) | *Closed 2026-04-23* — commit range `84c96ee..f9ccda0` (close-out commit `e1af3e9`; `f9ccda0` is a post-close self-review reconcile). Body kept for reference; Appendix B in the plan has the measurement snapshot |
 | **§3. Session follow-ups** | Transcluded-fragment `allowed-tools` gap; broader `parse-with-repair.py` migration; telemetry data collection | Surfaced during 2026-04-22 execution; each has its own per-item trigger |
 | **§4. Probably leave alone** | #3, #4, #5, #6, #7, #8, #17 | Per-item "probably never" triggers — documented for completeness, not expected to fire |
 | **§5. Big refactors, unlikely to be worth it** | #1D, #1E | Cost becomes irrelevant / full architectural rewrite motivated |
@@ -70,7 +70,7 @@ The 2026-04-22 run had 24/37 post-dedup candidates land `below_gate` (65%). Phas
 
 Consolidate fragments where the boundary is arbitrary; extract cohesive Bash snippets into helper scripts with ~10-line contracts.
 
-**Detailed plan:** [`plans/stage-4-fragment-shrink.md`](./stage-4-fragment-shrink.md) — executed per `plans/stage-4-fragment-shrink-execution.md` ledger. **Commit range:** `84c96ee..0179791` on branch `stage-4-fragment-shrink` (20 commits).
+**Detailed plan:** [`plans/stage-4-fragment-shrink.md`](./stage-4-fragment-shrink.md) — executed per `plans/stage-4-fragment-shrink-execution.md` ledger. **Commit range:** `84c96ee..f9ccda0` on branch `stage-4-fragment-shrink` (21 commits; f9ccda0 is a post-close self-review reconcile). Close-out commit: `e1af3e9`.
 
 **Outcomes (see plan Appendix B for measurement detail):**
 - 4.0 investigation chose option (c): manifest-style command bodies. Every `!include X.md` in the 5 command files replaced with `Read fragments/X.md` directives — eliminating the post-v2.1.2 `<persisted-output>` silent-truncation failure mode.
@@ -78,7 +78,7 @@ Consolidate fragments where the boundary is arbitrary; extract cohesive Bash sni
 - Prose consolidation: `fragments/_prelude-shared.md` (4.B.1), L1-L7 lens-prompt invariants moved into §1.2.1 (4.B.2), `fragments/10-post-fix-and-commit.md` compressed 10.1% (4.B.3).
 - Lens references lazy-loaded (4.C).
 - `/adamsreview:review` invocation-time prompt cost dropped ~94% (151k → 8.5k chars at invocation).
-- Smoke 236 → 246 (+10 assertions covering new helpers + lazy-load gating).
+- Smoke 236 → 246 at close, → 249 after the f9ccda0 post-close self-review reconcile (+13 total; +10 net from Stage 4 steps, +3 from the reconcile's helper-hardening coverage).
 
 ### #14 — Fragment inlining capacity *(CLOSED 2026-04-23 — resolved by Stage 4)*
 

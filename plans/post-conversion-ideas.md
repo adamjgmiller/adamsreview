@@ -111,7 +111,7 @@ everything. Simplest architecture, highest cost.
 
 ## 2. Stage 4 fragment-shrink (already planned, deferred)
 
-> Deferred 2026-04-22: dedicated session per plans/stage-4-fragment-shrink.md
+> DONE 2026-04-23: plans/stage-4-fragment-shrink.md — commit range 84c96ee..f9ccda0 on branch `stage-4-fragment-shrink` (21 commits; close-out at e1af3e9, f9ccda0 is a post-close self-review reconcile). Measurements in plan Appendix B; backlog entry at `plans/backlog.md` §2 item #2.
 
 Consolidate fragments where the boundary is arbitrary. Plan exists at
 `plans/stage-4-fragment-shrink.md`. Post-conversion is a natural time to do
@@ -263,7 +263,7 @@ Actual surface is `setup --json` which returns a `{"ready": true, ...}` structur
 
 ### 14. Fragment inlining can exceed the preprocessor's capacity
 
-> Deferred 2026-04-22: dedicated session per plans/stage-4-fragment-shrink.md
+> DONE 2026-04-23: plans/stage-4-fragment-shrink.md step 4.0 + 4.A.0 — commits 84c96ee (Appendix A investigation) + 5b95bb6 (manifest-style conversion). Stage 4 chose option (c) "manifest-style command bodies": every `!include X.md` in the 5 command files replaced with a `Read fragments/X.md` directive, eliminating the post-v2.1.2 `<persisted-output>` silent-truncation failure mode. Backlog entry at `plans/backlog.md` §2 item #14.
 
 During the run, the command's `!`include`` preprocessor persisted Phases 0, 1.5, and 2–6 inline but truncated Phases 1 and 3 to 2 KB "previews." The orchestrator had to `Read fragments/NN.md` directly to recover the rest.
 
@@ -411,10 +411,10 @@ LLMs respect this class of explicit anti-instruction reliably.
 
 ## Priority ordering (all items)
 
-Post-2026-04-22 close-out state (see plans/post-plugin-improvements.md §6 Build Journal for session details):
+Post-2026-04-23 close-out state (see plans/post-plugin-improvements.md §6 and plans/stage-4-fragment-shrink-execution.md §4 for session details):
 
-- **Done 2026-04-22 (this session):** #0, #1A (rename), #9, #10, #11, #12, #13, #15, #16, #18, #19, #20, #21, #22, #23, #24 (telemetry only — decision deferred), #25, #27
+- **Done 2026-04-22 (post-plugin-improvements session):** #0, #1A (rename), #9, #10, #11, #12, #13, #15, #16, #18, #19, #20, #21, #22, #23, #24 (telemetry only — decision deferred), #25, #27
+- **Done 2026-04-23 (stage-4-fragment-shrink session):** #2, #14 (see `plans/stage-4-fragment-shrink.md` Appendix B for measurements)
 - **Data-driven decision awaiting ~10 reviews of Project D telemetry:** #1B, #1C, #24 (threshold-calibration decision portion)
-- **Deferred to dedicated Stage 4 session:** #2, #14 (see `plans/stage-4-fragment-shrink.md`)
 - **Probably leave alone** (per-item triggers say "probably never"): #3, #4, #5, #6, #7, #8, #17, #1D, #1E (item #26 was never authored — numbering jumps from #25 to #27)
-- **Follow-up surfaced during Project C** (not in scope, worth a future one-liner): `assign-finding-ids.sh` and `origin-crosscheck.sh` are invoked bare in transcluded fragments but missing from `commands/review.md` `allowed-tools` — same class of pre-existing gap as #21. Bundle with any future frontmatter touch.
+- **Follow-up surfaced during Project C** (not in scope, worth a future one-liner): `assign-finding-ids.sh` and `origin-crosscheck.sh` are invoked bare in transcluded fragments but missing from `commands/review.md` `allowed-tools` — same class of pre-existing gap as #21. Bundle with any future frontmatter touch. *(Tracked in `plans/backlog.md` §3 as FU-1.)*

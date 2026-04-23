@@ -14,7 +14,7 @@ Build repo for five personal Claude Code slash commands, packaged as a plugin (`
 - **`/adamsreview:fix`** — automated fix loop for auto-fixable findings (Phases 7–9).
 - **`/adamsreview:promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adamsreview:fix` afterwards to apply. Used internally by `/adamsreview:walkthrough` via `fragments/promote-core.md` + `--defer-publish`.
 
-The original four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`). `/adamsreview:add` was added on branch `review-add` (plan: `plans/review-add.md`). Plugin conversion (repackaging as a Claude Code plugin, D18 namespacing from `/adams-review-<stem>` to `/adamsreview:<stem>`) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`). The only unexecuted original scope is Stage 4 (fragment shrink), scoped in `plans/stage-4-fragment-shrink.md`.
+The original four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`). `/adamsreview:add` was added on branch `review-add` (plan: `plans/review-add.md`). Plugin conversion (repackaging as a Claude Code plugin, D18 namespacing from `/adams-review-<stem>` to `/adamsreview:<stem>`) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`). Stage 4 (fragment shrink — manifest-style command bodies, helper extractions, prose compression) closed 2026-04-23 on branch `stage-4-fragment-shrink` (plan: `plans/stage-4-fragment-shrink.md`; execution journal: `plans/stage-4-fragment-shrink-execution.md`). All original-roadmap scope is now executed; forward-looking work lives in `plans/backlog.md`.
 
 **Recommended flow on a non-trivial PR:** `/adamsreview:review` → (optional) `/adamsreview:add` to inject parallel-review findings → `/adamsreview:walkthrough` (optional) → `/adamsreview:fix`. Each command is independent; `/adamsreview:promote` remains useful for one-off manual promotions outside the walkthrough.
 
@@ -231,11 +231,12 @@ adamsreview/
 │       ├── README.md               ← frozen-as-of banner
 │       ├── DESIGN.md               ← rev 8 normative design (historical)
 │       └── BUILD.md                ← stage-by-stage build journal (historical)
-├── plans/                          ← per-stage plans (1–3 + 2.5/2.6/2.7/2.8 closed;
-│                                     plugin-conversion closed; post-plugin-improvements closed;
-│                                     stage-4-fragment-shrink live). Forward-looking work lives in
-│                                     `plans/backlog.md`; chronological idea log + DONE markers
-│                                     live in `plans/post-conversion-ideas.md`.
+├── plans/                          ← per-stage plans (all original-roadmap stages closed:
+│                                     1–3 + 2.5/2.6/2.7/2.8, plugin-conversion,
+│                                     post-plugin-improvements, stage-4-fragment-shrink).
+│                                     Forward-looking work lives in `plans/backlog.md`;
+│                                     chronological idea log + DONE markers live in
+│                                     `plans/post-conversion-ideas.md`.
 ├── commands/                       ← bare-stem command files (D18 namespacing)
 │   ├── review.md                   ← /adamsreview:review     (Phases 0–6)
 │   ├── add.md                      ← /adamsreview:add        (inject external findings)
