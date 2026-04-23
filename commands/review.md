@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(claude-md-paths.sh:*), Bash(staleness.sh:*), Bash(external-scrape.sh:*), Bash(comment-freshness.sh:*), Bash(prior-fix-diff.sh:*), Bash(line-range-check.sh:*), Bash(parse-with-repair.py:*), Bash(parse-validator-result.py:*), Bash(source-family-map.py:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(include:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(awk:*), Bash(sed:*), Bash(tr:*), Bash(wc:*), Bash(head:*), Bash(tail:*), Bash(cut:*), Bash(sort:*), Bash(diff:*), Bash(openssl:*), Bash(python3:*), Bash(coderabbit:*), Bash(node:*), Bash(find:*), AskUserQuestion, Agent, Read, BashOutput, KillShell
+allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(claude-md-paths.sh:*), Bash(staleness.sh:*), Bash(external-scrape.sh:*), Bash(comment-freshness.sh:*), Bash(prior-fix-diff.sh:*), Bash(line-range-check.sh:*), Bash(parse-with-repair.py:*), Bash(parse-validator-result.py:*), Bash(source-family-map.py:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(awk:*), Bash(sed:*), Bash(tr:*), Bash(wc:*), Bash(head:*), Bash(tail:*), Bash(cut:*), Bash(sort:*), Bash(diff:*), Bash(openssl:*), Bash(python3:*), Bash(coderabbit:*), Bash(node:*), Bash(find:*), AskUserQuestion, Agent, Read, BashOutput, KillShell
 argument-hint: "[--ensemble] [--full]"
 description: Deep code review producing artifact.json, artifact.md, and (PR mode) a review comment on the PR.
 disable-model-invocation: false
@@ -20,8 +20,9 @@ Flags (optional):
 ## Execution overview — read this first
 
 This command orchestrates DESIGN §4 Phases 0–6 in order. Each phase is
-defined in a fragment under `fragments/NN-<name>.md` — the bodies are
-inlined via `!`cat`` preprocessor at the bottom of this file.
+defined in a fragment under `fragments/NN-<name>.md`. At each phase
+boundary below, read the named fragment with the `Read` tool and
+execute the instructions inside before proceeding to the next phase.
 
 **Before you start, build a TaskList that mirrors the phases below**
 (one task per phase, plus one for argument parsing). Mark each
@@ -134,35 +135,44 @@ Capture both in your working context before executing Phase 0.
 
 ---
 
-!`include 00-preflight.md`
+**Phase 0 — Preflight.** Read `fragments/00-preflight.md` and execute
+the instructions inside before proceeding to Phase 1.
 
 ---
 
-!`include 01-detection.md`
+**Phase 1 — Detection.** Read `fragments/01-detection.md` and execute
+the instructions inside before proceeding to Phase 1.5.
 
 ---
 
-!`include 02-ensemble-adapter.md`
+**Phase 1.5 — External ensemble dispatch (conditional).** If
+`--ensemble` was passed, read `fragments/02-ensemble-adapter.md` and
+execute the instructions inside; otherwise skip to Phase 2.
 
 ---
 
-!`include 03-dedup.md`
+**Phase 2 — Dedup.** Read `fragments/03-dedup.md` and execute the
+instructions inside before proceeding to Phase 3.
 
 ---
 
-!`include 04-scoring-gate.md`
+**Phase 3 — Scoring gate.** Read `fragments/04-scoring-gate.md` and
+execute the instructions inside before proceeding to Phase 4.
 
 ---
 
-!`include 05-validation.md`
+**Phase 4 — Validation.** Read `fragments/05-validation.md` and execute
+the instructions inside before proceeding to Phase 5.
 
 ---
 
-!`include 06-cross-cutting.md`
+**Phase 5 — Cross-cutting.** Read `fragments/06-cross-cutting.md` and
+execute the instructions inside before proceeding to Phase 6.
 
 ---
 
-!`include 07-finalize.md`
+**Phase 6 — Finalize.** Read `fragments/07-finalize.md` and execute
+the instructions inside.
 
 ---
 

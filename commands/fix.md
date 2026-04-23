@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(claude-md-paths.sh:*), Bash(staleness.sh:*), Bash(external-scrape.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(origin-crosscheck.sh:*), Bash(assign-finding-ids.sh:*), Bash(group-fixes.py:*), Bash(repo-slug.sh:*), Bash(include:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(awk:*), Bash(sed:*), Bash(tr:*), Bash(wc:*), Bash(head:*), Bash(tail:*), Bash(cut:*), Bash(sort:*), Bash(diff:*), Bash(openssl:*), Bash(python3:*), Bash(node:*), Bash(find:*), AskUserQuestion, Agent, Read, Edit, Write, BashOutput, KillShell
+allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(claude-md-paths.sh:*), Bash(staleness.sh:*), Bash(external-scrape.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(origin-crosscheck.sh:*), Bash(assign-finding-ids.sh:*), Bash(group-fixes.py:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(awk:*), Bash(sed:*), Bash(tr:*), Bash(wc:*), Bash(head:*), Bash(tail:*), Bash(cut:*), Bash(sort:*), Bash(diff:*), Bash(openssl:*), Bash(python3:*), Bash(node:*), Bash(find:*), AskUserQuestion, Agent, Read, Edit, Write, BashOutput, KillShell
 argument-hint: "[threshold] [--granular-commits]"
 description: Apply auto-fixable code review findings. Dispatches fix-group agents, post-fix-reviews the working tree, commits survivors, reverts regressions, updates the artifact.
 disable-model-invocation: false
@@ -27,8 +27,9 @@ Arguments (optional):
 ## Execution overview — read this first
 
 This command orchestrates DESIGN §4 Phases 7–9 in order. Each phase is
-defined in a fragment under `fragments/NN-<name>.md` — the bodies are
-inlined via `` !`cat` `` preprocessor at the bottom of this file.
+defined in a fragment under `fragments/NN-<name>.md`. At each phase
+boundary below, read the named fragment with the `Read` tool and
+execute the instructions inside before proceeding to the next phase.
 
 **Before you start, build a TaskList that mirrors the phases below**
 (one task per phase, plus one for argument parsing). Mark each
@@ -162,15 +163,19 @@ Capture both in your working context before executing Phase 7.
 
 ---
 
-!`include 08-fix-loader.md`
+**Phase 7 — Fix loader.** Read `fragments/08-fix-loader.md` and execute
+the instructions inside before proceeding to Phase 8.
 
 ---
 
-!`include 09-fix-execution.md`
+**Phase 8 — Fix execution.** Read `fragments/09-fix-execution.md` and
+execute the instructions inside before proceeding to Phase 9.
 
 ---
 
-!`include 10-post-fix-and-commit.md`
+**Phase 9 — Post-fix and commit.** Read
+`fragments/10-post-fix-and-commit.md` and execute the instructions
+inside.
 
 ---
 

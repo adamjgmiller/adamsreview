@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(repo-slug.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(include:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(cat:*), Bash(printf:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(tr:*), Bash(awk:*), Bash(mktemp:*), Agent, Read, AskUserQuestion
+allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(repo-slug.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(cat:*), Bash(printf:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(tr:*), Bash(awk:*), Bash(mktemp:*), Agent, Read, AskUserQuestion
 argument-hint: "[threshold]"
 description: Walk interactively through findings /adamsreview:fix would skip. Per-finding briefing + options + recommendation, then batch re-render/re-publish and post a decisions-log PR comment.
 disable-model-invocation: false
@@ -576,9 +576,10 @@ Set `edited_hint=true` in that case; `edited_hint=false` (or absent)
 otherwise.
 
 Set ambient context for the shared promote-core fragment (steps 3,
-4, 4.5, 5, 6, 9 — the body of which is inlined once at the end of
-this file for reference and for Claude Code's command-load
-preprocessor to resolve):
+4, 4.5, 5, 6, 9 — the orchestrator reads `fragments/promote-core.md`
+with the `Read` tool at this point and executes the listed steps
+inline; see the appendix at the end of this file for a short
+pointer):
 
 ```bash
 fix_hint="$briefing_option.fix_hint_if_picked"          # or reviewer override when edited_hint
@@ -1276,10 +1277,11 @@ pattern as `/adamsreview:promote` step 10).
 
 ## Appendix — shared promote-core fragment
 
-The body below is the verbatim content of
-`fragments/promote-core.md`, included once via the Claude Code
-preprocessor. Step 5.5 above references this content — treat it as
-the per-iteration playbook for a single promote decision, not as
-a single-shot action.
+Step 5.5 above dispatches the shared promote sequence by reading
+`fragments/promote-core.md` with the `Read` tool and executing its
+steps 3, 4, 4.5, 5, 6, and 9 for the chosen finding. Treat the fragment
+as the per-iteration playbook for a single promote decision, not as
+a single-shot action — it re-runs once per finding the reviewer
+promotes in step 5.5.
 
-!`include promote-core.md`
+Read `fragments/promote-core.md` when step 5.5 calls for it.
