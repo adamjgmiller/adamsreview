@@ -6,7 +6,7 @@ Forward-looking consolidation of everything still on the adamsreview plugin's ba
 
 - **`plans/post-conversion-ideas.md`** — the chronological idea log with original rationale for each item. Items completed by the 2026-04-22 session are marked `> DONE` with commit SHAs; items still pending here carry `> Deferred` markers pointing back to this file's triggers. Read that file when you need the full original reasoning.
 - **`plans/post-plugin-improvements.md`** — the 2026-04-22 execution session (closed). Its §6 Build Journal records per-project verifier findings and three follow-ups that surfaced during execution (integrated into this backlog under §4).
-- **`plans/stage-4-fragment-shrink.md`** — existing detailed plan for the fragment-shrink work, awaiting a dedicated session.
+- **`plans/stage-4-fragment-shrink.md`** — fragment-shrink plan; closed 2026-04-23 (see Appendix B for the measurement snapshot). Execution journal at `plans/stage-4-fragment-shrink-execution.md`.
 - **`docs/archive/DESIGN.md`**, **`docs/archive/BUILD.md`** — frozen historical references for pre-2026-04-19 decisions. Consult for historical-rationale questions; do not edit.
 
 ## Quick summary
@@ -15,7 +15,7 @@ Forward-looking consolidation of everything still on the adamsreview plugin's ba
 |---|---|---|
 | **§1. Data-driven decisions** | #1B, #1C, #24 (threshold-decision portion) | ~10 reviews of Phase 3 telemetry data accumulate (instrumentation shipped 2026-04-22 in `ee81715`) |
 | **§2. Already-planned, dedicated session** | #2, #14 (Stage 4 fragment shrink) | *Closed 2026-04-23* — commit range `84c96ee..f9ccda0` (close-out commit `e1af3e9`; `f9ccda0` is a post-close self-review reconcile). Body kept for reference; Appendix B in the plan has the measurement snapshot |
-| **§3. Session follow-ups** | Transcluded-fragment `allowed-tools` gap; broader `parse-with-repair.py` migration; telemetry data collection | Surfaced during 2026-04-22 execution; each has its own per-item trigger |
+| **§3. Session / issue follow-ups** | Transcluded-fragment `allowed-tools` gap; broader `parse-with-repair.py` migration; telemetry data collection; post-fix robustness lens (GH #2); L5-ux line-range root-cause (GH #2) | Surfaced 2026-04-22 session or in GH #2 (2026-04-20); per-item triggers |
 | **§4. Probably leave alone** | #3, #4, #5, #6, #7, #8, #17 | Per-item "probably never" triggers — documented for completeness, not expected to fire |
 | **§5. Big refactors, unlikely to be worth it** | #1D, #1E | Cost becomes irrelevant / full architectural rewrite motivated |
 
@@ -90,9 +90,9 @@ During the 2026-04-22 run, the `!include` preprocessor persisted Phases 0, 1.5, 
 
 ---
 
-## §3. Session follow-ups (surfaced 2026-04-22, not yet backlog items in post-conversion-ideas.md)
+## §3. Session / issue follow-ups
 
-Three items surfaced during the 2026-04-22 session's execution that weren't in the original post-conversion-ideas.md. Journaled in `plans/post-plugin-improvements.md` §6 close-out.
+Items surfaced during in-session execution or filed as GitHub issues that aren't in `plans/post-conversion-ideas.md`. FU-1..FU-3 came from the 2026-04-22 session (journaled in `plans/post-plugin-improvements.md` §6 close-out); P2 and P3 came from the 2026-04-19 ray-finance run and were filed as GH issue #2 on 2026-04-20.
 
 ### FU-1 — Transcluded-fragment `allowed-tools` gap (extend Project C's #21 fix)
 
@@ -124,6 +124,30 @@ Phase 3 `demote_rate` + `score_phase3_histogram` are now in `phases.jsonl` on ev
 
 - **Effort:** zero ongoing — the telemetry is automatic. Decision-time effort is M (read the telemetry, make three decisions, land three separate small commits).
 - **Trigger:** ~10 reviews of the telemetry + walkthrough-behavior notes accumulated.
+
+### P2 — Post-fix robustness lens (from GH #2)
+
+**Source:** GH issue #2 (filed 2026-04-20 off the 2026-04-19 ray-finance `feat/import-apple` run). Motivating case: ultrareview's `bug_004` — unwrapped `mkdirSync` / `writeFileSync` at `src/cli/commands.ts:930-935` that can throw *after* the DB transaction commits. The block was added by a prior fixrun (F020 → commit `031e04d`); nothing in the pipeline currently re-audits fix-added code beyond the headline finding's claim. Observed twice on ray-finance (F002→F027/F028 access_token over-fetch; F020→`bug_004` unwrapped fs calls).
+
+**Direction:** a new lens that runs only when `fix_attempts` is non-empty somewhere in the branch history. Prompt reads only the lines added by prior `fix_attempts`, flags unwrapped I/O, missing null checks, ignored promises, `console.error`-without-exit, other robustness gaps. Err wide; nits are fine — it's a targeted QA pass on code we wrote, not the PR author wrote.
+
+**Surfaces:** new `fragments/<NN>-post-fix-audit.md` (or a gated L8 entry in `fragments/01-detection.md`); dispatch gate in `commands/review.md` Phase 1 argument plumbing; end-to-end smoke with a fixture branch carrying a deliberately-fragile fix in its history.
+
+- **Effort:** M. New fragment + prompt tuning + one smoke assertion + a fixture.
+- **Trigger:** next time a fix-introduced bug resurfaces in a later review on one of your real projects — a third observation in the wild would make the class persistent rather than incidental. If ensemble becomes default (GH #1) and Codex/CR reliably catch these via L7 + ensemble normalizer, this trigger moves further out.
+
+### P3 — Root-cause L5-ux line-range hallucination (from GH #2)
+
+**Source:** GH issue #2. On the ray-finance run, L5-ux contributed 4 unique findings; 3 had `line_range` past the file's actual end (file 1042 lines, ranges 1815-1826 / 1912-1916 / 1941-1960). Phase 4 validators still confirmed the underlying claims because they re-read files for the claim pattern — but a 75% hallucination rate on unique contributions in a single run is concerning.
+
+**Status:** `bin/line-range-check.sh` (Phase 1 step 2 in `fragments/01-detection.md:762-778`) silently drops overshoot ranges, which means real findings get filtered out. This item is about preventing the bad output at the source, not filtering after the fact.
+
+**Direction:** investigation-first. Re-run L5-ux in isolation against the ray-finance snapshot with trace enabled; inspect raw output to identify where the bogus line numbers come from. Hypotheses: Sonnet confusing unified-diff hunk headers (`@@ -a,b +c,d @@`) with absolute new-file line numbers; or under token pressure on a large diff, summarizing the region and guessing positional numbers. Fix is likely either (a) reformatting lens input (feed full-file snapshots, not just diff hunks), or (b) tightening the prompt to force a post-generation self-verification step ("for every candidate, verify `line_range[0..1]` lies within the actual file; reject otherwise").
+
+**Surfaces:** investigation-only at first. If the fix is prompt-side, `fragments/01-detection.md` §L5 prompt. If input-side, the L5 dispatch in the same fragment.
+
+- **Effort:** S–M. Investigation first (raw outputs captured in the prior run's `tokens.jsonl`); fix is likely a small prompt change once the cause is known.
+- **Trigger:** next review where `line-range-check.sh` emits more than one `lens_hallucinated_line_range:` audit line attributed to L5-ux. First such recurrence moves the fix from "nice to have" to "root-cause now."
 
 ---
 
