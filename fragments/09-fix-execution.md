@@ -15,9 +15,12 @@ bypasses both the impact_type lane filter AND the score threshold —
 the human has overridden the validator's conservative defaults.
 
 The `/adamsreview:walkthrough` scope filter (§28, step 3 in
-`commands/walkthrough.md`) is the **inverse** of this
-selector. Keep the two in sync — any edit to the eligibility logic
-below must mirror into the walkthrough's scope jq.
+`commands/walkthrough.md`) is the **inverse** of this selector, plus
+an additional walkthrough-local score floor (`COALESCE(score_phase4,
+score_phase3, -1) >= $threshold`) to drop low-signal items from the
+interactive session. Keep the inverse piece in sync — any edit to the
+eligibility logic below must mirror into the walkthrough's scope jq.
+The score floor is walkthrough-specific; don't propagate it here.
 
 ```bash
 eligible_finding_ids=$(jq -r --argjson thr "$threshold" '
