@@ -1,20 +1,21 @@
 ---
 allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(repo-slug.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(git:*), Bash(gh:*), Bash(jq:*), Bash(date:*), Bash(cat:*), Bash(printf:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(tr:*), Bash(awk:*), Bash(mktemp:*), Agent, Read, AskUserQuestion
 argument-hint: "[threshold]"
-description: Walk interactively through findings /adamsreview:fix would skip. Per-finding briefing + options + recommendation, then batch re-render/re-publish and post a decisions-log PR comment.
+description: Walk interactively through findings /adamsreview:fix would skip, above a score floor. Per-finding briefing + options + recommendation, then batch re-render/re-publish and post a decisions-log PR comment.
 disable-model-invocation: false
 ---
 
-Walk the reviewer through every finding in the latest `/adamsreview:review`
-artifact that `/adamsreview:fix [threshold]` would **skip** at the
-chosen threshold: deep-manual, light-manual, light-report, light-auto
-that fails the impact_type lane filter, and any `confirmed_mechanical`
-below the score threshold. For each finding, dispatch a Sonnet
-briefing agent (claim → options → recommendation), ask the reviewer
-to decide, and record a promote (via the shared `promote-core.md`
-fragment with `--defer-publish` semantics) or a skip. At the end,
-render + publish the updated review once, then POST a separate
-decisions-log comment to the PR for audit.
+Walk the reviewer through findings in the latest `/adamsreview:review`
+artifact that `/adamsreview:fix` would **skip** — deep-manual,
+deep-report, light-manual, light-report, and light-auto that fails
+the impact_type lane filter — further restricted to findings scoring
+**at or above `$threshold`** so low-signal items don't pad the
+session. For each
+finding, dispatch a Sonnet briefing agent (claim → options →
+recommendation), ask the reviewer to decide, and record a promote (via
+the shared `promote-core.md` fragment with `--defer-publish`
+semantics) or a skip. At the end, render + publish the updated review
+once, then POST a separate decisions-log comment to the PR for audit.
 
 See DESIGN §28 for the full contract and `plans/walkthrough-mode.md`
 for the design rationale.
@@ -25,11 +26,14 @@ helper-script error-as-prompt).**
 
 ## Arguments
 
-- `[threshold]` (optional, positional) — non-negative integer matching
-  the threshold the reviewer plans to use for `/adamsreview:fix`.
-  Default: 60 (DESIGN §13.2). Determines which `confirmed_mechanical`
-  findings would "already be fixed" by the fix command and are
-  therefore excluded from the walkthrough scope.
+- `[threshold]` (optional, positional) — non-negative integer score
+  floor. Default: 60. Findings with effective score
+  (`COALESCE(score_phase4, score_phase3, -1)`) below this value are
+  dropped from the walk scope so the session isn't padded with
+  low-signal findings. Independent of the `/adamsreview:fix`
+  threshold — promoted findings are picked up by `/adamsreview:fix`
+  regardless of the score gate via the `human_confirmation` bypass
+  (§27.6).
 
 ## What it does
 
@@ -69,8 +73,10 @@ Parse `$ARGUMENTS` (whitespace-split):
 - First token that parses as a non-negative integer → `threshold`.
 - Any other token → stop and ask the user to clarify.
 
-If no integer was provided, `threshold=60` (DESIGN §13.2). Record in
-your working context.
+If no integer was provided, `threshold=60` (matches the
+`/adamsreview:fix` default and the Phase 4 moderate-confirmation
+breakpoint, so the walkthrough shows what a reviewer at standard
+confidence would want to see). Record in your working context.
 
 ### 2. Locate the artifact
 
@@ -133,9 +139,14 @@ at `09-fix-execution.md` step 8.1 (minus terminal + already-promoted),
 exclusively to §6.5's issue-filing phase and is never surfaced for
 promotion (a user may still direct Claude off-menu to promote a
 specific pre-existing finding; §6.5 defends against the double-
-processing that would otherwise create). **Keep the Phase-8-inverse
-shape in sync with `09-fix-execution.md`; the pre-existing exclusion
-is specific to the walkthrough.**
+processing that would otherwise create), **then filtered by the
+`$threshold` score floor** so low-signal findings don't pad the walk.
+The score-floor uses `COALESCE(score_phase4, score_phase3, -1)` so
+`below_gate` findings (which have no `score_phase4`) fall back to
+their `score_phase3`; missing-both collapses to `-1` and is filtered
+out at any non-negative threshold. **Keep the Phase-8-inverse shape in
+sync with `09-fix-execution.md`; the pre-existing exclusion and score
+floor are specific to the walkthrough.**
 
 ```bash
 scope_full_ids=$(jq -r --argjson thr "$threshold" '
@@ -163,6 +174,11 @@ scope_full_ids=$(jq -r --argjson thr "$threshold" '
            )
          ) | not
        )
+     # Score floor: drop findings below the walkthrough threshold so the
+     # session stays focused on high-signal items. COALESCE falls back
+     # to phase3 for below_gate (no phase4), and to -1 if neither is set
+     # (so null-scored findings are excluded at any threshold > 0).
+     | select((.score_phase4 // .score_phase3 // -1) >= $thr)
      | .id
     ] | join(",")
 ' "$artifact_path")
@@ -193,6 +209,10 @@ scope_qualifying_ids=$(jq -r --argjson thr "$threshold" '
            )
          ) | not
        )
+     # Score floor — same rule as scope_full_ids. Phase3 fallback is
+     # irrelevant here (below_gate is already excluded above), but kept
+     # for symmetry with scope_full_ids so the two stay easy to diff.
+     | select((.score_phase4 // .score_phase3 // -1) >= $thr)
      | .id
     ] | join(",")
 ' "$artifact_path")
@@ -230,11 +250,12 @@ scope_preexisting_count=$(count_ids "$scope_preexisting_ids")
 If **all three** are empty, exit cleanly:
 
 ```
-No findings to walk through at threshold=$threshold.
+No findings to walk through at score floor $threshold.
 
 Either every finding is already auto-eligible (run /adamsreview:fix
-$threshold to apply them) or the review has no actionable findings
-left. Nothing to do.
+to apply them), every remaining skip-eligible finding scored below the
+floor (re-run with a lower threshold to see them), or the review has
+no actionable findings left. Nothing to do.
 ```
 
 Exit 0.
@@ -265,7 +286,8 @@ for the historical "which gate?" confusion (see CLAUDE.md §Score
 gates → Gate terminology):
 
 ```markdown
-**Understanding the scope.** Three different gates govern this pipeline:
+**Understanding the scope.** Three different gates govern this pipeline,
+plus a fourth floor specific to this walkthrough:
 
 - **Phase 3 scoring gate (45)** — filters candidates into validation.
   Failures get `disposition=below_gate` and no `score_phase4`.
@@ -273,12 +295,22 @@ gates → Gate terminology):
   `disproven` / `uncertain` / `confirmed_*`.
 - **Phase 8 fix gate (default 60)** — what `/adamsreview:fix` touches:
   confirmed_mechanical + deep lane + score ≥ threshold.
+- **Walkthrough score floor (`$threshold`, default 60)** — the
+  argument to this command. A display filter that drops findings below
+  the floor so the session focuses on high-signal items. Independent
+  of the fix gate: findings promoted here get picked up by
+  `/adamsreview:fix` regardless of its threshold, via the
+  `human_confirmation` bypass.
 
-The walkthrough surfaces what Phase 8 would SKIP. `below_gate` is a
-**disposition name**, not a threshold — Phase 3 already demoted those
-as low-impact × low-confidence. Pre-existing findings (`pre_existing_report`)
-are handled on a separate track at the end of the run (file GitHub
-issues for base-branch bugs instead of trying to fix them here).
+The walkthrough surfaces what Phase 8 would SKIP, minus anything below
+the floor. `below_gate` is a **disposition name**, not a threshold —
+Phase 3 already demoted those as low-impact × low-confidence, and the
+score floor excludes them at default threshold=60 (fall back to
+`score_phase3` means a low threshold like 30 would surface them for
+auditing). Pre-existing findings (`pre_existing_report`) are handled
+on a separate track at the end of the run (file GitHub issues for
+base-branch bugs instead of trying to fix them here); they are not
+score-floored.
 ```
 
 Render a compact preview table covering all of `scope_full_ids` (so
@@ -327,7 +359,7 @@ Then dispatch `AskUserQuestion` with three options. Default
 highlighted on Qualifying:
 
 - "⭐ Qualifying only — walk $scope_qualifying_count finding(s) (recommended)"
-- "Full skip set — walk $scope_full_count finding(s) (includes \`below_gate\`)"
+- "Full skip set — walk $scope_full_count finding(s) (adds \`below_gate\` when score floor admits their \`score_phase3\`)"
 - "Cancel — don't change anything"
 
 Edge case: if `scope_qualifying_count == 0` and `scope_full_count > 0`,
@@ -336,7 +368,7 @@ in that case — no recommendation star, since Qualifying is empty.
 If `scope_full_count == 0` AND `scope_preexisting_count > 0` (only
 pre-existing findings remain), skip the walk `AskUserQuestion`
 entirely and set `scope_tier="none"` directly. Print a one-line note
-like "No walk scope at threshold=$threshold; jumping to pre-existing
+like "No walk scope at score floor $threshold; jumping to pre-existing
 issue filing." Then continue normally: the timestamp/reviewer
 capture below runs, step 5 loop iterates 0 findings (because
 `scope_ids=""`), §6 tallies to all zeroes, §6's existing
@@ -1054,11 +1086,11 @@ array.
 <!-- adams-review-walkthrough-v1 -->
 ### Walkthrough decisions
 
-`$review_id` · scope=**$scope_tier** · threshold=$threshold · reviewer=$reviewer · ts=$walkthrough_ts
+`$review_id` · scope=**$scope_tier** · score_floor=$threshold · reviewer=$reviewer · ts=$walkthrough_ts
 
 Walking the **$scope_tier_title** scope: of **$scope_count** non-auto-eligible finding(s), **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
 
-Promoted findings will be picked up by the next `/adamsreview:fix $threshold` run via the `human_confirmation` bypass (DESIGN §27.6).
+Promoted findings will be picked up by the next `/adamsreview:fix` run via the `human_confirmation` bypass (DESIGN §27.6), regardless of its score threshold.
 
 ---
 
@@ -1207,9 +1239,9 @@ Cumulative sub-agent spend: <total> tokens across <invs> invocations.
 Cumulative orchestrator spend: <output> output / <input> input across <turns> turns.
 
 Promoted findings are now auto-fix-eligible via the human_confirmation
-bypass (§27.6). To apply them:
+bypass (§27.6) — they'll be picked up at any fix threshold. To apply:
 
-  /adamsreview:fix $threshold
+  /adamsreview:fix
 
 Decisions log comment: <url to the POSTed comment, if PR mode>
 Main review comment: updated in place.
@@ -1266,7 +1298,9 @@ pattern as `/adamsreview:promote` step 10).
 ## What this command does NOT do
 
 - **No fix-run.** Walkthrough is metadata-only (via promote's patch
-  primitive). Run `/adamsreview:fix [threshold]` afterward to apply.
+  primitive). Run `/adamsreview:fix` afterward to apply (promoted
+  findings are picked up at any fix threshold via the
+  `human_confirmation` bypass).
 - **No `disposition=disproven` handling.** Disproven findings need
   `/adamsreview:promote <id> --force` with a conscious justification;
   the walkthrough scope filter excludes them.

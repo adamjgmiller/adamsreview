@@ -2316,6 +2316,7 @@ WT_SCOPE_JQ='
        )
      ) | not
    )
+ | select((.score_phase4 // .score_phase3 // -1) >= $thr)
  | .id
 ] | join(",")
 '
@@ -2331,8 +2332,11 @@ wt_build_fixture() {
 
 # Shared finding templates — varying only the fields the scope filter inspects.
 # All other fields stubbed with plausible defaults; the scope jq ignores them.
+# score_phase3 is optional (8th arg, default "null") — lets tests exercise the
+# COALESCE(phase4, phase3, -1) score floor for below_gate findings, which
+# legitimately carry a phase3 score but no phase4 score.
 wt_finding() {
-    # args: id impact_type validation_lane disposition score_phase4 current_state human_confirmation
+    # args: id impact_type validation_lane disposition score_phase4 current_state human_confirmation [score_phase3]
     jq -nc \
         --arg id "$1" \
         --arg impact "$2" \
@@ -2341,12 +2345,14 @@ wt_finding() {
         --arg score "$5" \
         --arg state "$6" \
         --arg hc "$7" \
+        --arg score3 "${8:-null}" \
         '{
             id: $id,
             impact_type: $impact,
             validation_lane: $lane,
             disposition: $disp,
             score_phase4: (if $score == "null" then null else ($score | tonumber) end),
+            score_phase3: (if $score3 == "null" then null else ($score3 | tonumber) end),
             current_state: $state,
             human_confirmation: (if $hc == "null" then null else ($hc | fromjson) end)
         }'
@@ -2361,7 +2367,7 @@ wt1_findings=$(jq -nc \
     --argjson a "$(wt_finding W001 correctness deep resolved 80 resolved null)" \
     --argjson b "$(wt_finding W002 correctness deep disproven 70 open null)" \
     --argjson c "$(wt_finding W003 correctness deep pending_validation null open null)" \
-    --argjson d "$(wt_finding W004 correctness deep uncertain 55 open null)" \
+    --argjson d "$(wt_finding W004 correctness deep uncertain 70 open null)" \
     '[$a,$b,$c,$d]')
 wt1_fx=$(wt_build_fixture "$wt1_findings")
 wt1_ids=$(echo "$wt1_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
@@ -2374,8 +2380,8 @@ fi
 # WT-2: already-promoted findings (human_confirmation != null) are excluded
 # so a partially-walked session resumes cleanly without re-surfacing them.
 wt2_findings=$(jq -nc \
-    --argjson a "$(wt_finding W010 architecture light uncertain 40 open "$WT_HC")" \
-    --argjson b "$(wt_finding W011 architecture light uncertain 40 open null)" \
+    --argjson a "$(wt_finding W010 architecture light uncertain 70 open "$WT_HC")" \
+    --argjson b "$(wt_finding W011 architecture light uncertain 70 open null)" \
     '[$a,$b]')
 wt2_fx=$(wt_build_fixture "$wt2_findings")
 wt2_ids=$(echo "$wt2_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
@@ -2402,10 +2408,13 @@ else
 fi
 
 # WT-4: light-lane confirmed_mechanical findings (which fail the impact_type gate)
-# ARE included — this is the primary gap the walkthrough exists to close.
-# Fixture: ux confirmed_mechanical at high score (which the fix command would skip
-# due to impact_type != correctness/security) plus a below-threshold correctness
-# confirmed_mechanical (which the fix command would skip due to the score gate).
+# ARE included IF they score at/above the walkthrough floor — the primary gap
+# the walkthrough exists to close, but now with a score-floor filter so
+# low-signal findings don't pad the session. Fixture: ux confirmed_mechanical
+# at score 80 (in-scope, above floor), policy confirmed_mechanical at score 50
+# (in-scope by lane-mismatch but excluded by the score floor), and correctness/deep
+# confirmed_mechanical at score 40 (below both the Phase 8 fix gate AND the
+# walkthrough floor). Only W030 should survive.
 wt4_findings=$(jq -nc \
     --argjson a "$(wt_finding W030 ux light confirmed_mechanical 80 open null)" \
     --argjson b "$(wt_finding W031 policy light confirmed_mechanical 50 open null)" \
@@ -2413,12 +2422,10 @@ wt4_findings=$(jq -nc \
     '[$a,$b,$c]')
 wt4_fx=$(wt_build_fixture "$wt4_findings")
 wt4_ids=$(echo "$wt4_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
-# Order in jq output depends on array order, not a sort, so match any permutation.
-if [[ ",$wt4_ids," == *,W030,* && ",$wt4_ids," == *,W031,* && ",$wt4_ids," == *,W032,* ]] \
-   && [[ $(echo "$wt4_ids" | awk -F, '{print NF}') == "3" ]]; then
-    pass "WT-4 (§28, §13.2): scope includes light-lane confirmed_mechanical + below-threshold deep confirmed_mechanical"
+if [[ "$wt4_ids" == "W030" ]]; then
+    pass "WT-4 (§28, §13.2): scope includes light-lane confirmed_mechanical at/above score floor; below-floor items excluded regardless of lane"
 else
-    fail "WT-4: expected W030,W031,W032 (any order); got '$wt4_ids'"
+    fail "WT-4: expected W030 only (score floor 60 excludes W031@50 and W032@40); got '$wt4_ids'"
 fi
 
 # WT-6: /adamsreview:walkthrough decisions-log template contains the required
@@ -2475,18 +2482,23 @@ WT_QUALIFYING_JQ='
        )
      ) | not
    )
+ | select((.score_phase4 // .score_phase3 // -1) >= $thr)
  | .id
 ] | join(",")
 '
 wt7_findings=$(jq -nc \
-    --argjson a "$(wt_finding W050 correctness deep below_gate null open null)" \
+    --argjson a "$(wt_finding W050 correctness deep below_gate null open null 30)" \
     --argjson b "$(wt_finding W051 correctness deep pre_existing_report null open null)" \
     --argjson c "$(wt_finding W052 ux light confirmed_mechanical 80 open null)" \
     --argjson d "$(wt_finding W053 correctness deep uncertain 55 open null)" \
     '[$a,$b,$c,$d]')
 wt7_fx=$(wt_build_fixture "$wt7_findings")
-wt7_full=$(echo "$wt7_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
-wt7_qual=$(echo "$wt7_fx" | jq -r --argjson thr 60 "$WT_QUALIFYING_JQ")
+# Run at threshold=25 so the score floor doesn't swallow below_gate (W050
+# has phase3=30) or uncertain (W053 has phase4=55) — the test's purpose is
+# to prove the Full-vs-Qualifying distinction on below_gate. WT-12 covers
+# the score-floor mechanics at default threshold=60.
+wt7_full=$(echo "$wt7_fx" | jq -r --argjson thr 25 "$WT_SCOPE_JQ")
+wt7_qual=$(echo "$wt7_fx" | jq -r --argjson thr 25 "$WT_QUALIFYING_JQ")
 # Full scope includes below_gate (W050) but excludes pre_existing_report (W051)
 # — pre-existing is routed only to §6.5. Qualifying additionally excludes
 # below_gate (W050).
@@ -2556,6 +2568,35 @@ if grep -q 'confirmed_manual.*confirmed_report' "$WALK_MD" \
     pass "WT-11 (§28 §5.2): briefer prompt addresses confirmed_manual + confirmed_report findings"
 else
     fail "WT-11: briefer prompt missing confirmed_manual/confirmed_report clause in $WALK_MD"
+fi
+
+# WT-12: the walkthrough `$threshold` argument is a score floor — findings
+# scoring below it are dropped from scope so the session stays focused on
+# high-signal items. Fixture exercises three cases at threshold=60: a
+# lane-mismatched finding above the floor (kept), a lane-mismatched finding
+# below the floor (dropped by the floor), and a below_gate finding whose
+# phase3 score falls back via COALESCE and is also below the floor (dropped).
+# Second assertion lowers the threshold to 25 to prove the same fixture
+# admits all three — proves the floor is the gating constraint, not some
+# other filter, and that score_phase3 fallback works for null-phase4 findings.
+wt12_findings=$(jq -nc \
+    --argjson a "$(wt_finding W070 ux light confirmed_mechanical 80 open null)" \
+    --argjson b "$(wt_finding W071 ux light confirmed_mechanical 55 open null)" \
+    --argjson c "$(wt_finding W072 correctness deep below_gate null open null 30)" \
+    '[$a,$b,$c]')
+wt12_fx=$(wt_build_fixture "$wt12_findings")
+wt12_at60=$(echo "$wt12_fx" | jq -r --argjson thr 60 "$WT_SCOPE_JQ")
+if [[ "$wt12_at60" == "W070" ]]; then
+    pass "WT-12a (§28 §3): score floor at default threshold=60 excludes below-floor findings (lane-mismatch + null-phase4 below_gate)"
+else
+    fail "WT-12a: expected W070 only (floor=60 drops W071@55, W072@phase3=30); got '$wt12_at60'"
+fi
+wt12_at25=$(echo "$wt12_fx" | jq -r --argjson thr 25 "$WT_SCOPE_JQ")
+if [[ ",$wt12_at25," == *,W070,* && ",$wt12_at25," == *,W071,* && ",$wt12_at25," == *,W072,* ]] \
+   && [[ $(echo "$wt12_at25" | awk -F, '{print NF}') == "3" ]]; then
+    pass "WT-12b (§28 §3): score floor at threshold=25 admits below-default findings via score_phase3 fallback for below_gate"
+else
+    fail "WT-12b: expected W070,W071,W072 (any order) at threshold=25; got '$wt12_at25'"
 fi
 
 # ------------------------------------------------------------------ Stage 2.6.D
