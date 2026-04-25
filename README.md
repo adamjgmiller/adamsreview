@@ -101,14 +101,29 @@ export ADAMS_REVIEW_REVIEWS_ROOT=~/.claude/reviews
 
 ### Token counts: what they measure
 
-The rendered report surfaces two numbers:
+The rendered report can surface two numbers:
 
-- **Sub-agent tokens** — rolled up from the per-review `tokens.jsonl` log. Counts every dispatched sub-agent (lenses, validators, fix agents, post-fix reviewer, etc.) for this specific review. Precise.
-- **Orchestrator tokens** — rolled up from the Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/`, filtered to assistant turns with `timestamp >= review_started_at`. Captures the main-session spend that `subagent_tokens` deliberately excludes.
+- **Sub-agent tokens** — rolled up from the per-review `tokens.jsonl` log. Counts every dispatched sub-agent (lenses, validators, fix agents, post-fix reviewer, etc.) for this specific review. Precise. Always shown.
+- **Orchestrator tokens** — rolled up from the Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/`, filtered to assistant turns with `timestamp >= review_started_at`. Captures the main-session spend that `subagent_tokens` deliberately excludes. **Opt-in** — see below.
 
-The two are complementary, not overlapping. Together they're a good estimate of total cost.
+When both are populated they're complementary (no overlap), and together estimate total cost.
 
-**Orchestrator tokens can over-count.** The filter is time-window only, so any Claude Code turn in the same working directory between `review_started_at` and the last tally gets counted — even if it's unrelated work. In practice that means:
+#### Orchestrator tokens are opt-in
+
+macOS Sequoia and Tahoe show an "*kitty (or your terminal) would like to access data from other apps*" prompt the first time a shell helper reads files marked with the `com.apple.provenance` extended attribute. Every Claude Code transcript carries one, and `bin/orchestrator-tokens.sh` reads them — so the helper would trigger the prompt on the first lifecycle command of every review and (because the TCC cache for this gate is partial) repeatedly thereafter. To avoid pestering users, the helper defaults to skip.
+
+To enable, do **either**:
+
+- **Recommended** — grant your terminal app **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access → `+` your terminal). One toggle, permanent, silences this prompt class for everything launched from your terminal. Then `export ADAMS_REVIEW_TALLY_ORCHESTRATOR=1` in your shell rc (`~/.zshrc`, `~/.bashrc`, etc.) so the helper actually runs.
+- **Just opt in without FDA** — `export ADAMS_REVIEW_TALLY_ORCHESTRATOR=1` and accept the macOS prompts when they fire. Each grant survives until the next OS update or terminal-app update; choose this if you want narrower permissions at the cost of clicking *Allow* periodically.
+
+When opted out (the default), the helper exits 0 with one `orchestrator-tally: skipped` line and leaves the artifact's `orchestrator_tokens` field absent. The PR comment shows only **Sub-agent tokens** — still the precise per-review counter and the primary cost signal. Sub-agent tokens log under `~/.adams-reviews/`, which carries no provenance xattr, so that path triggers no prompts.
+
+**Stale-data behavior.** If you opt in for the initial review and then opt out before running `/adamsreview:fix` (or vice-versa), the helper preserves any previously-written `orchestrator_tokens` value rather than wiping it. The rendered line shows the last-measured value, not a freshly-skipped zero — meaning it can under-report subsequent activity. Re-opt-in to refresh.
+
+#### Orchestrator tokens can over-count (when opted in)
+
+The transcript scan is a pure time-window filter, so any Claude Code turn in the same working directory between `review_started_at` and the last tally gets counted — even if it's unrelated work. In practice that means:
 
 - **Clean:** review → fix back-to-back, or review → new review on updated codebase (each review's `review_started_at` excludes the prior one's turns).
 - **Over-counts:** review → unrelated work in the same cwd → fix (the unrelated turns land in the fix run's re-tally).

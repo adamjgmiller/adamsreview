@@ -293,14 +293,6 @@ jq -n \
             total: 0, invocations: 0, by_phase: {}, by_model: {},
             by_lens: {}, by_finding_phase4: {}
         },
-        orchestrator_tokens: {
-            total_input: 0,
-            total_output: 0,
-            cache_read: 0,
-            cache_creation: 0,
-            turn_count: 0,
-            sessions: []
-        },
         metrics: {
             phase_9_verified_pct: null,
             required_followup: null,

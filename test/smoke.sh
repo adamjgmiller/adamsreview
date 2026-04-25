@@ -1365,6 +1365,25 @@ else
     pass "OTR-4 (post-plugin-improvements A): missing orchestrator_tokens still omits header line (backward compat)"
 fi
 
+# Assertion OTR-5: zero-turn orchestrator_tokens (legacy artifacts that
+# carried the dropped Phase-0 zero seed, or opted-in runs whose time
+# window matched no turns) must also suppress the rendered line —
+# "0 output / 0 input across 0 turns" is content-free noise. Guards the
+# stronger `if turn_count:` predicate against accidental relaxation
+# back to `is not None` (which would re-render zero-turn lines).
+OTR5_DIR="$WORK/render-orch-zero"
+mkdir -p "$OTR5_DIR"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$OTR5_DIR/art.json" >/dev/null
+"$TOOLS/artifact-patch.py" --path "$OTR5_DIR/art.json" --set-json \
+    'orchestrator_tokens={"total_input":0,"total_output":0,"cache_read":0,"cache_creation":0,"turn_count":0,"sessions":[]}' \
+    >/dev/null
+md_zero=$("$TOOLS/artifact-render.py" --input "$OTR5_DIR/art.json")
+if echo "$md_zero" | grep -qF 'Orchestrator tokens:'; then
+    fail "OTR-5: zero-turn orchestrator_tokens should suppress rendered line; saw: $(echo "$md_zero" | grep -F 'Orchestrator tokens:')"
+else
+    pass "OTR-5: zero-turn orchestrator_tokens suppressed (legacy zero seed + empty time-window opted-in runs)"
+fi
+
 # ------------------------------------------------------------------ Stage 2.7
 # assign-finding-ids.sh (§13.12) — deterministic source-priority sort +
 # monotonic F### assignment over pooled internal + external candidates.
@@ -3521,6 +3540,13 @@ fi
 
 # ------------------------------------------------------------------ orchestrator-tokens.sh
 
+# OT-1 through OT-7 exercise the populated tally path; the helper now
+# defaults to skip unless ADAMS_REVIEW_TALLY_ORCHESTRATOR is set, so
+# scope-export it here. OT-8 (added below) covers the opt-out skip path
+# explicitly via `env -u` so test ordering doesn't matter. The trailing
+# `unset` keeps the export from leaking into downstream test blocks.
+export ADAMS_REVIEW_TALLY_ORCHESTRATOR=1
+
 OT_DIR="$WORK/ot"
 mkdir -p "$OT_DIR"
 cp "$FIX/artifact-seed.json" "$OT_DIR/artifact.json"
@@ -3689,6 +3715,40 @@ if [[ "$ot6_turns" == "1" && "$ot6_in" == "7" && "$ot6_out" == "8" ]]; then
 else
     fail "OT-6: filter let non-assistant lines through" "turns=$ot6_turns in=$ot6_in out=$ot6_out"
 fi
+
+# OT-8: opt-out skip path. With ADAMS_REVIEW_TALLY_ORCHESTRATOR unset
+# the helper must exit 0, print a one-line "skipped" notice, and leave
+# the artifact's orchestrator_tokens field absent (default opt-out is
+# the user-facing behavior since macOS Sequoia/Tahoe prompts for any
+# read of a transcript with the com.apple.provenance xattr). Use
+# `env -u` to scope the unset to this single invocation so the export
+# above keeps OT-1..OT-7 driving the populated path regardless of test
+# ordering. Also assert the artifact is still schema-valid (the field
+# stays absent — schema declares orchestrator_tokens optional).
+OT8_DIR="$OT_DIR/t8"
+mkdir -p "$OT_DIR/art8" "$OT8_DIR"
+cp "$FIX/artifact-seed.json" "$OT_DIR/art8/artifact.json"
+ot8_stdout=$(env -u ADAMS_REVIEW_TALLY_ORCHESTRATOR \
+    "$TOOLS/orchestrator-tokens.sh" \
+        --artifact "$OT_DIR/art8/artifact.json" \
+        --since    "2026-04-21T00:00:00.000Z" \
+        --transcript-dir "$OT8_DIR" 2>&1)
+ot8_exit=$?
+ot8_field=$(jq -r '.orchestrator_tokens // "absent"' "$OT_DIR/art8/artifact.json")
+if [[ $ot8_exit -eq 0 ]] \
+   && [[ "$ot8_stdout" == *"skipped"* ]] \
+   && [[ "$ot8_stdout" == *"ADAMS_REVIEW_TALLY_ORCHESTRATOR"* ]] \
+   && [[ "$ot8_field" == "absent" ]] \
+   && "$TOOLS/artifact-validate.sh" --path "$OT_DIR/art8/artifact.json" >/dev/null 2>&1; then
+    pass "OT-8: opt-out (env unset) skips tally — exit 0, 'skipped' stdout, no artifact mutation, schema-valid"
+else
+    fail "OT-8: opt-out skip mismatch" "exit=$ot8_exit field=$ot8_field stdout=$ot8_stdout"
+fi
+
+# Hygiene: drop the export so it doesn't leak into downstream test
+# blocks (none currently consume it, but future blocks shouldn't have
+# to know this one set it).
+unset ADAMS_REVIEW_TALLY_ORCHESTRATOR
 
 # ------------------------------------------------------------------ Project F: LLM output normalization
 #

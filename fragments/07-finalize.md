@@ -73,10 +73,19 @@ every lifecycle terminus" pattern as the sub-agent tally:
 `/adamsreview:walkthrough` each re-invoke it before their final
 render.
 
+The helper is **opt-in** via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`
+(default skip — the transcript scan trips the macOS Sequoia/Tahoe
+"access data from other apps" prompt because Claude Code marks
+transcripts with the `com.apple.provenance` xattr). When opted out
+it exits 0 with one `orchestrator-tally: skipped (...)` stdout line
+and does not touch the artifact, so the rendered PR comment simply
+omits the **Orchestrator tokens** line. See README §"Token counts"
+for the user-facing rationale and enable path.
+
 Soft over-count modes (unrelated same-cwd sessions, intermission chat
 between lifecycle commands) are accepted for v1 — both bias towards
-over-count, never under-count. See the helper header for the full
-list.
+over-count, never under-count, and only apply when opted in. See the
+helper header for the full list.
 
 ### 6.3a. Recompute `reviewer_sources` from actual findings
 

@@ -78,7 +78,14 @@ the full review → fix / add / walkthrough arc:
   `message.usage` per assistant turn, filtered by timestamp ≥
   `review_started_at`). Captures what `subagent_tokens` deliberately
   excludes: the orchestrator's own per-turn spend, which is what the
-  statusline's live `ctx:` badge is measuring the depth of.
+  statusline's live `ctx:` badge is measuring the depth of. **Opt-in
+  via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`** — defaults to skip because
+  the transcript scan trips the macOS Sequoia/Tahoe "access data from
+  other apps" prompt (Claude Code marks every transcript with the
+  `com.apple.provenance` xattr). When opted out, the helper exits 0
+  with a `skipped` stdout line and leaves the artifact field absent;
+  the renderer omits the line cleanly. See README §"Token counts" for
+  the user-facing rationale and the FDA + env-var enable path.
 
 The two are non-overlapping (sub-agent internal API calls vs.
 main-session turns). Four separate orchestrator counters — fresh
@@ -94,18 +101,29 @@ issue-filer agents dispatched in §6.5 (and the orchestrator turns that
 dispatch them) land in the logs/transcript after the tally, so their
 cost surfaces on the next lifecycle command's tally.
 
-**Orchestrator-tokens over-count modes (v1 accepted).** The time-
-window filter (`timestamp >= review_started_at`) counts every
-assistant turn in any transcript under `~/.claude/projects/<cwd-slug>/`,
-regardless of whether it belongs to this review. Clean cases: review
-→ fix back-to-back; review → new review on the updated codebase
-(each new review's `review_started_at` excludes the prior arc).
-Over-count cases: any unrelated session or unrelated same-session
-chat in the same cwd between `review_started_at` and the tally's
-invocation. Sub-agent tokens are unaffected (their log is per-review-id,
-not cwd-wide). See `bin/orchestrator-tokens.sh` header for the full
-caveat list; `plans/orchestrator-tokens.md` §"Known limitations" for
-why this was accepted over a `SessionStart`-hook-based fix.
+**Orchestrator-tokens over-count modes (v1 accepted, opted-in only).**
+When `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1` is set, the time-window
+filter (`timestamp >= review_started_at`) counts every assistant turn
+in any transcript under `~/.claude/projects/<cwd-slug>/`, regardless
+of whether it belongs to this review. Clean cases: review → fix
+back-to-back; review → new review on the updated codebase (each new
+review's `review_started_at` excludes the prior arc). Over-count
+cases: any unrelated session or unrelated same-session chat in the
+same cwd between `review_started_at` and the tally's invocation.
+Sub-agent tokens are unaffected (their log is per-review-id, not
+cwd-wide). When opted out (the default) there is no over-count *or*
+under-count from this filter — the field stays absent and only any
+prior opted-in value survives. See `bin/orchestrator-tokens.sh`
+header for the full caveat list; `plans/orchestrator-tokens.md`
+§"Known limitations" for why the time-window filter was accepted
+over a `SessionStart`-hook-based fix.
+
+**Stale-data preservation across opt-in toggles.** Skip on opt-out
+deliberately does not wipe a previously-written `orchestrator_tokens`
+value. So an opted-in `/adamsreview:review` followed by an opted-out
+`/adamsreview:fix` will publish the cumulative-cost line with the
+review-time value, not a refreshed one — the rendered number can
+lag actual spend. Re-opt-in on the next lifecycle command refreshes.
 
 ## Finding state model
 
@@ -358,7 +376,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 | `log-tokens.sh` | Bash | Appends `tokens.jsonl`. Every sub-agent dispatch. |
 | `freshness-gate.sh` | Bash | Phase 0.2a base-branch freshness reconciliation. Detects remote, fetches (30s soft timeout), computes behind_count; emits JSON `{comparison_ref, base_freshness, remote_sha, behind_count, preflight_warnings[]}` with `base_freshness ∈ {fresh, fast_forwarded, used_remote_ref, proceeded_stale, no_remote, no_fetch, pending_user_gate}`. `pending_user_gate` signals the orchestrator to dispatch `AskUserQuestion` and re-invoke with `--after-choice <a|b|c>`; the helper then applies the chosen side-effect (fast-forward / used_remote_ref / proceeded_stale) and re-emits terminal JSON. Non-FF on (a) re-emits pending with `ff_available: false` so the orchestrator re-asks with only (b)/(c)/(d). |
 | `tally-subagent-tokens.sh` | Bash | Rolls `tokens.jsonl` into `subagent_tokens` on the artifact. Pure readback, idempotent. Called at Phase 6 finalize and before each lifecycle command's final re-render so the published total stays cumulative across review → fix / add / walkthrough. |
-| `orchestrator-tokens.sh` | Bash | Rolls Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/` into `orchestrator_tokens`. Complements `tally-subagent-tokens.sh` by capturing the main-session per-turn spend that `subagent_tokens` deliberately excludes (§11). Slug algorithm is `tr '/.' '-'` (both chars map to `-`). `--since` filters by assistant-line timestamp; v1 accepts soft over-count modes from unrelated same-cwd sessions or intermission chat between lifecycle commands. |
+| `orchestrator-tokens.sh` | Bash | Rolls Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/` into `orchestrator_tokens`. Complements `tally-subagent-tokens.sh` by capturing the main-session per-turn spend that `subagent_tokens` deliberately excludes (§11). **Opt-in via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`** (default skip — the transcript scan trips the macOS Sequoia/Tahoe "access data from other apps" prompt because Claude Code marks transcripts with the `com.apple.provenance` xattr; opt-out exits 0 with a `skipped` stdout line and leaves the artifact untouched, preserving any prior opted-in value). Slug algorithm is `tr '/.' '-'` (both chars map to `-`). `--since` filters by assistant-line timestamp; when opted in, v1 accepts soft over-count modes from unrelated same-cwd sessions or intermission chat between lifecycle commands. |
 | `group-fixes.py` | Python | Phase 8 union-find over `files_planned` across eligible findings. Emits `[{id, finding_ids, files_planned}]`. |
 | `assign-finding-ids.sh` | Bash | Phase 1 post-join. Monotonic ID assignment over the pooled candidate list. |
 | `external-scrape.sh` | Bash | Phase 1.5 PR-comment fetch + bot filter (allow/deny config). |
