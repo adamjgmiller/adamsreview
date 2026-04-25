@@ -18,6 +18,9 @@ Modes (CLI flags; mutually exclusive):
                             writes validation_result only for confirmed-band
                             tuples. Per-tuple atomic write + halt on first
                             failure (preceding tuples stay committed).
+                            Pair with --expected N to reject under-sized
+                            batches (deep-lane invariant: one tuple per
+                            dispatched validator).
   --apply-fix-start <array> Stage 3: bulk open→attempted transition at the
                             start of Phase 8. Input is a JSON array of
                             {id, run_id}. Per-tuple atomic + first-failure
@@ -682,6 +685,36 @@ def cmd_apply_decisions(args):
         )
         return c.EXIT_USAGE
 
+    # --expected guard (deep-lane Phase 4 invariant). Caller passes the count
+    # of validators it dispatched in this wave; if fewer tuples arrive, the
+    # orchestrator likely batched the dispatch into a single Opus call —
+    # surface that loudly so it has to re-dispatch one Agent per candidate
+    # rather than silently losing per-finding blast-radius work. Light-lane
+    # callers (Phase 4 light, /adamsreview:add light) pass --expected 0 (or
+    # omit) to skip the check.
+    if args.expected > 0 and len(decisions) < args.expected:
+        received_ids = [
+            (t.get("id") if isinstance(t, dict) and t.get("id") else f"<#{i}>")
+            for i, t in enumerate(decisions)
+        ]
+        c.err_prompt(
+            f"--apply-decisions expected {args.expected} tuple(s) but received {len(decisions)}",
+            context=(
+                f"received tuple ids: {received_ids}" if received_ids
+                else "received empty tuple array"
+            ),
+            action=(
+                "every dispatched deep-lane validator must produce its own decision "
+                "tuple. If the orchestrator collapsed multiple candidates into a "
+                "single Opus call (e.g. 'one Opus deep-validator for all 7 deep "
+                "candidates'), re-dispatch with one Agent tool-use per candidate "
+                "and re-invoke --apply-decisions on the full per-finding result "
+                "set. Per-finding blast-radius work needs independent context — "
+                "see fragment 05-validation.md §4.2."
+            )
+        )
+        return c.EXIT_VALIDATION
+
     counts = {"confirmed_mechanical": 0, "confirmed_manual": 0, "confirmed_report": 0,
               "uncertain": 0, "disproven": 0}
 
@@ -1164,6 +1197,13 @@ def build_parser():
         action="store_true",
         help="validate the patch in memory and print a unified diff to stdout; no write"
     )
+    p.add_argument(
+        "--expected",
+        type=int,
+        default=0,
+        metavar="N",
+        help="(--apply-decisions only) expected tuple count; rejects under-sized batches with EXIT_VALIDATION. Pass N=0 (default) or omit to skip the check (light-lane Phase 4, /adamsreview:add light)."
+    )
     mode = p.add_mutually_exclusive_group(required=False)
     mode.add_argument(
         "--init",
@@ -1204,6 +1244,14 @@ def build_parser():
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    # --expected is meaningful only in --apply-decisions mode. Reject early
+    # if it's set without --apply-decisions so a typo doesn't silently
+    # become a no-op.
+    if args.expected and args.apply_decisions is None:
+        parser.error("--expected is only valid with --apply-decisions")
+    if args.expected < 0:
+        parser.error("--expected must be >= 0")
 
     try:
         if args.init is not None:

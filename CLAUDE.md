@@ -33,10 +33,13 @@ The original four are **built and in production use** as of 2026-04-19 (Stages 1
 ├── Phase 1.5  ─┘ External PR-comment scrape (gh api → bot filter → comment-freshness →
 │                 Sonnet normalizer; ensemble mode only; joint dispatch with Phase 1)
 ├── Phase 2 — Dedup (one Sonnet call; merges equivalent candidates, unions source_families)
-├── Phase 3 — Cheap scoring + gate (Sonnet err-up rubric; ≥2 families auto-graduate;
-│              logs demote_rate + score_phase3_histogram to phases.jsonl for #24 calibration)
-├── Phase 4 — Validation (deep Opus per candidate for correctness/security;
-│              light Sonnet confirmation for ux/policy/architecture)
+├── Phase 3 — Cheap scoring + gate (chunked-batch Sonnet err-up rubric, ≤25
+│              candidates per chunk-agent; ≥2 families auto-graduate; logs
+│              demote_rate + score_phase3_histogram to phases.jsonl for #24 calibration)
+├── Phase 4 — Validation (deep Opus per candidate for correctness/security —
+│              one Agent per finding, structurally enforced by `--apply-decisions
+│              --expected $N`; light Sonnet confirmation for ux/policy/architecture
+│              via chunked-batch chunk-agents, ≤25 per chunk)
 ├── Phase 5 — Cross-cutting review (deep-lane only; dispatched Opus sub-agent)
 └── Phase 6 — Finalize (phases.jsonl, tally-subagent-tokens.sh → subagent_tokens,
                orchestrator-tokens.sh → orchestrator_tokens, artifact write,
@@ -60,8 +63,9 @@ The original four are **built and in production use** as of 2026-04-19 (Stages 1
     (paste-normalizer Sonnet | structured one-shot | mixed) → dedup against
     existing findings (Sonnet, one-direction) → assign IDs continuing past
     max existing F-id (assign-finding-ids.sh --start-from) → --add-finding loop →
-    Phase 4 validation lane-aware, NO Wave 2 (Opus deep / Sonnet light) →
-    --apply-decisions → §13.1 pre-existing override re-assertion →
+    Phase 4 validation lane-aware, NO Wave 2 (Opus deep one-per-candidate /
+    Sonnet light chunked-batch ≤25/chunk) → --apply-decisions --expected $N →
+    §13.1 pre-existing override re-assertion →
     re-tally subagent_tokens + orchestrator_tokens → re-render →
     re-publish to existing comment_id → trace + summary
 ```

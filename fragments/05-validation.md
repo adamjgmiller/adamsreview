@@ -3,14 +3,15 @@
 Phase 3's survivors get validated: deep-lane candidates (correctness +
 security outside trivial mode) go through Phase 4a — one Opus sub-agent
 per candidate. Everything else (plus every candidate under
-`trivial_mode`) goes through Phase 4b — one Sonnet sub-agent per
-candidate, lighter.
+`trivial_mode`) goes through Phase 4b — chunked-batch Sonnet
+chunk-agents (≤25 candidates per chunk; see §4.3), lighter.
 
-Chain-wave retry (§4): the orchestrator dispatches Wave 1 per
-candidate; if any Wave 1 output references further candidates via
-`related_candidates_to_investigate`, the orchestrator aggregates
-those at the orchestrator level and dispatches Wave 2. Hard cap at
-two waves.
+Chain-wave retry (§4): the orchestrator dispatches Wave 1 (deep
+per-candidate + light chunked-batch); if any Wave 1 deep output
+references further candidates via `related_candidates_to_investigate`,
+the orchestrator aggregates those at the orchestrator level and
+dispatches Wave 2. Hard cap at two waves. Wave 2 is deep-lane only,
+one Opus per candidate.
 
 Capture `phase_4_start_epoch=$(date +%s)` as the first action of this
 phase — step 4.7 logs the elapsed time.
@@ -39,9 +40,19 @@ on `impact_type`):
 
 ### 4.2. Wave 1 — deep lane (Opus per candidate; skipped under trivial_mode)
 
-For each deep-lane candidate, launch one `Agent` tool-use with
+For each deep-lane candidate, launch ONE `Agent` tool-use with
 `model: opus`, `subagent_type: general-purpose`. Dispatch all in one
 orchestrator turn for concurrency.
+
+**One Opus per candidate — never collapse multiple deep-lane candidates
+into a single batched Opus call.** Each candidate needs its own
+independent blast-radius trace, evidence walk, and fix-proposal
+synthesis; that investigation does not share context across candidates
+the way Phase 3's rubric scoring does, and batching collapses
+per-candidate depth. The §4.4 `--apply-decisions --expected $N` guard
+enforces this structurally: if the dispatch was collapsed and fewer
+tuples arrive than dispatched candidates, the helper rejects the batch
+with a recovery action that names the gap (see plans/phase-3-and-4-batching.md).
 
 Each sub-agent receives:
 - The full stored finding JSON. `evidence_snippet` is not among the
@@ -183,50 +194,85 @@ Prompt essence (per §19.5):
 > information into `evidence[]`, `blast_radius.invariants_at_stake[]`,
 > and `fix_proposal.{approach,files_to_modify}` instead.
 
-### 4.3. Wave 1 — light lane (Sonnet per candidate)
+### 4.3. Wave 1 — light lane (Sonnet, chunked-batch fan-out)
 
-For each light-lane candidate (including every candidate under
-`trivial_mode`), launch one `Agent` tool-use with `model: sonnet`.
+Split light-lane candidates (including every candidate under
+`trivial_mode`) into chunks of **at most 25 candidates per chunk**,
+balanced as evenly as feasible. For each chunk, launch ONE `Agent`
+tool-use with `model: sonnet`. Dispatch all chunk-agents in one
+orchestrator turn for concurrency.
+
+**Why chunked, unlike the deep lane.** Light-lane work is rubric-
+checking against CLAUDE.md, not per-candidate blast-radius
+investigation, so it batches well — same justification as Phase 3
+scoring (§3.3). Sonnet is cheap, but unbounded batches collapse score
+resolution onto the rubric anchors and stop using parallelism on large
+reviews. The 25-cap restores both. The §4.4 `--apply-decisions
+--expected $N` guard counts every dispatched candidate (deep + light),
+so a chunk-agent that drops a finding from its returned array trips
+the same structural check as a collapsed deep-lane Opus.
 
 Prompt essence (per §19.6):
 
-> You are a light confirmation validator.
+> You are a light confirmation validator. You will return one entry
+> per candidate.
 >
-> **Candidate:** `<finding JSON>`
+> **Candidates (N total):**
+> ```
+> <full JSON array of every finding in this chunk>
+> ```
+>
 > **CLAUDE.md paths:** `$claude_md_paths`
-> **trivial_mode:** `<true|false>` (when true, do NOT emit `actionability: auto_fixable` — only `manual` or `report_only` per §13.9).
+> **trivial_mode:** `<true|false>` (when true, do NOT emit `actionability: auto_fixable` for ANY candidate — only `manual` or `report_only` per §13.9).
 >
 > **Read-only.** Do not use `Edit` or `Write`; describe any needed
-> change in the finding — it's not yours to apply.
+> change in each finding's `note` — it's not yours to apply.
 >
-> Verify the finding's accuracy only: does the CLAUDE.md really contain
-> this rule? Does the adjacent comment really conflict? Adjust score
-> accordingly.
+> Verify each finding's accuracy only: does the CLAUDE.md really
+> contain this rule? Does the adjacent comment really conflict? Adjust
+> the per-candidate score accordingly.
 >
 > Flag `actionability: auto_fixable` ONLY for very mechanical rules
 > where the fix is unambiguous (e.g. import ordering, specific constant
 > naming). Judgment calls → `manual`. Architecture findings default to
 > `report_only`.
 >
-> Return JSON:
+> **Anti-anchor-clustering instruction (chunk-batch specific):** Use
+> the full 0-100 range. The §13.1 Phase-4 routing has cutoffs at 45,
+> 60, and 75; a finding that sits between 60 and 75 should score 65 or
+> 70 — do not snap it to an anchor. If multiple candidates in the
+> chunk would naturally land at the same anchor, resolve which ones
+> are actually higher / lower before returning. Compressed-onto-anchor
+> scores lose the resolution Phase 6 needs to render confirmed_strength.
+>
+> Return JSON array, one entry per candidate (order does not matter,
+> routing is by `id`):
+>
 > ```
-> {
->   "decision": "confirmed" | "disproven" | "uncertain",
->   "score_phase4": <0-100>,
->   "actionability": "auto_fixable" | "manual" | "report_only",
->   "note": "brief rationale"
-> }
+> [{"id":"<finding-id>","decision":"confirmed|disproven|uncertain","score_phase4":<0-100>,"actionability":"auto_fixable|manual|report_only","note":"brief rationale"}, ...]
 > ```
 
 ### 4.4. Apply §13.1 Phase-4 decision table (batched)
 
-For each Wave 1 result, first log tokens:
+Log tokens for each Wave 1 sub-agent before composing the apply batch.
+Deep-lane validators are per-candidate, so log once per finding with
+`--finding-id`. Light-lane chunk-agents own multiple findings, so log
+once per chunk-agent without `--finding-id` (tokens are agent-level,
+matching the Phase 3 pattern in §3.3 step 1):
 
 ```bash
+# Deep lane (per candidate):
 log-tokens.sh \
-  --review-dir "$review_dir" --phase <phase_4a|phase_4b> \
+  --review-dir "$review_dir" --phase phase_4a \
   --agent-role validator --finding-id "$id" \
-  --agent-id <id> --model <opus|sonnet> \
+  --agent-id <id> --model opus \
+  --tokens <N or null>
+
+# Light lane (per chunk-agent — --finding-id omitted):
+log-tokens.sh \
+  --review-dir "$review_dir" --phase phase_4b \
+  --agent-role validator \
+  --agent-id <id> --model sonnet \
   --tokens <N or null>
 ```
 
@@ -294,8 +340,13 @@ canon=$(printf '%s' "$raw" \
         2> >(tee -a "$trace_log_path" >&2)) \
     || canon='{"score_phase4": null, "actionability": null, "notes": "Phase 4 parse/score unrecoverable"}'
 # `$canon` is now canonical JSON — merge it with {id: $finding_id} and
-# the sub-agent's raw `reason` (if any) to form the tuple. Do the same
-# for light lane with --lane light.
+# the sub-agent's raw `reason` (if any) to form the tuple. For the
+# light lane, `$raw` is one ENTRY of the chunk-agent's array (the
+# chunk-agent returns `[{id,...}, {id,...}, ...]` per §4.3): iterate
+# the array first, then pipe each entry through `--lane light`
+# individually. Piping the whole array through the helper exits 2
+# (parse-validator-result.py rejects non-object inputs), which would
+# fall back every finding in the chunk to score_phase4=null.
 ```
 
 The helper's `notes` field flows into the tuple's `reason` when the
@@ -341,9 +392,15 @@ mkdir -p "$scratch"
 # $scratch/phase4-wave1-decisions.json by whatever means is natural.
 # The helper only cares about the file path + tuple shape above.
 
+# total_dispatched_w1 = N_deep_dispatched + N_light_dispatched
+# (count individual candidates, NOT chunk-agents — each light-lane
+# chunk-agent owns multiple findings and is expected to return one
+# tuple per finding it owned). Used by --expected as the structural
+# guard against batched-Opus collapse and chunk-array drops.
 out=$(artifact-patch.py \
         --path "$artifact_path" \
-        --apply-decisions "@$scratch/phase4-wave1-decisions.json")
+        --apply-decisions "@$scratch/phase4-wave1-decisions.json" \
+        --expected "$total_dispatched_w1")
 echo "$out"  # e.g. "applied 18 decisions (confirmed_mechanical=4, confirmed_manual=1, confirmed_report=0, uncertain=3, disproven=10)"
 ```
 
@@ -352,14 +409,30 @@ after one retry): emit `score_phase4: null` in the tuple and the
 helper routes to `uncertain` automatically. Override the default
 reason by including `reason: "Phase 4 parse failure — manual review"`
 in that tuple so the rendered report explains why Phase 4 didn't
-confirm.
+confirm. The tuple still counts toward `--expected`, so the parse
+failure does not trip the structural guard — it surfaces as an
+`uncertain` finding instead.
 
-**On apply-decisions exit non-zero:** the batch halted at the first
-invalid tuple (stderr names the failing finding id). Tuples preceding
-the failure are already committed to the artifact. Fix the offending
-tuple and re-invoke with just the remainder; do NOT re-send the whole
-batch (the committed tuples would be re-applied, and `_apply_finding_set`
-would re-append score_history entries — audit-trail pollution).
+**On `--expected` rejection (exit 1, count mismatch):** the helper
+emits a stderr block naming the expected vs received count and the
+recovery action. This means either the orchestrator collapsed
+multiple deep-lane candidates into one Opus call (re-dispatch one
+Agent per missing candidate and recompose the tuple array on the full
+per-finding result set) OR a light-lane chunk-agent dropped findings
+from its returned array (re-dispatch the chunk for the missing ids).
+Do NOT lower `--expected` to match the received count — the guard is
+exactly what is supposed to catch this. The artifact is left
+unchanged on this exit, so a clean re-invoke with the corrected
+batch is safe.
+
+**On apply-decisions exit non-zero (other validation failures):** the
+batch halted at the first invalid tuple (stderr names the failing
+finding id). Tuples preceding the failure are already committed to
+the artifact. Fix the offending tuple and re-invoke with just the
+remainder; do NOT re-send the whole batch (the committed tuples
+would be re-applied, and `_apply_finding_set` would re-append
+score_history entries — audit-trail pollution). The remainder
+re-invoke uses `--expected <remainder-count>` to match.
 
 ### 4.4.5. Tree-cleanliness sweep (belt-and-braces for the read-only preamble)
 
@@ -447,16 +520,21 @@ If the resulting list is non-empty AND we haven't already done Wave 2:
      --path "$artifact_path" --add-finding "$wave2_finding"
    ```
 
-2. Run Phase 3 scoring on these new candidates (one Sonnet call each —
-   can fan out). Same step 3.3 pattern as the first pass.
+2. Run Phase 3 scoring on these new candidates using the chunked-batch
+   pattern from §3.3 (Wave 2 candidate counts are typically small, so a
+   single chunk-agent usually suffices; the ≤25-per-chunk cap still
+   applies if the related-candidate sweep produced an unusually large
+   set).
 3. Dispatch Wave 2 deep-lane validators on any that pass the Phase-3
    gate, same prompt as Wave 1 BUT add: "This is Wave 2 — do NOT emit
    further `related_candidates_to_investigate` entries." (Hard-cap
-   enforcement: §4 says "Hard cap at 2 waves.")
+   enforcement: §4 says "Hard cap at 2 waves.") Wave 2 is deep-lane
+   only — one Opus per candidate, no batching, same rule as §4.2.
 4. Apply the decision table per step 4.4 for Wave 2 results — build
    a second tuple array at `$scratch/phase4-wave2-decisions.json` and
-   invoke `--apply-decisions @…` once for the whole Wave 2 batch.
-   Re-run the step 4.4.5 tree-cleanliness sweep after this
+   invoke `--apply-decisions @… --expected $N_wave2_dispatched` (where
+   `$N_wave2_dispatched` is the count of Wave 2 validators dispatched
+   in step 3). Re-run the step 4.4.5 tree-cleanliness sweep after this
    `--apply-decisions` returns — Wave 2 validators are dispatched with
    the same prompt as Wave 1, so the same read-only invariant applies.
 

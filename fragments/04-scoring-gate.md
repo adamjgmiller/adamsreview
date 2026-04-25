@@ -1,8 +1,8 @@
 ## Phase 3 — Cheap scoring + gate
 
-Per-candidate Sonnet scoring against the §20 rubric (err-up), followed
-by the §13.1 Phase-3 gate that decides which candidates move on to
-expensive Phase 4 validation.
+Chunked-batch Sonnet scoring against the §20 rubric (err-up; up to 25
+candidates per chunk-agent), followed by the §13.1 Phase-3 gate that
+decides which candidates move on to expensive Phase 4 validation.
 
 Capture `phase_3_start_epoch=$(date +%s)` as the first action of this
 phase — §13.5 observability requires an elapsed time on the phases.jsonl
@@ -49,20 +49,37 @@ Capture as `scoring_ids`.
 If `scoring_ids` is empty, skip step 3.3 and jump to step 3.4 (gate; may
 be all-gate skip too).
 
-### 3.3. Dispatch scoring sub-agents (parallel fan-out)
+### 3.3. Dispatch scoring sub-agents (chunked-batch fan-out)
 
-For each id in `scoring_ids`, launch ONE Sonnet sub-agent. Fire them all
-from a single orchestrator turn so they run concurrently — just like the
-Phase 1 lens fan-out.
+Split `scoring_ids` into chunks of **at most 25 candidates per chunk**,
+balanced as evenly as feasible (e.g. 22 → one chunk of 22; 50 → 25/25;
+60 → 20/20/20). For each chunk, launch ONE Sonnet sub-agent. Fire all
+chunk-agents from a single orchestrator turn so they run concurrently —
+same parallel fan-out pattern as Phase 1 lenses, but at chunk granularity.
 
-Each sub-agent receives the full finding and the CLAUDE.md path list.
-Prompt essence (passes §20 rubric verbatim):
+**Why chunked, not per-finding.** Per-finding fan-out (one Sonnet per
+candidate) was the original design but was empirically too expensive on
+typical PRs (20+ candidates → 20+ dispatches) and the orchestrator
+self-collapsed to a single batched call anyway, off-spec. A single
+unbounded batch lost score resolution (anchor collapse — every score
+landing on 0/25/50/75/100 with no intermediate values). The 25-cap
+restores parallelism on large reviews and keeps each agent's working
+set small enough to use the full 0-100 range. The Phase-3 gate is a
+sharp cutoff at 45 — slight per-candidate score loss is tolerable; loss
+of triage signal feeding Phase 4 is not.
 
-> Score the following candidate finding against the 0-100 rubric below.
+**Sub-agent prompt** — each chunk-agent receives the full finding JSON
+for every candidate in the chunk, the §20 rubric verbatim, the
+CLAUDE.md path list, and an explicit anti-anchor-clustering instruction.
+
+Prompt essence:
+
+> Score each of the following candidate findings against the 0-100
+> rubric below. Return one entry per candidate.
 >
-> **Candidate:**
+> **Candidates (N total):**
 > ```
-> <full finding JSON>
+> <full JSON array of every finding in this chunk>
 > ```
 >
 > **CLAUDE.md paths:** `$claude_md_paths`
@@ -90,26 +107,50 @@ Prompt essence (passes §20 rubric verbatim):
 > regression or silent-failure-no-feedback warrants 75+. A minor copy
 > tweak or visual inconsistency warrants 25.
 >
-> Return JSON: `{"score": <0-100>, "score_rationale": "<one-sentence reason>"}`.
+> **Anti-anchor-clustering instruction (chunk-batch specific):** The
+> rubric anchors 0/25/50/75/100 are reference points, NOT the only
+> valid scores. Use the full 0-100 range. A finding that sits between
+> 50 and 75 should score 60 or 65 — do not snap it to an anchor. If
+> half the chunk would naturally land at 50, that is a triage failure:
+> resolve which ones are 40, 55, 65, etc. before returning. The
+> Phase-3 gate cuts at exactly 45; scores compressed onto anchors lose
+> the resolution Phase 4 needs to triage.
+>
+> Return JSON array, one entry per candidate (order does not matter,
+> routing is by `id`):
+>
+> ```
+> [{"id":"<finding-id>","score":<0-100>,"score_rationale":"<one-sentence reason>"}, ...]
+> ```
 
-For each sub-agent result:
+For each chunk-agent's result:
 
-1. **Log tokens** first (§24.4 invariant):
+1. **Log tokens** once per chunk-agent (§24.4 invariant; `--finding-id`
+   is omitted because tokens are agent-level, not per-finding — the
+   chunk dispatched a single sub-agent that scored multiple candidates):
 
     ```bash
     log-tokens.sh \
       --review-dir "$review_dir" --phase phase_3 \
-      --agent-role scoring --finding-id "$id" \
-      --agent-id <id-from-result> --model sonnet \
-      --tokens <N or null>
+      --agent-role scoring --agent-id <id-from-result> \
+      --model sonnet --tokens <N or null>
     ```
 
-2. **Parse** `{score, score_rationale}` (retry once on JSON-parse
-   failure per §24.1; drop with note to `trace.md` on second failure —
-   set `score_phase3=null` for the finding).
+2. **Parse** the JSON array (retry once on parse failure per §24.1).
+   On second failure, set `score_phase3=null` for every finding in
+   this chunk and append a chunk-level note to `trace.md` — the gate
+   in step 3.4 will treat null-score findings as below-gate unless
+   they auto-graduate via ≥2 source families.
 
-3. **Write** the score. `--set score_phase3=<N>` auto-appends to
-   `score_history`:
+3. **Validate count and ids.** The result should contain one entry per
+   candidate dispatched in this chunk:
+   - **Missing ids** (dispatched candidate not in result): set
+     `score_phase3=null` for those findings + trace.md note.
+   - **Extra ids** (in result but not dispatched): ignore + trace.md
+     note (likely a hallucinated candidate id).
+
+4. **Write each score** per finding via `--set` (auto-appends to
+   `score_history`):
 
     ```bash
     artifact-patch.py \
@@ -119,7 +160,7 @@ For each sub-agent result:
     ```
 
     (`reason` at this phase holds the scoring rationale; Phase 4's gate
-    application will overwrite it with the gate-specific reason if the
+    application overwrites it with the gate-specific reason if the
     candidate is gated out.)
 
 ### 3.4. Apply the Phase-3 gate (§13.1)
@@ -238,7 +279,9 @@ log-phase.sh \
 - Sub-threshold findings have `disposition=below_gate`, `is_actionable=false`.
 - Gate-passing findings have `disposition=pending_validation` (the
   §5.2.1 gate-in parking state); Phase 4 overwrites.
-- `tokens.jsonl` + one entry per scored finding.
+- `tokens.jsonl` + one entry per scoring chunk-agent (not per finding —
+  a chunk-agent owns up to 25 candidates and logs at agent granularity;
+  see §3.3 step 1).
 - `phases.jsonl` + Phase 3 record with `counts_by_disposition`,
   `demote_rate` (float), and `score_phase3_histogram` (10 buckets)
   — telemetry for post-conversion-ideas #24 rubric calibration.

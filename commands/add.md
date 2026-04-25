@@ -86,8 +86,9 @@ Sub-agent dispatches in this command:
 - **Paste normalizer** (Sonnet, step 4) — only fires in paste mode.
 - **Dedup** (Sonnet, step 5) — only fires when `--no-dedup` is unset
   AND there is at least one new candidate.
-- **Phase 4 validators** (Opus deep / Sonnet light, step 7) — one
-  sub-agent per surviving candidate, dispatched in a single
+- **Phase 4 validators** (Opus deep / Sonnet light, step 7) — deep
+  lane is one Opus per candidate; light lane is chunked-batch (≤25
+  candidates per Sonnet chunk-agent). Both dispatch in a single
   orchestrator turn for concurrency.
 
 Token extraction, `log-tokens.sh`, structured-output parse, and
@@ -555,10 +556,17 @@ light_count=0
 
 #### 7.3 Deep-lane dispatch (Opus, one sub-agent per candidate)
 
-For each id in `deep_ids`, launch one `Agent` tool-use with `model:
+For each id in `deep_ids`, launch ONE `Agent` tool-use with `model:
 opus`, `subagent_type: general-purpose`, dispatched in a single
 orchestrator turn for concurrency. Read the finding JSON and pass it
 inline.
+
+**One Opus per candidate — never collapse multiple deep-lane candidates
+into a single batched Opus call.** Same rule as `05-validation.md` §4.2
+and the same structural enforcement: §7.6's `--apply-decisions
+--expected $total_dispatched` rejects under-sized batches with a
+recovery action. Each candidate needs its own blast-radius trace and
+fix-proposal context.
 
 Prompt essence — verbatim from `05-validation.md` §4.2 (kept
 self-contained here for the user-add path; do NOT dispatch through that
@@ -615,44 +623,62 @@ apply):
 > object — the orchestrator only persists `validation_result` on
 > confirmed findings.
 
-After each sub-agent returns: log tokens (phase `phase_add`,
-agent_role `validator`, finding-id, model `opus`).
+After each sub-agent returns: log tokens per candidate (phase
+`phase_add`, agent_role `validator`, `--finding-id` set, model `opus`).
 
-#### 7.4 Light-lane dispatch (Sonnet, one sub-agent per candidate)
+#### 7.4 Light-lane dispatch (Sonnet, chunked-batch fan-out)
 
-For each id in `light_ids`, launch one `Agent` tool-use with `model:
-sonnet`. Prompt essence — verbatim from `05-validation.md` §4.3:
+Split `light_ids` into chunks of **at most 25 candidates per chunk**,
+balanced as evenly as feasible. For each chunk, launch ONE `Agent`
+tool-use with `model: sonnet`. Dispatch all chunk-agents in one
+orchestrator turn for concurrency. Same chunked rationale as
+`05-validation.md` §4.3 — light-lane work is rubric-checking, not
+per-candidate investigation, so it batches well; the 25-cap restores
+parallelism on large add-pasted batches and keeps each chunk-agent's
+working set small enough to use the full 0-100 score range.
 
-> You are a light confirmation validator.
+Prompt essence — verbatim from `05-validation.md` §4.3:
+
+> You are a light confirmation validator. You will return one entry
+> per candidate.
 >
-> **Candidate:** `<finding JSON>`
+> **Candidates (N total):**
+> ```
+> <full JSON array of every finding in this chunk>
+> ```
+>
 > **CLAUDE.md paths:** `$claude_md_paths`
 > **trivial_mode:** `<true|false>` (when true, do NOT emit
-> `actionability: auto_fixable` — only `manual` or `report_only`).
+> `actionability: auto_fixable` for ANY candidate — only `manual` or
+> `report_only`).
 >
 > **Read-only.** Do not use `Edit` or `Write`; describe any needed
-> change in the finding — it's not yours to apply.
+> change in each finding's `note` — it's not yours to apply.
 >
-> Verify the finding's accuracy only: does the CLAUDE.md really contain
-> this rule? Does the adjacent comment really conflict? Adjust score
-> accordingly.
+> Verify each finding's accuracy only: does the CLAUDE.md really
+> contain this rule? Does the adjacent comment really conflict?
+> Adjust the per-candidate score accordingly.
 >
 > Flag `actionability: auto_fixable` ONLY for very mechanical rules
 > (e.g. import ordering, specific constant naming). Judgment calls →
 > `manual`. Architecture findings default to `report_only`.
 >
-> Return JSON:
+> **Anti-anchor-clustering instruction (chunk-batch specific):** Use
+> the full 0-100 range. Phase-4 routing has cutoffs at 45, 60, 75 — a
+> finding between adjacent anchors should score in between (e.g. 60,
+> 65). Do not snap onto an anchor.
+>
+> Return JSON array, one entry per candidate (order does not matter,
+> routing is by `id`):
+>
 > ```
-> {
->   "decision": "confirmed" | "disproven" | "uncertain",
->   "score_phase4": <0-100>,
->   "actionability": "auto_fixable" | "manual" | "report_only",
->   "note": "brief rationale"
-> }
+> [{"id":"<finding-id>","decision":"confirmed|disproven|uncertain","score_phase4":<0-100>,"actionability":"auto_fixable|manual|report_only","note":"brief rationale"}, ...]
 > ```
 
-After each sub-agent returns: log tokens (phase `phase_add`,
-agent_role `validator`, finding-id, model `sonnet`).
+After each chunk-agent returns: log tokens once per chunk-agent
+(phase `phase_add`, agent_role `validator`, `--finding-id` OMITTED
+because tokens are agent-level when a single sub-agent owns multiple
+findings, model `sonnet`).
 
 #### 7.5 Tree-cleanliness sweep (belt-and-braces)
 
@@ -721,9 +747,18 @@ mkdir -p "$scratch"
 # $scratch/add-decisions.json by whatever means is natural. The helper
 # only cares about the file path + tuple shape.
 
+# total_dispatched = N_deep + N_light (count individual candidates,
+# NOT chunk-agents — each light-lane chunk-agent owns multiple
+# findings and is expected to return one tuple per finding it owned).
+# Used by --expected as the structural guard against batched-Opus
+# collapse (deep) and chunk-array drops (light). Same discipline as
+# 05-validation.md §4.4.
+total_dispatched=$(( deep_count + light_count ))
+
 out=$(artifact-patch.py \
         --path "$artifact_path" \
-        --apply-decisions "@$scratch/add-decisions.json")
+        --apply-decisions "@$scratch/add-decisions.json" \
+        --expected "$total_dispatched")
 echo "$out"
 
 rm -rf -- "$scratch"
@@ -741,7 +776,18 @@ dispositions_summary=$(artifact-read.sh \
 On parse failure for any sub-agent: emit `score_phase4: null` for that
 tuple — the helper routes it to `uncertain` automatically. Override
 the default reason via `reason: "Phase 4 parse failure — manual
-review"` for legibility.
+review"` for legibility. The tuple still counts toward `--expected`,
+so parse failures do not trip the structural guard.
+
+**On `--expected` rejection (exit 1, count mismatch):** the helper
+emits a stderr block naming expected vs received count and the
+recovery action. Either deep-lane Opus dispatches were collapsed
+(re-dispatch one Agent per missing candidate) or a light-lane
+chunk-agent dropped findings from its returned array (re-dispatch the
+chunk for the missing ids). Recompose the tuple array on the full
+per-finding result set and re-invoke; do NOT lower `--expected` to
+match the received count — the guard is exactly what is supposed to
+catch this. The artifact is left unchanged on this exit.
 
 #### 7.7 Pre-existing override re-assertion (§13.1)
 

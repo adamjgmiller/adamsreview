@@ -17,6 +17,16 @@
 # coerced to 0 in the totals. An empty log produces a zero rollup
 # rather than an error.
 #
+# by_finding_phase4 only includes phase_4a/phase_4b rows that carry a
+# `finding_id`. Phase 4a (deep-lane) is per-candidate and always
+# carries one; Phase 4b (light-lane) is chunked-batch (one chunk-agent
+# owning ≤25 findings; see fragments/05-validation.md §4.3) and logs
+# without `finding_id`, so its cost rolls up only into total / by_phase
+# / by_model — not the per-finding breakdown. Filtering null-keyed
+# rows here keeps `from_entries` from erroring on a non-string key
+# while preserving the schema invariant that by_finding_phase4 keys
+# are real finding IDs.
+#
 # Usage:
 #   tally-subagent-tokens.sh --tokens-log <path> --artifact <path>
 #
@@ -87,7 +97,7 @@ tally_json=$(jq -s '{
   by_model:    (group_by(.model)      | map({key:.[0].model,      value: (([.[] | .tokens // 0] | add) // 0)}) | from_entries),
   by_lens:     ([.[] | select(.agent_role | startswith("lens_"))]
                 | group_by(.agent_role) | map({key:.[0].agent_role, value: (([.[] | .tokens // 0] | add) // 0)}) | from_entries),
-  by_finding_phase4: ([.[] | select(.phase == "phase_4a" or .phase == "phase_4b")]
+  by_finding_phase4: ([.[] | select((.phase == "phase_4a" or .phase == "phase_4b") and .finding_id != null)]
                 | group_by(.finding_id) | map({key:.[0].finding_id, value: (([.[] | .tokens // 0] | add) // 0)}) | from_entries)
 }' "$TOKENS_INPUT")
 
