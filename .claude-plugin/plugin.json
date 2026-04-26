@@ -1,6 +1,6 @@
 {
   "name": "adamsreview",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Multi-lens code review pipeline: deep review, automated fix loop, interactive walkthrough, manual promote, external-finding injection.",
   "author": { "name": "Adam Miller" },
   "license": "MIT",
