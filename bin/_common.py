@@ -26,6 +26,7 @@ EXIT_INVALID_TRANSITION = 2  # state-transition whitelist violation
 EXIT_DRY_RUN_INVALID = 3     # --dry-run would produce invalid artifact
 EXIT_UNEXPECTED = 4          # uncaught exception / unknown error
 EXIT_MISSING_DEP = 5         # jsonschema import failed (shouldn't happen under uv shebang)
+EXIT_EXPECTED_MISMATCH = 6   # --apply-decisions tuple count != --expected (recover by re-dispatch)
 EXIT_USAGE = 64              # argparse / usage error (conventional)
 EXIT_SCORE_UNRECOVERABLE = 2 # also used by parse-validator-result.py for score-recovery failure
 EXIT_UNKNOWN_FAMILY = 3      # also used by source-family-map.py for unknown enum value

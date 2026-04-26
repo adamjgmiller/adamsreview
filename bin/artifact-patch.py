@@ -19,8 +19,10 @@ Modes (CLI flags; mutually exclusive):
                             tuples. Per-tuple atomic write + halt on first
                             failure (preceding tuples stay committed).
                             Pair with --expected N to reject under-sized
-                            batches (deep-lane invariant: one tuple per
-                            dispatched validator).
+                            batches (one tuple per dispatched candidate;
+                            deep-lane: one Opus per candidate; light-lane:
+                            each chunk-agent must return one tuple per
+                            owned finding).
   --apply-fix-start <array> Stage 3: bulk open→attempted transition at the
                             start of Phase 8. Input is a JSON array of
                             {id, run_id}. Per-tuple atomic + first-failure
@@ -685,14 +687,18 @@ def cmd_apply_decisions(args):
         )
         return c.EXIT_USAGE
 
-    # --expected guard (deep-lane Phase 4 invariant). Caller passes the count
-    # of validators it dispatched in this wave; if fewer tuples arrive, the
-    # orchestrator likely batched the dispatch into a single Opus call —
-    # surface that loudly so it has to re-dispatch one Agent per candidate
-    # rather than silently losing per-finding blast-radius work. Light-lane
-    # callers (Phase 4 light, /adamsreview:add light) pass --expected 0 (or
-    # omit) to skip the check.
-    if args.expected > 0 and len(decisions) < args.expected:
+    # --expected guard (Phase 4 structural invariant). Caller passes the
+    # count of candidates it dispatched in this wave (deep + light), and
+    # the helper rejects when fewer tuples arrive. Two failure modes the
+    # guard catches:
+    #   - deep lane: orchestrator collapsed multiple candidates into a
+    #     single batched Opus call (re-dispatch one Agent per candidate);
+    #   - light lane: a chunk-agent dropped findings from its returned
+    #     array (re-dispatch the chunk for the missing ids).
+    # Either way, surface loudly so per-finding blast-radius work / per-
+    # candidate confirmation isn't silently lost. Pass --expected 0 (or
+    # omit) only when the caller doesn't know N.
+    if args.expected > 0 and len(decisions) != args.expected:
         received_ids = [
             (t.get("id") if isinstance(t, dict) and t.get("id") else f"<#{i}>")
             for i, t in enumerate(decisions)
@@ -704,14 +710,48 @@ def cmd_apply_decisions(args):
                 else "received empty tuple array"
             ),
             action=(
-                "every dispatched deep-lane validator must produce its own decision "
-                "tuple. If the orchestrator collapsed multiple candidates into a "
-                "single Opus call (e.g. 'one Opus deep-validator for all 7 deep "
-                "candidates'), re-dispatch with one Agent tool-use per candidate "
-                "and re-invoke --apply-decisions on the full per-finding result "
-                "set. Per-finding blast-radius work needs independent context — "
-                "see fragment 05-validation.md §4.2."
+                "every dispatched candidate must produce its own decision tuple. "
+                "Two failure modes share this guard: (1) deep lane — the "
+                "orchestrator collapsed multiple deep-lane candidates into one "
+                "Opus call (re-dispatch one Agent per candidate and recompose "
+                "the tuple array on the full per-finding result set); (2) light "
+                "lane — a chunk-agent dropped findings from its returned array, "
+                "or returned extra hallucinated ids (re-dispatch the chunk for "
+                "the missing ids, or strip the hallucinated ids before the "
+                "re-invoke). Do NOT lower --expected to match the received "
+                "count — the guard is exactly what is supposed to catch this. "
+                "See fragments/05-validation.md §4.4."
             )
+        )
+        return c.EXIT_EXPECTED_MISMATCH
+
+    # Duplicate-id guard runs unconditionally (independent of --expected).
+    # A chunk-agent that returns the same finding-id twice (or one extra
+    # hallucinated id matching an existing finding's id) would pass the
+    # count check and then trigger _apply_finding_set twice on the same
+    # finding, producing two score_history phase_4 entries for one Phase
+    # 4 score. Reject the batch up front so the orchestrator strips the
+    # duplicate before re-invoking.
+    seen_ids = {}
+    duplicates = []
+    for i, t in enumerate(decisions):
+        if not isinstance(t, dict):
+            continue  # the per-tuple loop below handles non-object rejection
+        tid = t.get("id")
+        if not tid:
+            continue  # the per-tuple loop below requires non-empty id
+        if tid in seen_ids:
+            duplicates.append(tid)
+        else:
+            seen_ids[tid] = i
+    if duplicates:
+        # Dedup the duplicates list itself so the message stays short on a
+        # batch where one id appears 3+ times.
+        dup_unique = sorted(set(duplicates))
+        c.err_prompt(
+            f"--apply-decisions has duplicate finding id(s): {dup_unique}",
+            context="every tuple in a single --apply-decisions batch must name a distinct finding id; duplicates would re-apply the decision (and re-append score_history) to the same finding.",
+            action="strip the duplicate tuples (or merge them) and re-invoke. A duplicate is usually a chunk-agent returning the same id twice, or a hallucinated id that collides with an existing finding."
         )
         return c.EXIT_VALIDATION
 
@@ -998,6 +1038,32 @@ def cmd_apply_fix_outcomes(args):
         )
         return c.EXIT_USAGE
 
+    # Duplicate-id guard runs unconditionally. Two tuples for the same
+    # finding in one batch would cause two fix_attempt appends and two
+    # state transitions for one Phase-9 outcome — audit-trail pollution
+    # at best, schema invariant violation at worst (e.g. partial+verified
+    # for the same finding in one call).
+    seen_ids = {}
+    duplicates = []
+    for i, t in enumerate(tuples):
+        if not isinstance(t, dict):
+            continue  # the per-tuple loop handles non-object rejection
+        tid = t.get("id")
+        if not tid:
+            continue  # the per-tuple loop requires non-empty id
+        if tid in seen_ids:
+            duplicates.append(tid)
+        else:
+            seen_ids[tid] = i
+    if duplicates:
+        dup_unique = sorted(set(duplicates))
+        c.err_prompt(
+            f"--apply-fix-outcomes has duplicate finding id(s): {dup_unique}",
+            context="every tuple in a single --apply-fix-outcomes batch must name a distinct finding id; duplicates would re-append fix_attempts and re-transition state for the same finding in one call.",
+            action="strip the duplicate tuples (or merge them) and re-invoke."
+        )
+        return c.EXIT_VALIDATION
+
     counts = {"verified": 0, "partial": 0, "regression": 0, "overlap_abort": 0}
 
     for idx, tup in enumerate(tuples):
@@ -1202,7 +1268,7 @@ def build_parser():
         type=int,
         default=0,
         metavar="N",
-        help="(--apply-decisions only) expected tuple count; rejects under-sized batches with EXIT_VALIDATION. Pass N=0 (default) or omit to skip the check (light-lane Phase 4, /adamsreview:add light)."
+        help="(--apply-decisions only) expected tuple count; rejects count mismatch (over- or under-sized batches) with EXIT_EXPECTED_MISMATCH (exit 6). Pass N=0 (default) or omit to skip the check (when caller doesn't know N)."
     )
     mode = p.add_mutually_exclusive_group(required=False)
     mode.add_argument(

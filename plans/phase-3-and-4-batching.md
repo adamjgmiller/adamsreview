@@ -220,19 +220,22 @@ than silently batching.
   output; doesn't care whether scores came from one batch or N calls.
 
 **Spec changes (§4.3):** mirror the Phase 3 prose — chunk cap of ~25 per
-Sonnet sub-agent, anti-anchor-clustering instruction. The guard from
-§4.2 above applies to deep lane only — pass `--expected 0` (or skip the
-flag) when applying light-lane decisions.
+Sonnet sub-agent, anti-anchor-clustering instruction. The structural
+guard from §4.2 extends to the light lane via per-candidate counting:
+each chunk-agent owns multiple findings and is expected to return one
+tuple per finding it owned, so the combined `--expected $N_deep +
+$N_light` value catches both deep-lane Opus collapse and light-lane
+chunk-array drops at the helper boundary.
 
 ### `/adamsreview:add` — apply the same Phase 4 guard
 
 `/adamsreview:add` runs the same lane-aware Phase 4 validation (without
 Wave 2) on injected external findings, using the same
 `artifact-patch.py --apply-decisions` plumbing. The helper change covers
-it automatically — but only if `commands/add.md`'s Phase 4 invocation
-actually passes `--expected <N>` matching the deep-lane fan-out. Light-
-lane in `/adamsreview:add` follows the Phase 3 / Phase 4 light pattern
-(batching allowed) — pass `--expected 0` or omit.
+it automatically — `commands/add.md`'s Phase 4 invocation passes
+`--expected $(( deep_count + light_count ))` so the combined per-
+candidate count catches both deep-lane Opus collapse and light-lane
+chunk-array drops, same contract as `fragments/05-validation.md` §4.4.
 
 ## Implementation sketch
 

@@ -297,7 +297,7 @@ Enough to work without opening the archive. Each rule is a decision that was lea
 
 2. **uv shebang for Python helpers.** `#!/usr/bin/env -S uv run --script` with a `# /// script` inline dep spec. Never `pip install` directly (PEP 668 blocks it on Homebrew Python 3.12+).
 
-3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 64=usage`. Defined in `bin/_common.py`; reuse, don't invent.
+3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 6=expected-mismatch (--apply-decisions tuple count != --expected; recover by re-dispatch), 64=usage`. Defined in `bin/_common.py`; reuse, don't invent.
 
 4. **Error-as-prompt on every helper.** Non-zero exits emit `ERROR:` / `Valid input:` / `Did you mean:` / `Action:` stderr sections. No stack traces on expected errors. See `bin/_common.py:suggest()`.
 

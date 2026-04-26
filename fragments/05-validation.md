@@ -50,9 +50,11 @@ independent blast-radius trace, evidence walk, and fix-proposal
 synthesis; that investigation does not share context across candidates
 the way Phase 3's rubric scoring does, and batching collapses
 per-candidate depth. The §4.4 `--apply-decisions --expected $N` guard
-enforces this structurally: if the dispatch was collapsed and fewer
-tuples arrive than dispatched candidates, the helper rejects the batch
-with a recovery action that names the gap (see plans/phase-3-and-4-batching.md).
+catches one class of violation: if fewer tuples arrive than dispatched
+candidates, the helper rejects the batch with a recovery action (see
+§4.4). It does not detect collapse-then-correct-unwrap, where the
+orchestrator batches multiple candidates into one Opus call but emits
+the right count by unwrapping the response itself.
 
 Each sub-agent receives:
 - The full stored finding JSON. `evidence_snippet` is not among the
@@ -392,16 +394,39 @@ mkdir -p "$scratch"
 # $scratch/phase4-wave1-decisions.json by whatever means is natural.
 # The helper only cares about the file path + tuple shape above.
 
-# total_dispatched_w1 = N_deep_dispatched + N_light_dispatched
+# Compute total_dispatched_w1 = N_deep_dispatched + N_light_dispatched
 # (count individual candidates, NOT chunk-agents — each light-lane
 # chunk-agent owns multiple findings and is expected to return one
 # tuple per finding it owned). Used by --expected as the structural
 # guard against batched-Opus collapse and chunk-array drops.
-out=$(artifact-patch.py \
-        --path "$artifact_path" \
-        --apply-decisions "@$scratch/phase4-wave1-decisions.json" \
-        --expected "$total_dispatched_w1")
-echo "$out"  # e.g. "applied 18 decisions (confirmed_mechanical=4, confirmed_manual=1, confirmed_report=0, uncertain=3, disproven=10)"
+#
+# The orchestrator already has the lane-partitioned id lists in
+# context from §4.1 — surface them as comma-separated bash strings
+# (e.g. `deep_ids="F003,F007,F012"`, `light_ids="F004,F005"`) and
+# count via awk on NF, mirroring commands/add.md §7.6 lines 551-556.
+# The empty-string guard is required because `awk -F, '{print NF}'`
+# returns 1 (not 0) on an empty input line.
+deep_ids="<comma-separated ids dispatched in §4.2>"
+light_ids="<comma-separated ids dispatched in §4.3>"
+N_deep_dispatched=0
+N_light_dispatched=0
+[[ -n "$deep_ids"  ]] && N_deep_dispatched=$(awk  -F, '{print NF}' <<<"$deep_ids")
+[[ -n "$light_ids" ]] && N_light_dispatched=$(awk -F, '{print NF}' <<<"$light_ids")
+total_dispatched_w1=$(( N_deep_dispatched + N_light_dispatched ))
+
+# Empty-wave skip: when both lanes dispatched zero candidates (e.g.,
+# every survivor was Phase-3-gated out, or trivial_mode forced every
+# candidate into the light lane and there happened to be none), there's
+# nothing to apply — skip the helper invocation. Mirrors
+# commands/add.md's `[[ -z "$new_ids" ]]` guard. The §4.4.5 sweep below
+# still runs unconditionally.
+if (( total_dispatched_w1 > 0 )); then
+    out=$(artifact-patch.py \
+            --path "$artifact_path" \
+            --apply-decisions "@$scratch/phase4-wave1-decisions.json" \
+            --expected "$total_dispatched_w1")
+    echo "$out"  # e.g. "applied 18 decisions (confirmed_mechanical=4, confirmed_manual=1, confirmed_report=0, uncertain=3, disproven=10)"
+fi
 ```
 
 **On score parse failure** (sub-agent returned unparseable JSON even
@@ -413,26 +438,33 @@ confirm. The tuple still counts toward `--expected`, so the parse
 failure does not trip the structural guard — it surfaces as an
 `uncertain` finding instead.
 
-**On `--expected` rejection (exit 1, count mismatch):** the helper
+**On `--expected` rejection (exit 6, count mismatch):** the helper
 emits a stderr block naming the expected vs received count and the
-recovery action. This means either the orchestrator collapsed
-multiple deep-lane candidates into one Opus call (re-dispatch one
-Agent per missing candidate and recompose the tuple array on the full
-per-finding result set) OR a light-lane chunk-agent dropped findings
-from its returned array (re-dispatch the chunk for the missing ids).
-Do NOT lower `--expected` to match the received count — the guard is
-exactly what is supposed to catch this. The artifact is left
-unchanged on this exit, so a clean re-invoke with the corrected
-batch is safe.
+recovery action. The check is bidirectional — under-count means a
+collapsed deep-lane Opus call (re-dispatch one Agent per missing
+candidate and recompose the tuple array on the full per-finding
+result set) OR a light-lane chunk-agent dropped findings from its
+returned array (re-dispatch the chunk for the missing ids); over-
+count means the orchestrator emitted extra tuples (e.g. a light-lane
+chunk-agent returned hallucinated ids that the orchestrator forwarded
+verbatim — strip them before re-invoking). Do NOT lower `--expected`
+to match the received count — the guard is exactly what is supposed
+to catch this. The artifact is left unchanged on this exit, so a
+clean re-invoke with the corrected batch is safe.
 
-**On apply-decisions exit non-zero (other validation failures):** the
-batch halted at the first invalid tuple (stderr names the failing
-finding id). Tuples preceding the failure are already committed to
-the artifact. Fix the offending tuple and re-invoke with just the
-remainder; do NOT re-send the whole batch (the committed tuples
-would be re-applied, and `_apply_finding_set` would re-append
-score_history entries — audit-trail pollution). The remainder
-re-invoke uses `--expected <remainder-count>` to match.
+**On apply-decisions exit 1 (per-tuple validation failures, including
+duplicate ids):** the batch halted before any write if a duplicate-id
+guard fired (no tuples committed; strip the duplicate(s) and
+re-invoke), otherwise it halted at the first invalid tuple (stderr
+names the failing finding id) with the preceding tuples already
+committed to the artifact. For the per-tuple case, fix the offending
+tuple and re-invoke with just the remainder; do NOT re-send the whole
+batch (the committed tuples would be re-applied, and
+`_apply_finding_set` would re-append score_history entries — audit-
+trail pollution). The remainder re-invoke uses `--expected
+<remainder-count>` to match. For the duplicate-id case, no remainder
+math is needed — just re-invoke with the de-duplicated batch and the
+original `--expected` value.
 
 ### 4.4.5. Tree-cleanliness sweep (belt-and-braces for the read-only preamble)
 
@@ -525,16 +557,52 @@ If the resulting list is non-empty AND we haven't already done Wave 2:
    single chunk-agent usually suffices; the ≤25-per-chunk cap still
    applies if the related-candidate sweep produced an unusually large
    set).
+
+   **Drop-recovery (§3.3 step 3 + Wave 2 cap interaction).** If the
+   chunk-agent drops a finding from its returned array, §3.3 step 3
+   normally sets `score_phase3=null` and notes it in `trace.md`; the
+   gate then treats null-score findings as below-gate unless they
+   auto-graduate via ≥2 source families. **In Wave 2 this is a silent
+   confirmation loss**: every Wave 2 candidate is structurally seeded
+   with a single source family (`["structural-family"]` per the
+   `wave2_finding` shape in step 1), so a null-scored Wave 2 candidate
+   cannot auto-graduate, and the hard 2-wave cap means it will never
+   be retried in a Wave 3. Before continuing to step 3, re-dispatch
+   the scoring chunk for any missing ids — mirrors §4.4's chunk-agent
+   drop language. Re-dispatching the *scoring* chunk is intra-Wave-2,
+   not a Wave 3, so the hard cap is preserved.
+
+   Note that the §4.5 step 4 `--expected` guard cannot catch step-2
+   drops on its own — gate-out candidates are excluded from step-3
+   dispatch, so a silently-null-scored finding is invisible to the
+   downstream `--apply-decisions` count check.
 3. Dispatch Wave 2 deep-lane validators on any that pass the Phase-3
    gate, same prompt as Wave 1 BUT add: "This is Wave 2 — do NOT emit
    further `related_candidates_to_investigate` entries." (Hard-cap
    enforcement: §4 says "Hard cap at 2 waves.") Wave 2 is deep-lane
    only — one Opus per candidate, no batching, same rule as §4.2.
-4. Apply the decision table per step 4.4 for Wave 2 results — build
-   a second tuple array at `$scratch/phase4-wave2-decisions.json` and
-   invoke `--apply-decisions @… --expected $N_wave2_dispatched` (where
-   `$N_wave2_dispatched` is the count of Wave 2 validators dispatched
-   in step 3). Re-run the step 4.4.5 tree-cleanliness sweep after this
+4. Apply the decision table per step 4.4 for Wave 2 results. Build a
+   second tuple array at `$scratch/phase4-wave2-decisions.json`, then
+   compute `$N_wave2_dispatched` from the gate-passers list (Wave 2 is
+   deep-lane only, so this is just the count of Wave 2 validators
+   dispatched in step 3 — no light-lane component). Skip the helper
+   when the gate-passers list is empty (zero candidates passed the
+   Wave 2 Phase-3 gate). Mirror §4.4's bash idiom:
+
+   ```bash
+   wave2_ids="<comma-separated ids dispatched in step 3>"
+   N_wave2_dispatched=0
+   [[ -n "$wave2_ids" ]] && N_wave2_dispatched=$(awk -F, '{print NF}' <<<"$wave2_ids")
+   if (( N_wave2_dispatched > 0 )); then
+       out=$(artifact-patch.py \
+               --path "$artifact_path" \
+               --apply-decisions "@$scratch/phase4-wave2-decisions.json" \
+               --expected "$N_wave2_dispatched")
+       echo "$out"
+   fi
+   ```
+
+   Re-run the step 4.4.5 tree-cleanliness sweep after this
    `--apply-decisions` returns — Wave 2 validators are dispatched with
    the same prompt as Wave 1, so the same read-only invariant applies.
 

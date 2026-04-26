@@ -779,15 +779,19 @@ the default reason via `reason: "Phase 4 parse failure — manual
 review"` for legibility. The tuple still counts toward `--expected`,
 so parse failures do not trip the structural guard.
 
-**On `--expected` rejection (exit 1, count mismatch):** the helper
+**On `--expected` rejection (exit 6, count mismatch):** the helper
 emits a stderr block naming expected vs received count and the
-recovery action. Either deep-lane Opus dispatches were collapsed
-(re-dispatch one Agent per missing candidate) or a light-lane
-chunk-agent dropped findings from its returned array (re-dispatch the
-chunk for the missing ids). Recompose the tuple array on the full
-per-finding result set and re-invoke; do NOT lower `--expected` to
-match the received count — the guard is exactly what is supposed to
-catch this. The artifact is left unchanged on this exit.
+recovery action. Bidirectional check — under-count means deep-lane
+Opus dispatches were collapsed (re-dispatch one Agent per missing
+candidate) or a light-lane chunk-agent dropped findings from its
+returned array (re-dispatch the chunk for the missing ids); over-
+count means the orchestrator emitted extra tuples (e.g. a chunk-
+agent returned hallucinated ids that were forwarded verbatim — strip
+them before re-invoking). Recompose the tuple array on the corrected
+result set and re-invoke; do NOT lower `--expected` to match the
+received count — the guard is exactly what is supposed to catch
+this. The artifact is left unchanged on this exit. Same contract as
+`fragments/05-validation.md` §4.4.
 
 #### 7.7 Pre-existing override re-assertion (§13.1)
 
