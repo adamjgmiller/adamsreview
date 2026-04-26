@@ -119,7 +119,7 @@ To enable, do **either**:
 
 When opted out (the default), the helper exits 0 with one `orchestrator-tally: skipped` line and leaves the artifact's `orchestrator_tokens` field absent. The PR comment shows only **Sub-agent tokens** — still the precise per-review counter and the primary cost signal. Sub-agent tokens log under `~/.adams-reviews/`, which carries no provenance xattr, so that path triggers no prompts.
 
-**Stale-data behavior.** If you opt in for the initial review and then opt out before running `/adamsreview:fix` (or vice-versa), the helper preserves any previously-written `orchestrator_tokens` value rather than wiping it. The rendered line shows the last-measured value, not a freshly-skipped zero — meaning it can under-report subsequent activity. Re-opt-in to refresh.
+**Stale-data behavior.** If you opt in for the initial review and then opt out before running `/adamsreview:fix`, the helper preserves the previously-written `orchestrator_tokens` value rather than wiping it. The rendered line shows the last-measured value, not a freshly-skipped zero — meaning it can under-report subsequent fix-time activity. Re-opt-in on the next lifecycle command refreshes. The reverse direction (opt out for review, opt in for fix) has no staleness: the fix-time tally's `--since review_started_at` window covers the full review→fix arc, so the first opt-in write captures everything.
 
 #### Orchestrator tokens can over-count (when opted in)
 
