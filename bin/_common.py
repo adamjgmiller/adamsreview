@@ -27,6 +27,7 @@ EXIT_DRY_RUN_INVALID = 3     # --dry-run would produce invalid artifact
 EXIT_UNEXPECTED = 4          # uncaught exception / unknown error
 EXIT_MISSING_DEP = 5         # jsonschema import failed (shouldn't happen under uv shebang)
 EXIT_EXPECTED_MISMATCH = 6   # --apply-decisions tuple count != --expected (recover by re-dispatch)
+EXIT_ALL_REJECTED = 7        # --add-findings: every input was rejected (no findings landed)
 EXIT_USAGE = 64              # argparse / usage error (conventional)
 EXIT_SCORE_UNRECOVERABLE = 2 # also used by parse-validator-result.py for score-recovery failure
 EXIT_UNKNOWN_FAMILY = 3      # also used by source-family-map.py for unknown enum value
@@ -145,6 +146,58 @@ def validation_result_validator():
     registry = Registry().with_resource(uri=schema.get("$id", ""), resource=resource)
     ref_schema = {"$ref": f"{schema.get('$id', '')}#/$defs/validation_result"}
     return Validator(ref_schema, registry=registry)
+
+
+def finding_validator():
+    """Return a Draft202012Validator bound to `#/$defs/finding`.
+
+    Mirrors validation_result_validator() — registers the full schema
+    with a referencing.Registry and validates against a $ref so
+    internal $refs (impact_type_enum, line_range, fix_attempt, etc.)
+    resolve correctly. Catches additionalProperties violations
+    everywhere the schema declares them — top-level finding object AND
+    nested objects (validation_result.blast_radius, human_confirmation,
+    score_history items, etc.) — in one validator pass.
+
+    Build ONCE per batch and pass the result into validate_finding();
+    don't call this per-finding. _load_validator() reads schema-v1.json
+    from disk and runs Draft202012Validator.check_schema(schema) every
+    call, and Registry construction has its own non-trivial cost. For a
+    50-candidate batch the rebuild work is a measurable share of the
+    wall-clock win the batched mode is designed to deliver.
+    """
+    schema, Validator = _load_validator()
+    try:
+        from referencing import Registry, Resource
+        from referencing.jsonschema import DRAFT202012
+    except ImportError:
+        err_prompt(
+            "missing Python dependency 'referencing' (ships transitively with jsonschema>=4.18)",
+            action="verify the calling script's inline `# /// script` dep list includes 'jsonschema'."
+        )
+        sys.exit(EXIT_MISSING_DEP)
+    resource = Resource(contents=schema, specification=DRAFT202012)
+    registry = Registry().with_resource(uri=schema.get("$id", ""), resource=resource)
+    ref_schema = {"$ref": f"{schema.get('$id', '')}#/$defs/finding"}
+    return Validator(ref_schema, registry=registry)
+
+
+def validate_finding(finding, validator):
+    """Validate a single finding against #/$defs/finding using a pre-built validator.
+
+    Returns a list of human-readable error strings (empty list on valid).
+    Caller is responsible for building `validator` once via
+    finding_validator() and reusing across the batch.
+
+    Errors include additionalProperties violations at every level the
+    schema declares them — caller doesn't need a separate unknown-keys
+    check at the call site.
+    """
+    errors = []
+    for e in sorted(validator.iter_errors(finding), key=lambda x: list(x.absolute_path)):
+        path = _pretty_path(e.absolute_path) or "(root)"
+        errors.append(f"${path}: {e.message}")
+    return errors
 
 
 def _pretty_path(absolute_path):
