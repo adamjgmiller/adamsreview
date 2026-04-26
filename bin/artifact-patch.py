@@ -8,6 +8,16 @@
 Modes (CLI flags; mutually exclusive):
   --init <seed>             create fresh artifact at --path
   --add-finding <finding>   append a new finding to findings[]
+  --add-findings <array>    Phase 1 batched: append a JSON array of new
+                            findings in one atomic write. Continue-on-
+                            error: malformed individual findings are
+                            logged on stderr (`add-findings-rejected:`
+                            lines, one per drop) and skipped; the rest
+                            of the batch still commits. Exit codes: 0
+                            (≥1 accepted), 7 = EXIT_ALL_REJECTED (every
+                            input rejected at preflight; distinct from
+                            1 = post-write validation failed), 64 =
+                            input wasn't a JSON array / mode conflict.
   --delete-finding FXXX     remove a finding by id (used by Phase 2 dedup)
   --apply-decisions <array> apply a batch of Phase-4 decision tuples in one
                             call (DESIGN §13.1, §21.2; Stage 2.5.B). Input
@@ -366,6 +376,226 @@ def cmd_add_finding(args):
 
     artifact.setdefault("findings", []).append(finding)
     return _write_and_emit(args.path, artifact, dry_run=args.dry_run, before=before)
+
+
+def cmd_add_findings(args):
+    """Append a batch of new findings to findings[] in one atomic write.
+
+    Diverges from --apply-decisions / --apply-fix-* in two ways:
+
+    1. Continue-on-error: malformed findings are logged on stderr and
+       skipped; the rest of the batch still commits. This preserves
+       the drop-and-continue behavior of the per-call --add-finding
+       loop the caller is replacing — a malformed shape is a
+       candidate-level problem, not a batch-level one.
+
+    2. Single atomic write: all accepted findings append in one
+       tmp+rename, not per-finding. Crash semantics are all-or-nothing
+       across the accepted set.
+
+    Exit-code policy (pinned here so future callers can rely on it).
+    T7 — earlier draft contradicted the actual code; this is the
+    code-aligned spec:
+      - 0       : at least one finding accepted (rejections allowed; the
+                  summary line names the skipped ids).
+      - 1       : EXIT_VALIDATION — the post-write full-artifact schema
+                  validation failed (defense-in-depth: per-finding
+                  preflight passed but the artifact-level check
+                  rejected). Should be rare given the per-finding
+                  validator and the artifact-level validator share
+                  schema-v1.json; if it fires, that's a preflight bug
+                  to investigate.
+      - 7       : EXIT_ALL_REJECTED — input was a JSON array, but every
+                  element was rejected at the per-finding preflight.
+                  Distinct from 64 so a downstream caller can branch on
+                  "every finding was bad" vs. "your input shape was
+                  wrong." Phase 1's fragment handler treats both the
+                  same; /adamsreview:add migration may want to branch.
+      - 64      : EXIT_USAGE — malformed input up front. Two pathways
+                  share this: (a) `read_json_arg()` already exits 64
+                  when stdin / @file / inline isn't parseable JSON;
+                  (b) this mode emits 64 when the parsed value isn't a
+                  JSON array. Plus mode-conflict (--add-findings
+                  combined with --set / --finding-id / etc.).
+
+    Stderr per-rejection format (machine-greppable; ONE line per
+    rejected finding — no err_prompt block, to keep trace.md compact
+    on a 30-rejection batch):
+      add-findings-rejected: idx=<n> id=<F or "(missing)"> reason=<short> detail=<short>
+
+    Stdout summary (one line, always emitted):
+      added <N> findings (skipped <M>: [F012, F037, ...])
+    """
+    findings = read_json_arg(args.add_findings, "--add-findings")
+
+    if not isinstance(findings, list):
+        c.err_prompt(
+            f"--add-findings expects a JSON array, got {type(findings).__name__}",
+            action="pass an array of finding objects (inline JSON, @file, or - for stdin)."
+        )
+        return c.EXIT_USAGE
+
+    artifact = _load_or_fail(args.path)
+    existing_ids = {f.get("id") for f in artifact.get("findings", [])}
+
+    # Build the per-finding validator ONCE (B1). _load_validator()
+    # opens schema-v1.json + runs check_schema(); Registry construction
+    # isn't free either. Hoisting both out of the per-finding loop is
+    # a measurable share of the wall-clock win this mode is designed
+    # to deliver — at 50 candidates the rebuild cost dominates the
+    # actual validation work otherwise.
+    finding_v = c.finding_validator()
+
+    accepted = []
+    rejected = []
+    seen_in_batch = set()
+
+    for idx, finding in enumerate(findings):
+        rejection = _check_add_finding_shape(
+            finding, idx, existing_ids, seen_in_batch, finding_v
+        )
+        if rejection is not None:
+            rejected.append(rejection)
+            _emit_rejection(rejection)
+            continue
+        accepted.append(finding)
+        seen_in_batch.add(finding["id"])
+
+    if not accepted and rejected:
+        # Every input was bad. Don't bother writing. Distinct exit
+        # code (EXIT_ALL_REJECTED, 7) so a downstream caller can
+        # distinguish "every individual finding was rejected" from
+        # "your input shape was wrong" (EXIT_USAGE, 64) or "post-write
+        # validation failed" (EXIT_VALIDATION, 1).
+        #
+        # T6 — operational rule 4 says non-zero helper exits emit
+        # ERROR / Action error-as-prompt blocks. The per-rejection
+        # stderr lines (one per dropped finding) are intentionally
+        # compact — but the BATCH outcome still needs the standard
+        # recovery surface. Emit a batch-level err_prompt before the
+        # summary line so the orchestrator sees a familiar shape.
+        c.err_prompt(
+            f"--add-findings: every input was rejected ({len(rejected)} of {len(rejected)})",
+            context=[
+                "no findings landed; on-disk artifact unchanged.",
+                "per-rejection detail above (one `add-findings-rejected:` line per drop).",
+            ],
+            action=(
+                "investigate the rejection reasons (schema_invalid / duplicate_id / "
+                "missing_id / not_object). If the rejections are upstream lens drift, "
+                "fix the lens prompt or the jq builder; if they're a single bad "
+                "finding, drop it from the input and re-invoke."
+            ),
+        )
+        print(f"added 0 findings (skipped {len(rejected)}: {[r['id'] for r in rejected]})")
+        return c.EXIT_ALL_REJECTED
+
+    # Empty input: succeed silently with a 0-count summary so callers
+    # can pipe a possibly-empty array without special-casing.
+    if not accepted:
+        print("added 0 findings")
+        return c.EXIT_OK
+
+    # In-memory mutation note (N6): extend() mutates `artifact` in
+    # place. If the post-write validation below fails, the on-disk
+    # file stays at its prior state (correct), but this in-process
+    # `artifact` dict carries the bad findings until the process
+    # exits. Fine in the current one-mode-per-process model; flag if
+    # that ever changes (e.g. an embedded use of artifact-patch).
+    artifact.setdefault("findings", []).extend(accepted)
+
+    # _write_and_emit re-runs full-artifact schema validation. If
+    # preflight let something through (e.g., an artifact-level
+    # invariant the per-finding sub-schema can't see), this fires
+    # rather than silently corrupting the on-disk artifact. The
+    # accepted batch is one transaction: every accepted finding lands
+    # or none do.
+    rc = _write_and_emit(args.path, artifact, silent=True)
+    if rc != c.EXIT_OK:
+        # _write_and_emit already emitted an error-as-prompt to stderr
+        # naming the failed schema rule. No need to re-report (R3).
+        return rc
+
+    rejected_ids = [r["id"] for r in rejected]
+    print(
+        f"added {len(accepted)} findings"
+        + (f" (skipped {len(rejected)}: {rejected_ids})" if rejected else "")
+    )
+    return c.EXIT_OK
+
+
+def _check_add_finding_shape(finding, idx, existing_ids, seen_in_batch, validator):
+    """Run preflight checks on one candidate finding.
+
+    Rejection reasons:
+      - "not_object"     : non-dict input
+      - "missing_id"     : no id field (fast-path before schema check)
+      - "duplicate_id"   : id already in artifact OR earlier in batch
+      - "schema_invalid" : validate_finding() returned errors. Covers
+                           top-level AND nested additionalProperties
+                           violations (e.g. validation_result.blast_radius
+                           extra keys, score_history item extras), bad
+                           enum values, missing required fields, and
+                           shape mismatches in one pass — no separate
+                           "unknown_keys" check.
+    """
+    fid = (finding.get("id") if isinstance(finding, dict) else None) or "(missing)"
+
+    if not isinstance(finding, dict):
+        return {"idx": idx, "id": fid, "reason": "not_object",
+                "detail": f"got {type(finding).__name__}"}
+
+    if not finding.get("id"):
+        return {"idx": idx, "id": fid, "reason": "missing_id",
+                "detail": "every finding needs an id (FXXX); run assign-finding-ids.sh upstream"}
+
+    if finding["id"] in existing_ids:
+        return {"idx": idx, "id": fid, "reason": "duplicate_id",
+                "detail": "id already exists in artifact"}
+    if finding["id"] in seen_in_batch:
+        return {"idx": idx, "id": fid, "reason": "duplicate_id",
+                "detail": "id appears twice in this batch"}
+
+    schema_errors = c.validate_finding(finding, validator)
+    if schema_errors:
+        # Match _write_and_emit's existing 10-with-overflow convention
+        # (R4) so the rejection block doesn't silently drop the long
+        # tail of a deeply-broken finding.
+        shown = schema_errors[:10]
+        if len(schema_errors) > 10:
+            shown.append(f"(+{len(schema_errors) - 10} more)")
+        return {"idx": idx, "id": fid, "reason": "schema_invalid",
+                "detail": shown}
+
+    return None
+
+
+def _emit_rejection(rejection):
+    """Write one machine-greppable rejection line to stderr.
+
+    Single line per rejection — NO err_prompt block per rejection.
+    Earlier draft emitted ERROR/context/action triplet per drop, which
+    on a 30-rejection batch produced ~180 lines of trace.md noise; the
+    single-line shape keeps per-rejection cost flat with what the
+    pre-batch loop logged (one line per drop in trace.md). The full
+    err_prompt format is reserved for batch-level failures (bad input
+    shape, all-rejected summary) where the extra context helps the
+    orchestrator diagnose.
+    """
+    detail = rejection["detail"]
+    detail_str = "; ".join(detail) if isinstance(detail, list) else str(detail)
+    # Cap the on-line representation so trace.md stays scannable. The
+    # full schema-error list lives in `detail` above — render in full
+    # only on demand (e.g., if an operator wants to dump the rejected
+    # batch via a future debug helper).
+    if len(detail_str) > 200:
+        detail_str = detail_str[:197] + "..."
+    print(
+        f"add-findings-rejected: idx={rejection['idx']} "
+        f"id={rejection['id']} reason={rejection['reason']} "
+        f"detail={detail_str}",
+        file=sys.stderr,
+    )
 
 
 def _find_finding(artifact, finding_id):
@@ -1282,6 +1512,14 @@ def build_parser():
         help="append a new finding to findings[] (inline JSON, @file, or -)"
     )
     mode.add_argument(
+        "--add-findings",
+        dest="add_findings",
+        metavar="FINDINGS_JSON",
+        help="batched: append a JSON array of findings in one atomic write "
+             "(inline JSON, @file, or - for stdin). Continues on per-finding "
+             "validation failures; emits structured stderr per rejection."
+    )
+    mode.add_argument(
         "--delete-finding",
         metavar="FXXX",
         help="remove a finding by id (used by Phase 2 dedup)"
@@ -1328,6 +1566,32 @@ def main():
             if args.set or args.set_json or args.append_fix_attempt:
                 parser.error("--add-finding cannot combine with --set / --set-json / --append-fix-attempt")
             return cmd_add_finding(args)
+        if args.add_findings is not None:
+            # Mode-conflict + --dry-run paths exit with EXIT_USAGE (64)
+            # directly via sys.exit instead of parser.error(), which would
+            # emit argparse's default exit code (2). The new --add-findings
+            # mode's docstring contract pins these paths to 64; the older
+            # modes' parser.error() calls stay as-is (they already exit 2
+            # today and aren't in scope for this stage).
+            if args.set or args.set_json or args.append_fix_attempt or args.finding_id:
+                c.err_prompt(
+                    "--add-findings cannot combine with --set / --set-json / --append-fix-attempt / --finding-id (each finding carries its own id)",
+                    action="remove the conflicting flag(s); --add-findings is a batched create."
+                )
+                return c.EXIT_USAGE
+            if args.dry_run:
+                # Note: unlike --apply-decisions/--apply-fix-*, --add-findings
+                # does a single atomic write, so --dry-run could be made
+                # meaningful here (rehearse preflight + post-write validation
+                # without committing). Leaving it rejected for the minimum
+                # version to keep parity; promote to supported when the first
+                # caller asks for it.
+                c.err_prompt(
+                    "--add-findings does not currently support --dry-run",
+                    action="use a throwaway --path to preflight (e.g., a tempfile)."
+                )
+                return c.EXIT_USAGE
+            return cmd_add_findings(args)
         if args.delete_finding is not None:
             if args.set or args.set_json or args.append_fix_attempt:
                 parser.error("--delete-finding cannot combine with --set / --set-json / --append-fix-attempt")
@@ -1362,7 +1626,7 @@ def main():
         traceback.print_exc(file=sys.stderr)
         return c.EXIT_UNEXPECTED
 
-    parser.error("no mode selected (use --init, --add-finding, --delete-finding, --apply-decisions, --apply-fix-start, --apply-fix-outcomes, --set, --set-json, or --append-fix-attempt)")
+    parser.error("no mode selected (use --init, --add-finding, --add-findings, --delete-finding, --apply-decisions, --apply-fix-start, --apply-fix-outcomes, --set, --set-json, or --append-fix-attempt)")
 
 
 if __name__ == "__main__":
