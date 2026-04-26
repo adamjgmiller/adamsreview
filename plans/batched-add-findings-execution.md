@@ -516,7 +516,7 @@ Final report includes:
 
 ## §4 — Progress ledger
 
-**Next pending stage:** `Stage 1`
+**Next pending stage:** `COMPLETE`
 
 ### Log
 
@@ -524,7 +524,51 @@ Final report includes:
 `[YYYY-MM-DDTHH:MMZ] <stage-id> cycles=<n> commit=<sha>
 smoke=<before>→<after> notes=<...>`)*
 
-*(empty — orchestrator populates as stages complete.)*
+[2026-04-26T20:55Z] Stage 1 cycles=1 commit=3a3594b smoke=260→260
+notes=pure additions to bin/_common.py per design plan §1; reviewer
+CLEAN on first cycle; structural twin of validation_result_validator()
+verified diff-equivalent except $ref target + docstring + ImportError
+err_prompt shape (all intentional per plan).
+
+[2026-04-26T21:10Z] Stage 2 cycles=1 commit=0f5a23a smoke=260→260
+notes=cmd_add_findings + _check_add_finding_shape + _emit_rejection +
+all 3 T4 CLI-text spots updated + main() dispatch slotted between
+--add-finding (singular) and --delete-finding. T7 mode-conflict path
+correctly uses sys.exit(c.EXIT_USAGE) → exit=64 (NOT argparse's
+default 2); reviewer end-to-end all-rejected verify confirms T6
+batch-level err_prompt + per-rejection lines + exit 7. R4 10-with-
+overflow + 200-char detail truncation both present.
+
+[2026-04-26T21:35Z] Stage 3 cycles=1 commit=1fdbf09 smoke=260→269
+notes=9 new bare AF-* assertions (AF-5 deferred per design plan §5).
+AF-2 R5 nested-key path: validation_result.blast_radius.extra_subkey
+(schema enforces additionalProperties:false at that depth). AF-3 T6
+verifies both per-rejection lines AND batch err_prompt + exit 7.
+AF-DRIFT iterates 20 keys (8 CANONICAL + 12 DRIFT_MAP) via
+importlib (filename has hyphens), single fail-on-first loop. jq
+table verified char-for-char vs. design plan §3 lines 612–627; this
+IS the verification boundary — Stage 4 fragment writes the same
+table or AF-DRIFT fails. Reviewer ran failure-mode sanity (mutated
+prompt-injection→ux-family) and confirmed loud diagnostic.
+
+[2026-04-26T22:15Z] Stage 4 cycles=1 commit=810f5b3 smoke=269→269
+notes=Live behavior change. Replaced fragments/01-detection.md §1.5
+step 4 per-candidate while-loop with single jq builder + batched
+--add-findings call. T1 sync stderr capture (mktemp tempfile, NOT
+process-substitution tee — eliminates race vs. immediate post-helper
+grep), T8 type-guard against non-string source_family, T9 single-
+Bash-invocation note + scratch-file fallback, T10 §1 overview prose
+fix, T11 PF-INT-4 marker triple swap. CLAUDE.md: op-rule-3 + helper
+index + batched-helper pattern + scaffold-closer line all updated.
+bin/source-family-map.py: docstring cross-reference. Both reviewers
+(general-purpose CLEAN; coderabbit:code-reviewer flagged 5 minor).
+Orchestrator inline-fixed 4 of CodeRabbit's findings (stale
+--add-finding singular refs at fragment §1.4/§1.5; prose precision
+on all-rejected exit 7 = no write). Rejected #3 (dead source_family
+assignment is per design plan §3 spec), #4 (tempfile trap — fragment
+doesn't trap elsewhere; out of scope), #5 (AF-DRIFT direction is
+acceptance-by-design per plan §5). PF-INT-4 + AF-* all green at
+269 post-fixup.
 
 ---
 
