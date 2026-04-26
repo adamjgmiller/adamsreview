@@ -166,11 +166,17 @@ def render_header(artifact):
         lines.append(f"**Sub-agent tokens:** {thousands(total)} across {thousands(invs)} invocations")
     orch = artifact.get("orchestrator_tokens") or {}
     turn_count = orch.get("turn_count")
-    if turn_count is not None:
-        # Render shows only the user-facing levers — output and fresh input.
-        # cache_read and cache_creation stay in the artifact for cost
-        # analysis but are prompt-cache plumbing, not signal in the PR
-        # comment. See CLAUDE.md §"Pipeline shape" for the rationale.
+    # Suppress on missing AND on zero-turn. Missing means the helper
+    # hasn't run (pre-feature artifacts, or opted-out runs since the
+    # ADAMS_REVIEW_TALLY_ORCHESTRATOR opt-in landed). Zero-turn means
+    # either a legacy artifact carrying the dropped Phase-0 zero seed,
+    # or an opted-in run whose time window matched no turns — both
+    # render as content-free noise. The four counters stay in the
+    # artifact when present (see OTR-3); only the rendered line is
+    # gated. Render shows only output + fresh input — cache-read and
+    # cache-creation are prompt-cache plumbing, not user-facing signal
+    # (see CLAUDE.md §"Pipeline shape" for the rationale).
+    if turn_count:
         lines.append(
             "**Orchestrator tokens:** "
             f"{thousands(orch.get('total_output', 0))} output / "

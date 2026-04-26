@@ -36,6 +36,14 @@
 # transcripts, or a transcript with all pre-since turns → zero rollup
 # with sessions=[] rather than an error.
 #
+# Opt-in: defaults to skip unless `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`
+# (or true/yes/on) is set in the environment. The transcript scan
+# triggers the macOS "access data from other apps" prompt because
+# Claude Code marks every transcript with the `com.apple.provenance`
+# xattr; users are spared the prompt by default. When opted out the
+# helper exits 0 with one stdout line and does not touch the artifact —
+# any previously-written orchestrator_tokens stays put.
+#
 # Usage:
 #   orchestrator-tokens.sh --artifact <path> --since <iso-ts> \
 #       [--projects-root <path>] [--cwd <path>] [--transcript-dir <path>]
@@ -91,6 +99,24 @@ done
 
 [[ -n "$ARTIFACT" ]] || die_usage "--artifact is required"
 [[ -n "$SINCE" ]]    || die_usage "--since is required"
+
+# Opt-in gate. macOS Sequoia/Tahoe prompts the controlling terminal app
+# for "access data from other apps" when reading files carrying the
+# `com.apple.provenance` xattr — every Claude Code transcript under
+# `~/.claude/projects/` carries one. The `find ... -name '*.jsonl'`
+# scan below is the trigger. Granting the terminal Full Disk Access
+# silences the prompt class permanently; until then, default to skip
+# so users aren't pestered. Opting in is one env var in your shell rc.
+# Skip preserves any previously-written orchestrator_tokens on the
+# artifact (a prior opted-in run still surfaces in the rendered line).
+opt_in="${ADAMS_REVIEW_TALLY_ORCHESTRATOR:-}"
+case "$opt_in" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *)
+        echo "orchestrator-tally: skipped (set ADAMS_REVIEW_TALLY_ORCHESTRATOR=1 to enable; see README §Token counts)"
+        exit 0
+        ;;
+esac
 
 if [[ ! -f "$ARTIFACT" ]]; then
     echo "ERROR: artifact not found at $ARTIFACT" >&2
