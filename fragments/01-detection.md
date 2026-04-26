@@ -4,8 +4,9 @@ Six internal lenses run in parallel to produce candidate findings; a
 seventh (L7 holistic) joins the fan-out when `--ensemble` is set. Each
 lens returns a list of candidates tagged with routing fields
 (`impact_type`, `origin`, `origin_confidence`, `source_family`). The
-orchestrator merges all lens outputs into `artifact.findings[]` as one
-call per candidate to `artifact-patch.py --add-finding`.
+orchestrator merges all lens outputs into `artifact.findings[]` via a
+single batched `artifact-patch.py --add-findings` call (see §1.5
+step 4).
 
 **Dispatch parallelism.** To get actual wall-clock parallelism across lenses,
 send every applicable lens's `Agent` tool-use block inside a single
@@ -754,8 +755,8 @@ execution reaches it and execution proceeds straight to Phase 2.
 ### 1.4. Collect lens candidates into pool
 
 Collection runs per-lens as each sub-agent result returns — but under
-§13.12 nothing gets an `id` and nothing is `--add-finding`'d during
-collection. Candidates accumulate in an in-context pool
+§13.12 nothing gets an `id` and nothing is committed to the artifact
+during collection. Candidates accumulate in an in-context pool
 (`internal_candidates`) and are committed at the join step 1.5.
 
 Initialize the pool and capture the phase epoch before the first lens
@@ -842,8 +843,9 @@ For each sub-agent result, in the order it returns:
    1.6 counts for the summary.
 
 3. **Tag with `sources` and append to the pool.** Do NOT call
-   `--add-finding` here; do NOT assign an id. The full-finding jq build
-   moves to step 1.5 where ids are assigned atomically across the
+   `--add-finding` / `--add-findings` here; do NOT assign an id. The
+   full-finding jq build moves to step 1.5 where ids are assigned
+   atomically across the
    combined pool.
 
    Tag each corrected candidate with `sources: [<lens-tag>]` so the
@@ -875,7 +877,7 @@ For each sub-agent result, in the order it returns:
      | jq '[.[] | .line_range //= [1,1]]')
    ```
 
-### 1.5. Join + assign IDs + add-finding (§13.12)
+### 1.5. Join + assign IDs + batched add-findings (§13.12)
 
 Wait until every internal lens has returned AND (if `ensemble_mode ==
 true`) the ensemble normalizer has emitted its candidate array into
@@ -938,49 +940,103 @@ On non-zero exit (malformed pool JSON), log stderr to `trace.md` and
 bail — the whole detection phase must re-run because the pool is
 corrupt. This is a structural failure, not a per-candidate drop.
 
-**Step 4. Build full schema-valid findings + single `--add-finding`
-sweep.** `artifact-patch.py --add-finding` does NOT default fields —
-it validates the payload against the full schema and rejects if
-anything required is missing. Partial candidates (from lenses) and
-normalizer candidates both need to be fleshed out to schema shape.
+**Step 4. Build full schema-valid findings + single batched
+`--add-findings` sweep.** `artifact-patch.py --add-findings` validates
+each candidate against the full schema, rejects malformed entries
+with a per-rejection `add-findings-rejected:` line on stderr, and
+commits the accepted batch (if any) in a single atomic write. An
+all-rejected batch exits 7 (`EXIT_ALL_REJECTED`) and leaves the
+artifact untouched; per-candidate audit lines + the Phase 1.6
+`add_findings_total_failures` counter surface that case for the
+operator. Partial
+candidates (from lenses) and normalizer candidates both need to be
+fleshed out to schema shape — the jq builder below does that in one
+walk over `$ided`, then pipes a single findings array into the helper
+on stdin.
 
-For each element in `$ided`, bind it to `$candidate` in the jq call
-below and call `--add-finding`. The jq builder matches the pre-§13.12
-logic (DESIGN §6 shape) with `.id` already populated from the helper.
+The jq builder canonicalizes `source_family` inline (function
+`fam_canonical`, co-located with its callers), shapes each candidate
+to the full DESIGN §6 finding schema, and emits a
+`{findings, drift}` object: `findings` is the array we send to the
+helper; `drift` is the unknown-family audit lines we append to
+`trace.md` so the next mapping-table update surfaces from inspection
+rather than a silent drop. Unknown families are tagged
+`source_family: "unknown"` (not dropped) — Phase 2 dedup's union of
+`source_families` and Phase 3's auto-graduation rule both accept
+arbitrary family strings, so the tag propagates harmlessly downstream.
 
-**Source-family canonicalization.** Before the jq builder runs, pipe the
-candidate's raw `source_family` through `source-family-map.py`. The
-helper accepts the eight canonical families (`diff-family`,
-`structural-family`, `policy-family`, `ux-family`, `security-family`,
-`holistic-family`, `external-deep-family`, `external-add-family`) as pass-through and maps
-known drift patterns (e.g. `prompt-injection → security-family`,
-`stale-line-ref → policy-family`) to their canonical equivalent.
-Exit 3 means "unknown family" — rather than silently drop the
-candidate (risks losing real findings when the mapping table hasn't
-caught up to lens drift), mark `source_family: "unknown"` and log the
-drift to `trace.md` so the next mapping-table update surfaces from
-audit inspection. Phase 2 dedup's union of `source_families` and
-Phase 3's auto-graduation rule both accept arbitrary family strings,
-so `"unknown"` propagates harmlessly downstream.
+The in-jq `fam_canonical` mapping table MUST stay in sync with
+`bin/source-family-map.py`'s `CANONICAL` + `DRIFT_MAP` (the helper
+is the alternate canonical reader for ad-hoc debugging; this is the
+hot-path Phase 1 reader). `test/smoke.sh` AF-DRIFT enforces the
+agreement.
+
+**Execution note (T9).** Steps 3 and 4 in this section MUST run
+inside a single `Bash(...)` invocation. The shell variables (`$ided`,
+`$build_result`, `$findings_array`) are large and pulling them
+through the orchestrator transcript between two Bash calls negates
+the batched-helper context win. If the orchestrator finds itself
+needing to split (e.g., to insert a tool-use between the two steps),
+use a scratch file: write `$ided` to `$scratch_dir/phase1_pool.json`
+at the end of step 3 and read it back via
+`--add-findings @$scratch_dir/phase1_pool.json` at step 4. Scratch
+files don't enter the transcript; ad-hoc command-line arguments do.
 
 ```bash
-while IFS= read -r candidate; do
-    raw_family=$(printf '%s' "$candidate" | jq -r '.source_family // "diff-family"')
-    canonical_family=$(source-family-map.py --input "$raw_family" 2>/dev/null) || {
-        printf 'lens_source_family_unknown: source=%s raw=%s -> mapped to "unknown"\n' \
-            "$(printf '%s' "$candidate" | jq -r '.sources[0] // "(unknown)"')" \
-            "$raw_family" \
-            >> "$trace_log_path"
-        canonical_family="unknown"
-    }
-    candidate=$(printf '%s' "$candidate" \
-        | jq -c --arg f "$canonical_family" '.source_family = $f')
+# Single jq pass: canonicalize source_family, build full schema-shaped
+# findings, and identify any unknown-family rows in one walk over the
+# pooled candidates. The function definitions live inside the jq
+# program so they're co-located with their callers.
+build_result=$(printf '%s' "$ided" | jq -c --argjson trivial "$trivial_mode" '
+  # Canonicalize a raw source_family string to one of the eight known
+  # families, or null for unknown. Match map_family() normalization
+  # semantics (the Python function inside bin/source-family-map.py,
+  # NOT the CLI wrapper — the CLI rejects empty input with EXIT_USAGE,
+  # while map_family() returns None for empty/non-string after the
+  # strip+lookup).
+  #
+  # T8 — type-guard against non-string $raw. map_family() returns
+  # None for non-strings (`if not isinstance(raw, str): return None`).
+  # A naive `($raw // "")` here handles null, but if a malformed lens
+  # emits source_family as a number / boolean / array / object, the
+  # downstream `gsub` errors and the entire jq builder fails BEFORE
+  # --add-findings can continue-on-error — converting "one bad
+  # candidate dropped" into "Phase 1 lost the entire pool". The
+  # type-guard preserves the per-candidate continue-on-error contract.
+  #
+  # gsub strips leading/trailing whitespace (POSIX [[:space:]] for
+  # portability across Oniguruma / any future jq engine),
+  # ascii_downcase normalizes case, empty input is treated as null
+  # (NOT "diff-family" — surfacing an upstream lens emitting empty
+  # source_family as drift in trace.md is more useful than silently
+  # bucketing). Keep this table in sync with bin/source-family-map.py
+  # — both readers exist by design (this one is hot-path Phase 1; the
+  # helper is a one-shot for ad-hoc debugging). The drift-table
+  # smoke assertion (AF-DRIFT, test/smoke.sh) catches divergence.
+  def fam_canonical($raw):
+    ((if ($raw | type) == "string" then $raw else "" end)
+     | gsub("^[[:space:]]+|[[:space:]]+$"; "")
+     | ascii_downcase) as $k |
+    if   $k == "" then null
+    elif $k == "diff-family"        or $k == "structural-family"
+      or $k == "policy-family"      or $k == "ux-family"
+      or $k == "security-family"    or $k == "holistic-family"
+      or $k == "external-deep-family" or $k == "external-add-family" then $k
+    elif $k == "stale-line-ref"     or $k == "stale_line_ref"
+      or $k == "stale-behavior-claim" or $k == "stale_behavior_claim" then "policy-family"
+    elif $k == "prompt-injection"   or $k == "prompt_injection"
+      or $k == "input-validation"   or $k == "input_validation"
+      or $k == "path-traversal"     or $k == "path_traversal"
+      or $k == "terminal-injection" or $k == "terminal_injection" then "security-family"
+    else null end;
 
-    full_finding=$(jq -n \
-      --argjson trivial "$trivial_mode" \
-      --argjson cand "$candidate" \
-      '$cand + {
-        source_families: [($cand.source_family // "diff-family")],
+  {
+    findings: [
+      .[] | . as $cand |
+      ((fam_canonical($cand.source_family)) // "unknown") as $f |
+      $cand + {
+        source_family: $f,
+        source_families: [$f],
         actionability: (if ($cand.impact_type == "correctness" or $cand.impact_type == "security") then "auto_fixable"
                        elif ($cand.impact_type == "architecture") then "report_only"
                        else "manual" end),
@@ -1000,11 +1056,102 @@ while IFS= read -r candidate; do
         introduced_in_sha: null,
         suggested_follow_up: null,
         related_parent_finding_id: null
-      } | del(.source_family, .evidence_snippet)')   # strip candidate-only fields — schema additionalProperties:false
+      }
+      | del(.source_family, .evidence_snippet)
+    ],
+    drift: [
+      .[] | select(fam_canonical(.source_family) == null) |
+      "lens_source_family_unknown: source=\(.sources[0] // "(unknown)") raw=\(.source_family // "(missing)") -> mapped to \"unknown\""
+    ]
+  }
+')
 
-    artifact-patch.py \
-      --path "$artifact_path" --add-finding "$full_finding"
-done < <(printf '%s' "$ided" | jq -c '.[]')
+findings_array=$(printf '%s' "$build_result" | jq -c '.findings')
+
+# Phase-1 sanity check (Discussion item 2 resolution): the jq builder
+# above should produce one element per input candidate. If the count
+# drops here, jq dropped candidates via select() / del / null-handling
+# — that's a structural bug in the jq builder, distinct from
+# per-finding shape rejection downstream in --add-findings. Catches
+# the silent-loss class without coupling to the helper's --expected
+# infrastructure (which is designed for re-dispatch semantics that
+# don't fit the add-findings shape).
+expected_n=$(printf '%s' "$ided" | jq 'length')
+built_n=$(printf '%s' "$findings_array" | jq 'length')
+if [[ "$built_n" != "$expected_n" ]]; then
+    printf 'phase_1_jq_builder_count_drop: expected=%s built=%s — jq builder dropped candidates before --add-findings\n' \
+        "$expected_n" "$built_n" >> "$trace_log_path"
+fi
+
+# Audit-log unknown families to trace.md so the next mapping-table
+# update surfaces from inspection rather than a silent drop.
+drift_lines=$(printf '%s' "$build_result" | jq -r '.drift[]')
+if [[ -n "$drift_lines" ]]; then
+    printf '%s\n' "$drift_lines" >> "$trace_log_path"
+fi
+
+# Single batched write. Stdin keeps the findings-array out of any
+# argv-size envelope on the helper side; the orchestrator's Bash
+# command body still holds it as a shell variable, but never crosses
+# the process boundary as text. Continue-on-error: rejected findings
+# emit `add-findings-rejected:` lines on stderr; we drain them
+# synchronously into trace.md (T1 — see below) and the orchestrator
+# transcript; accepted findings commit in one atomic write.
+#
+# T1 — synchronous stderr capture instead of process substitution.
+# Earlier draft used `2> >(tee -a "$trace_log_path" >&2)` (background
+# subshell, async). That was safe for Phase 1.6's later grep (the
+# pipeline drains by then) but RACED with the immediate
+# `phase_1_add_findings_total_failure:` grep in this same block —
+# `tee` could still be flushing while we read the count, producing
+# misleading `rejected=0` tags when 50 rejections actually happened.
+#
+# The synchronous tempfile pattern below preserves the dual-emission
+# property of the old `tee` (stderr lines visible to BOTH trace.md
+# AND the orchestrator transcript) while making the post-helper grep
+# deterministic. The lens-dispatch sites earlier in this fragment can
+# stay on `2> >(tee ...)` because nothing reads trace.md immediately
+# afterward — only this site needs the synchronous form.
+stderr_capture=$(mktemp)
+add_rc=0
+printf '%s' "$findings_array" \
+  | artifact-patch.py --path "$artifact_path" --add-findings - \
+      2>"$stderr_capture" || add_rc=$?
+
+# Drain the helper's stderr to trace.md and re-emit on stderr (so the
+# orchestrator transcript still sees the per-rejection lines, matching
+# the dual-emission semantics of the tee pattern used elsewhere).
+if [[ -s "$stderr_capture" ]]; then
+    cat "$stderr_capture" >> "$trace_log_path"
+    cat "$stderr_capture" >&2
+fi
+
+if [[ "$add_rc" != "0" ]]; then
+    landed_n=$(artifact-read.sh --path "$artifact_path" \
+        --filter '.findings | length')
+    printf 'phase_1_add_findings_failed: rc=%s landed=%s see trace.md for per-rejection detail\n' \
+        "$add_rc" "$landed_n" >> "$trace_log_path"
+    # Distinct loud-failure surface (R2) for the catastrophic case
+    # (every candidate dropped). Phase 2 dedup's empty-pool guard
+    # would also catch this, but a discrete tag in trace.md /
+    # phases.jsonl makes "Phase 1 silently lost the entire pool"
+    # easy to spot vs. "this was a healthy zero-finding review"
+    # (e.g., docs-only PR under trivial mode).
+    if [[ "$landed_n" == "0" ]]; then
+        # Count rejections from the synchronous capture, NOT from
+        # trace.md — both contain the same lines now, but the
+        # tempfile is the deterministic source.
+        rejected_count=$(grep -c '^add-findings-rejected:' "$stderr_capture" 2>/dev/null || true)
+        printf 'phase_1_add_findings_total_failure: rc=%s expected=%s rejected=%s — investigate trace.md add-findings-rejected: lines\n' \
+            "$add_rc" "$expected_n" "$rejected_count" \
+            >> "$trace_log_path"
+    fi
+    # Don't bail Phase 1 here. The audit tags above + Phase 1.6's
+    # summary surface the failure for the operator; if some findings
+    # landed, downstream phases run on what's there.
+fi
+
+rm -f "$stderr_capture"
 ```
 
 For trivial-mode runs (`trivial_mode=true`), the jq builder above
@@ -1012,11 +1159,18 @@ forces `validation_lane="light"` for every candidate — Phase 4b
 handles the whole pool per §19.6. The `$trivial` argjson binding
 drives that branch so the stored lane is honest.
 
-On non-zero exit for any single `--add-finding`, read the error-as-
-prompt (it names the offending field and id), adjust your `jq` build,
-retry once. On second failure, log the finding id to `trace.md` and
-drop it — the rest of the pool still commits. This matches the pre-
-§13.12 per-candidate failure policy.
+Continue-on-error per finding: `--add-findings` rejects bad
+candidates by emitting one `add-findings-rejected:` line per drop on
+stderr (drained synchronously into `trace.md` per T1) and still
+commits the rest of the batch in a single atomic write. The
+orchestrator does NOT retry per-candidate — Phase 1.6's summary
+surfaces a non-zero `add_findings_rejected` count when drops happen,
+and `add_findings_total_failures` (catastrophic case: zero findings
+landed despite a non-empty pool) is a distinct loud-failure tag.
+`--add-finding` (singular) remains supported and is still the form
+used by Wave 2 (`fragments/05-validation.md` step 4.5) and
+`/adamsreview:add` (`commands/add.md` step 6) — only the Phase 1 join
+site migrates here.
 
 **`pending_validation` is the Phase-1 parking disposition.** Schema
 requires `disposition` non-null, so we can't leave it unset.
@@ -1054,11 +1208,14 @@ total_candidates=$(artifact-read.sh \
 # concatenate another "0" and the variable becomes "0\n0".
 lens_drops=$(grep -c '^lens_dropped_unparseable:' "$trace_log_path" 2>/dev/null || true)
 oc_skipped=$(grep -c '^origin_crosscheck_skipped:' "$trace_log_path" 2>/dev/null || true)
+add_findings_rejected=$(grep -c '^add-findings-rejected:' "$trace_log_path" 2>/dev/null || true)
+jq_builder_count_drops=$(grep -c '^phase_1_jq_builder_count_drop:' "$trace_log_path" 2>/dev/null || true)
+add_findings_total_failures=$(grep -c '^phase_1_add_findings_total_failure:' "$trace_log_path" 2>/dev/null || true)
 
 log-phase.sh \
   --review-dir "$review_dir" --phase 1 --name detection \
   --elapsed "$phase_1_elapsed" \
-  --summary "total=$total_candidates; counts_by_family=$counts_by_family; skipped_lenses=<list-if-any>; lens_drops=$lens_drops; origin_crosscheck_skipped=$oc_skipped"
+  --summary "total=$total_candidates; counts_by_family=$counts_by_family; skipped_lenses=<list-if-any>; lens_drops=$lens_drops; origin_crosscheck_skipped=$oc_skipped; add_findings_rejected=$add_findings_rejected; jq_builder_count_drops=$jq_builder_count_drops; add_findings_total_failures=$add_findings_total_failures"
 
 log-phase.sh \
   --review-dir "$review_dir" --phase 1 --record "$(jq -nc \

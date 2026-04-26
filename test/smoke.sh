@@ -4164,13 +4164,17 @@ else
     fail "PF-INT-3: validation fragment integration missing markers in $VAL_MD"
 fi
 
-# PF-INT-4: fragments/01-detection.md integrates source-family-map.py at
-# the join step with "unknown"-tag escalation (not silent drop).
+# PF-INT-4: fragments/01-detection.md integrates batched --add-findings
+# + in-jq fam_canonical at the join step with "unknown"-tag escalation
+# (not silent drop). Stage-4 marker triple: fam_canonical proves in-jq
+# canonicalization landed; --add-findings proves the batched helper
+# replaced the per-call loop; lens_source_family_unknown proves drift
+# escalation still works.
 DET_MD="$REPO/fragments/01-detection.md"
-if grep -qF 'source-family-map.py' "$DET_MD" \
-    && grep -qF 'canonical_family="unknown"' "$DET_MD" \
+if grep -qF 'fam_canonical' "$DET_MD" \
+    && grep -qF -- '--add-findings' "$DET_MD" \
     && grep -qF 'lens_source_family_unknown' "$DET_MD"; then
-    pass "PF-INT-4: detection fragment integrates source-family-map.py (escalate-not-drop)"
+    pass "PF-INT-4: detection fragment integrates batched --add-findings + in-jq fam_canonical (escalate-not-drop)"
 else
     fail "PF-INT-4: detection fragment integration missing markers in $DET_MD"
 fi

@@ -40,6 +40,11 @@ Pass-through if the input is already canonical. Exit 3 with the
 `UNKNOWN_FAMILY: <raw>` audit line on unknown — callers (Phase 1 join
 step) preserve the finding but mark `source_family: "unknown"` and log
 to `trace.md` so mapping drift is visible without silent drops.
+
+Note: `fragments/01-detection.md` §1.5 step 4 inlines a parallel
+canonicalization in jq for the Phase 1 hot-path; keep both tables in
+sync. `test/smoke.sh` AF-DRIFT enforces agreement between this helper
+and the in-jq table.
 """
 from __future__ import annotations
 
