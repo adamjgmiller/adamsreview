@@ -4421,6 +4421,311 @@ else
     fail "AS-3: expected rc=1 with ERROR/Action stderr; got rc=$as3_rc" "$(cat "$as3_err" 2>/dev/null)"
 fi
 
+# ------------------------------------------------------------------ AF-* batched --add-findings (Stage 3 / plans/batched-add-findings.md)
+# Stage 3 — `bin/artifact-patch.py --add-findings <array>` is the
+# batched create mode that replaces the per-finding loop in
+# fragments/01-detection.md (Stage 4 wires it). Each finding flows
+# through preflight (`_check_add_finding_shape`); rejections are
+# logged as one-line `add-findings-rejected:` records on stderr and
+# the rest of the batch still commits in a single atomic write.
+#
+# Exit-code policy (pinned in artifact-patch.py:cmd_add_findings):
+#   0  — at least one finding accepted (rejections allowed; summary
+#        names the skipped ids)
+#   1  — EXIT_VALIDATION (post-write full-artifact schema failed —
+#        defense-in-depth; AF-5 is deferred per design plan §5)
+#   7  — EXIT_ALL_REJECTED (input was a JSON array, but every element
+#        was rejected at preflight)
+#  64  — EXIT_USAGE (non-array input, unparseable JSON, or mode-
+#        conflict with --set / --finding-id / etc.)
+
+AF_DIR="$WORK/af-batched"
+mkdir -p "$AF_DIR"
+
+# Reusable valid-finding template generator. id is the only thing that
+# varies per assertion; everything else satisfies the schema's required-
+# field set with deep-lane / pending_validation defaults — i.e., the
+# shape Phase 1 join would emit before Phase 3 scoring. Bash 3.2-safe:
+# uses jq -nc with --arg, no associative arrays.
+af_mkfinding() {
+    jq -nc --arg id "$1" '{
+        id: $id,
+        sources: ["L1-diff"],
+        source_families: ["structural-family"],
+        impact_type: "correctness",
+        origin: "introduced_by_pr",
+        origin_confidence: "high",
+        actionability: "auto_fixable",
+        validation_lane: "deep",
+        current_state: "open",
+        disposition: "pending_validation",
+        is_actionable: false,
+        reason: null,
+        confirmed_strength: null,
+        file: "src/a.ts",
+        line_range: [10, 12],
+        claim: "AF-* batched add-findings template",
+        score_phase3: null,
+        score_phase4: null,
+        score_history: [],
+        validation_result: null,
+        fix_attempts: [],
+        introduced_in_sha: null,
+        suggested_follow_up: null,
+        related_parent_finding_id: null
+    }'
+}
+
+# AF-1: happy path. Three valid findings → exit 0, all three land,
+# stdout summary names the count, stderr is silent.
+af1_art="$AF_DIR/af1.json"
+af1_err="$AF_DIR/af1.err"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$af1_art" >/dev/null
+af1_f1=$(af_mkfinding F101)
+af1_f2=$(af_mkfinding F102)
+af1_f3=$(af_mkfinding F103)
+af1_arr=$(jq -nc --argjson f1 "$af1_f1" --argjson f2 "$af1_f2" --argjson f3 "$af1_f3" '[$f1,$f2,$f3]')
+af1_out=$("$TOOLS/artifact-patch.py" --path "$af1_art" --add-findings "$af1_arr" 2>"$af1_err")
+af1_rc=$?
+af1_disk_ids=$(jq -r '.findings | map(.id) | join(",")' "$af1_art")
+if [[ "$af1_rc" == "0" ]] \
+    && [[ "$af1_out" == "added 3 findings" ]] \
+    && [[ ! -s "$af1_err" ]] \
+    && [[ "$af1_disk_ids" == "F001,F002,F003,F004,F005,F006,F101,F102,F103" ]]; then
+    pass "AF-1: happy-path 3-finding batch → exit 0, stdout summary, silent stderr, all three land on-disk"
+else
+    fail "AF-1: rc=$af1_rc out='$af1_out' err_size=$(wc -c <"$af1_err") ids='$af1_disk_ids'" "$(cat "$af1_err" 2>/dev/null)"
+fi
+
+# AF-2: mixed batch with R5 nested-key coverage.
+#   #1 F201 valid                            — should land
+#   #2 F202 invalid (top-level extra_field)  — schema_invalid
+#   #3 F203 invalid (nested validation_result.blast_radius.extra_subkey)
+#                                              — schema_invalid (nested
+#                                                additionalProperties:false)
+#   #4 F204 valid                            — should land
+#   #5 F201 (duplicate of #1 in same batch)  — duplicate_id
+# Verifies one mode catches drift at every depth: top-level AND nested
+# `additionalProperties: false` rejections plus same-batch dup detection.
+# F201 + F204 land. Stderr: TWO schema_invalid + ONE duplicate_id lines.
+af2_art="$AF_DIR/af2.json"
+af2_err="$AF_DIR/af2.err"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$af2_art" >/dev/null
+af2_f1=$(af_mkfinding F201)
+af2_f2=$(af_mkfinding F202 | jq -c '. + {extra_field: 1}')
+af2_f3=$(af_mkfinding F203 | jq -c '.validation_result = {
+    evidence: ["e"],
+    blast_radius: {writers: [], consumers: [], parallel_paths: [], invariants_at_stake: [], extra_subkey: []},
+    fix_proposal: {approach: "x", files_to_modify: []},
+    verification_context: {how_to_verify_fix: [], edge_cases_to_preserve: [], what_would_break_if_incomplete: []}
+}')
+af2_f4=$(af_mkfinding F204)
+af2_f5=$(af_mkfinding F201 | jq -c '.claim = "duplicate-of-F201-in-same-batch"')
+af2_arr=$(jq -nc --argjson f1 "$af2_f1" --argjson f2 "$af2_f2" \
+    --argjson f3 "$af2_f3" --argjson f4 "$af2_f4" --argjson f5 "$af2_f5" \
+    '[$f1,$f2,$f3,$f4,$f5]')
+af2_out=$("$TOOLS/artifact-patch.py" --path "$af2_art" --add-findings "$af2_arr" 2>"$af2_err")
+af2_rc=$?
+af2_disk_ids=$(jq -r '.findings | map(.id) | join(",")' "$af2_art")
+af2_schema_count=$(grep -c 'reason=schema_invalid' "$af2_err")
+af2_dup_count=$(grep -c 'reason=duplicate_id' "$af2_err")
+af2_dup_detail=$(grep 'reason=duplicate_id' "$af2_err")
+if [[ "$af2_rc" == "0" ]] \
+    && [[ "$af2_out" == *"added 2 findings"* ]] \
+    && [[ "$af2_out" == *"F202"* && "$af2_out" == *"F203"* && "$af2_out" == *"F201"* ]] \
+    && [[ "$af2_disk_ids" == "F001,F002,F003,F004,F005,F006,F201,F204" ]] \
+    && [[ "$af2_schema_count" == "2" ]] \
+    && [[ "$af2_dup_count" == "1" ]] \
+    && echo "$af2_dup_detail" | grep -qF 'id appears twice in this batch'; then
+    pass "AF-2 (R5): mixed batch — top-level + nested additionalProperties + duplicate_id; F201 & F204 land"
+else
+    fail "AF-2: rc=$af2_rc schema_lines=$af2_schema_count dup_lines=$af2_dup_count ids='$af2_disk_ids' out='$af2_out'" "$(cat "$af2_err" 2>/dev/null)"
+fi
+
+# AF-3: all-rejected (T6 — batch-level error-as-prompt block).
+# Two findings, both with bad impact_type enum values. Verify exit 7,
+# TWO add-findings-rejected: lines, the batch-level ERROR: + Action:
+# error-as-prompt, "added 0 findings (skipped 2: ...)" stdout summary,
+# and on-disk artifact unchanged (no F301/F302).
+af3_art="$AF_DIR/af3.json"
+af3_err="$AF_DIR/af3.err"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$af3_art" >/dev/null
+af3_pre_ids=$(jq -r '.findings | map(.id) | join(",")' "$af3_art")
+af3_f1=$(af_mkfinding F301 | jq -c '.impact_type = "BAD_VAL"')
+af3_f2=$(af_mkfinding F302 | jq -c '.impact_type = "ALSO_BAD"')
+af3_arr=$(jq -nc --argjson f1 "$af3_f1" --argjson f2 "$af3_f2" '[$f1,$f2]')
+af3_out=$("$TOOLS/artifact-patch.py" --path "$af3_art" --add-findings "$af3_arr" 2>"$af3_err")
+af3_rc=$?
+af3_post_ids=$(jq -r '.findings | map(.id) | join(",")' "$af3_art")
+af3_rej_count=$(grep -c '^add-findings-rejected:' "$af3_err")
+if [[ "$af3_rc" == "7" ]] \
+    && [[ "$af3_rej_count" == "2" ]] \
+    && grep -q '^ERROR: --add-findings: every input was rejected' "$af3_err" \
+    && grep -q '^Action:' "$af3_err" \
+    && [[ "$af3_out" == *"added 0 findings"* && "$af3_out" == *"F301"* && "$af3_out" == *"F302"* ]] \
+    && [[ "$af3_post_ids" == "$af3_pre_ids" ]]; then
+    pass "AF-3 (T6): all-rejected → exit 7 + batch-level ERROR/Action + 2 rejection lines + artifact unchanged"
+else
+    fail "AF-3: rc=$af3_rc rej_count=$af3_rej_count pre='$af3_pre_ids' post='$af3_post_ids' out='$af3_out'" "$(cat "$af3_err" 2>/dev/null)"
+fi
+
+# AF-4: stdin path. Same input as AF-1 piped via `printf | --add-findings -`
+# must yield the same on-disk state. Proves read_json_arg's stdin branch
+# composes with --add-findings (not just inline JSON or @file).
+af4_art="$AF_DIR/af4.json"
+af4_err="$AF_DIR/af4.err"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$af4_art" >/dev/null
+# Reuse AF-1's array (F101..F103), pipe via stdin.
+af4_out=$(printf '%s' "$af1_arr" | "$TOOLS/artifact-patch.py" --path "$af4_art" --add-findings - 2>"$af4_err")
+af4_rc=$?
+af4_disk_ids=$(jq -r '.findings | map(.id) | join(",")' "$af4_art")
+if [[ "$af4_rc" == "0" ]] \
+    && [[ "$af4_out" == "added 3 findings" ]] \
+    && [[ ! -s "$af4_err" ]] \
+    && [[ "$af4_disk_ids" == "$af1_disk_ids" ]]; then
+    pass "AF-4: stdin (--add-findings -) matches AF-1 inline-JSON on-disk state"
+else
+    fail "AF-4: rc=$af4_rc out='$af4_out' ids='$af4_disk_ids' (vs AF-1 '$af1_disk_ids')" "$(cat "$af4_err" 2>/dev/null)"
+fi
+
+# AF-5: SKIPPED — defense-in-depth post-write validation case is deferred
+# per plans/batched-add-findings.md §5 (would require a bug in the
+# preflight validator vs. the artifact-level validator since they share
+# schema-v1.json). Reserved for future regression coverage if such a
+# divergence is ever introduced.
+
+# AF-6: empty array. `[]` is a no-op success — exit 0, "added 0 findings"
+# on stdout, silent stderr, on-disk artifact unchanged. Lets callers
+# pipe a possibly-empty candidate list without special-casing.
+af6_art="$AF_DIR/af6.json"
+af6_err="$AF_DIR/af6.err"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$af6_art" >/dev/null
+af6_pre_ids=$(jq -r '.findings | map(.id) | join(",")' "$af6_art")
+af6_out=$("$TOOLS/artifact-patch.py" --path "$af6_art" --add-findings '[]' 2>"$af6_err")
+af6_rc=$?
+af6_post_ids=$(jq -r '.findings | map(.id) | join(",")' "$af6_art")
+if [[ "$af6_rc" == "0" ]] \
+    && [[ "$af6_out" == "added 0 findings" ]] \
+    && [[ ! -s "$af6_err" ]] \
+    && [[ "$af6_post_ids" == "$af6_pre_ids" ]]; then
+    pass "AF-6: empty array → exit 0, 'added 0 findings', silent stderr, artifact unchanged"
+else
+    fail "AF-6: rc=$af6_rc out='$af6_out' err_size=$(wc -c <"$af6_err") pre='$af6_pre_ids' post='$af6_post_ids'" "$(cat "$af6_err" 2>/dev/null)"
+fi
+
+# AF-7a: usage error — non-array JSON value (string). exit 64. Artifact
+# unchanged. read_json_arg parses successfully; cmd_add_findings rejects
+# the non-list type.
+af7_art="$AF_DIR/af7.json"
+"$TOOLS/artifact-patch.py" --init "@$FIX/artifact-seed.json" --path "$af7_art" >/dev/null
+af7_pre_ids=$(jq -r '.findings | map(.id) | join(",")' "$af7_art")
+af7a_err="$AF_DIR/af7a.err"
+"$TOOLS/artifact-patch.py" --path "$af7_art" --add-findings '"hello"' >/dev/null 2>"$af7a_err"
+af7a_rc=$?
+af7a_post_ids=$(jq -r '.findings | map(.id) | join(",")' "$af7_art")
+if [[ "$af7a_rc" == "64" ]] \
+    && grep -q 'JSON array' "$af7a_err" \
+    && [[ "$af7a_post_ids" == "$af7_pre_ids" ]]; then
+    pass "AF-7a: non-array JSON ('\"hello\"') → exit 64 + 'JSON array' stderr, artifact unchanged"
+else
+    fail "AF-7a: rc=$af7a_rc post='$af7a_post_ids'" "$(cat "$af7a_err" 2>/dev/null)"
+fi
+
+# AF-7b: usage error — unparseable JSON via stdin. exit 64 (read_json_arg
+# branch; emits 'not valid JSON' / source = <stdin>). Artifact unchanged.
+af7b_err="$AF_DIR/af7b.err"
+printf 'not-json' | "$TOOLS/artifact-patch.py" --path "$af7_art" --add-findings - >/dev/null 2>"$af7b_err"
+af7b_rc=$?
+af7b_post_ids=$(jq -r '.findings | map(.id) | join(",")' "$af7_art")
+if [[ "$af7b_rc" == "64" ]] \
+    && grep -q 'not valid JSON' "$af7b_err" \
+    && [[ "$af7b_post_ids" == "$af7_pre_ids" ]]; then
+    pass "AF-7b: unparseable JSON via stdin → exit 64 + 'not valid JSON' stderr, artifact unchanged"
+else
+    fail "AF-7b: rc=$af7b_rc post='$af7b_post_ids'" "$(cat "$af7b_err" 2>/dev/null)"
+fi
+
+# AF-7c: usage error — mode conflict (--add-findings + --finding-id).
+# exit 64 + 'cannot combine' stderr from cmd_add_findings's mode-conflict
+# guard. Artifact unchanged.
+af7c_err="$AF_DIR/af7c.err"
+"$TOOLS/artifact-patch.py" --path "$af7_art" --add-findings '[]' --finding-id F001 >/dev/null 2>"$af7c_err"
+af7c_rc=$?
+af7c_post_ids=$(jq -r '.findings | map(.id) | join(",")' "$af7_art")
+if [[ "$af7c_rc" == "64" ]] \
+    && grep -q 'cannot combine' "$af7c_err" \
+    && [[ "$af7c_post_ids" == "$af7_pre_ids" ]]; then
+    pass "AF-7c: mode conflict (--add-findings + --finding-id) → exit 64 + 'cannot combine' stderr, artifact unchanged"
+else
+    fail "AF-7c: rc=$af7c_rc post='$af7c_post_ids'" "$(cat "$af7c_err" 2>/dev/null)"
+fi
+
+# ------------------------------------------------------------------ AF-DRIFT source-family canonicalization parity
+# Catches divergence between bin/source-family-map.py (CANONICAL +
+# DRIFT_MAP) and the in-jq `fam_canonical` table that Stage 4 inlines
+# into fragments/01-detection.md §1.5 step 4. The jq table below is
+# paste-duplicated verbatim from plans/batched-add-findings.md §3 — the
+# SAME table Stage 4 will write into the fragment. Adding or removing a
+# key in either source without updating the other (or changing a target
+# canonical family) will fail this single fail-on-first-divergence loop.
+#
+# Why paste-duplicate instead of factoring into bin/fam_canonical.jq:
+# the design plan (§5) chose this shape because (a) the table is small,
+# (b) its callsite is a Bash here-doc inside a fragment, and (c) the
+# verification boundary lives HERE in smoke — divergence fails AF-DRIFT
+# loudly rather than silently dropping at runtime.
+#
+# importlib trick: source-family-map.py has hyphens in its name, so a
+# plain `from source_family_map import ...` won't resolve. The script
+# itself does `sys.path.insert(0, .../bin)` at module load to find
+# `_common`, so importlib can reuse that path setup.
+af_drift_keys=$(python3 -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('sfm', '$TOOLS/source-family-map.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for k in sorted(mod.CANONICAL): print(k)
+for k in sorted(mod.DRIFT_MAP): print(k)
+" 2>/dev/null)
+af_drift_fail=""
+af_drift_count=0
+while IFS= read -r k; do
+    [[ -z "$k" ]] && continue
+    af_drift_count=$((af_drift_count+1))
+    py_out=$("$TOOLS/source-family-map.py" --input "$k" 2>/dev/null) || py_out="UNKNOWN"
+    jq_out=$(printf '%s' "\"$k\"" | jq -r '
+      def fam_canonical($raw):
+        ((if ($raw | type) == "string" then $raw else "" end)
+         | gsub("^[[:space:]]+|[[:space:]]+$"; "")
+         | ascii_downcase) as $k |
+        if   $k == "" then null
+        elif $k == "diff-family"        or $k == "structural-family"
+          or $k == "policy-family"      or $k == "ux-family"
+          or $k == "security-family"    or $k == "holistic-family"
+          or $k == "external-deep-family" or $k == "external-add-family" then $k
+        elif $k == "stale-line-ref"     or $k == "stale_line_ref"
+          or $k == "stale-behavior-claim" or $k == "stale_behavior_claim" then "policy-family"
+        elif $k == "prompt-injection"   or $k == "prompt_injection"
+          or $k == "input-validation"   or $k == "input_validation"
+          or $k == "path-traversal"     or $k == "path_traversal"
+          or $k == "terminal-injection" or $k == "terminal_injection" then "security-family"
+        else null end;
+      fam_canonical(.) // "UNKNOWN"
+    ')
+    if [[ "$py_out" != "$jq_out" ]]; then
+        af_drift_fail="key='$k' Py='$py_out' jq='$jq_out'"
+        break
+    fi
+done <<< "$af_drift_keys"
+
+if [[ -z "$af_drift_fail" ]] && [[ "$af_drift_count" -gt 0 ]]; then
+    pass "AF-DRIFT: bin/source-family-map.py CANONICAL+DRIFT_MAP ($af_drift_count keys) agree with in-jq fam_canonical (paste-duplicated from fragments/01-detection.md §1.5 step 4)"
+elif [[ "$af_drift_count" == "0" ]]; then
+    fail "AF-DRIFT: extracted 0 keys from source-family-map.py (importlib failure?)"
+else
+    fail "AF-DRIFT: $af_drift_fail"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
