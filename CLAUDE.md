@@ -11,10 +11,10 @@ Build repo for five personal Claude Code slash commands, packaged as a plugin (`
 - **`/adamsreview:review`** — multi-lens code review of a branch or PR (Phases 0–6).
 - **`/adamsreview:add`** — inject externally-sourced findings (cloud `/ultrareview` paste, Opus once-over, manual finds, etc.) into the most recent review's existing artifact. Free-form paste mode dispatches a Sonnet normalizer; structured `--file/--line/--claim` mode skips the normalizer; one Sonnet dedup pass against existing findings; Phase 4 validation lane-aware (Opus deep / Sonnet light) without Wave 2; re-renders + re-publishes to the existing PR comment.
 - **`/adamsreview:walkthrough [threshold]`** — interactive driver that walks the reviewer through findings `/adamsreview:fix` would skip, restricted to those with effective score (`COALESCE(score_phase4, score_phase3, -1)`) ≥ `$threshold` so low-signal findings don't pad the session. The threshold is a walkthrough-local score floor (default 60) and is decoupled from `/adamsreview:fix`'s threshold — promoted findings are picked up at any fix threshold via the `human_confirmation` bypass. Preflight offers a two-tier scope choice (default **Qualifying** — excludes Phase-3-demoted `below_gate`; **Full skip set** adds them back; note that `below_gate` findings only surface in Full when the threshold is low enough to admit their `score_phase3`). `pre_existing_report` findings are always excluded from both walk tiers and not score-floored; they are routed exclusively to the end-of-run issue-filing phase (one-by-one draft/confirm/edit flow that calls `gh issue create`). Per-finding Sonnet briefing with an "Edit the fix hint" override path; for `confirmed_manual` / `confirmed_report` the briefer proposes best-effort hints. Closes the light-lane `confirmed_mechanical` gap where the default Phase 8 lane filter skips mechanically-fixable ux/policy findings.
-- **`/adamsreview:fix`** — automated fix loop for auto-fixable findings (Phases 7–9).
+- **`/adamsreview:fix [threshold] [--granular-commits]`** — automated fix loop for auto-fixable findings (Phases 7–9). `--granular-commits` emits one commit per surviving fix group instead of the default single combined commit.
 - **`/adamsreview:promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adamsreview:fix` afterwards to apply. Used internally by `/adamsreview:walkthrough` via `fragments/promote-core.md` + `--defer-publish`.
 
-The original four are **built and in production use** as of 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`). `/adamsreview:add` was added on branch `review-add` (plan: `plans/review-add.md`). Plugin conversion (repackaging as a Claude Code plugin, D18 namespacing from `/adams-review-<stem>` to `/adamsreview:<stem>`) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`). Stage 4 (fragment shrink — manifest-style command bodies, helper extractions, prose compression) closed 2026-04-23 on branch `stage-4-fragment-shrink` (plan: `plans/stage-4-fragment-shrink.md`; execution journal: `plans/stage-4-fragment-shrink-execution.md`). All original-roadmap scope is now executed; forward-looking work lives in `plans/backlog.md`.
+The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`) and have been in production use since. `/adamsreview:add` was added on branch `review-add` (plan: `plans/review-add.md`). Plugin conversion (repackaging as a Claude Code plugin, D18 namespacing from `/adams-review-<stem>` to `/adamsreview:<stem>`) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`). Stage 4 (fragment shrink — manifest-style command bodies, helper extractions, prose compression) closed 2026-04-23 on branch `stage-4-fragment-shrink` (plan: `plans/stage-4-fragment-shrink.md`; execution journal: `plans/stage-4-fragment-shrink-execution.md`). All original-roadmap scope is now executed; forward-looking work lives in `plans/backlog.md`.
 
 **Recommended flow on a non-trivial PR:** `/adamsreview:review` → (optional) `/adamsreview:add` to inject parallel-review findings → `/adamsreview:walkthrough` (optional) → `/adamsreview:fix`. Each command is independent; `/adamsreview:promote` remains useful for one-off manual promotions outside the walkthrough.
 
@@ -27,11 +27,13 @@ The original four are **built and in production use** as of 2026-04-19 (Stages 1
 │              trivial-diff detection, CLAUDE.md path lister)
 ├── Phase 1    ─┐ Detection (6 parallel lens agents, 7 under --ensemble — L7
 │               │   is a holistic Opus safety net; origin cross-check corrects
-│               │   blame-traceable verdicts; under --ensemble also dispatches
-│               │   codex:codex-rescue + coderabbit:code-reviewer via the
-│               │   ensemble adapter)
-├── Phase 1.5  ─┘ External PR-comment scrape (gh api → bot filter → comment-freshness →
-│                 Sonnet normalizer; ensemble mode only; joint dispatch with Phase 1)
+│               │   blame-traceable verdicts; under --ensemble also invokes the
+│               │   CodeRabbit and Codex CLIs as subprocesses via the ensemble
+│               │   adapter, feeding their output into the Phase 1.5 normalizer)
+├── Phase 1.5  ─┘ External-source pooling (PR-comment scrape: gh api → bot
+│                 filter → comment-freshness; merged with --ensemble's
+│                 CodeRabbit + Codex CLI output through a single Sonnet
+│                 normalizer; ensemble mode only; joint dispatch with Phase 1)
 ├── Phase 2 — Dedup (one Sonnet call; merges equivalent candidates, unions source_families)
 ├── Phase 3 — Cheap scoring + gate (chunked-batch Sonnet err-up rubric, ≤25
 │              candidates per chunk-agent; ≥2 families auto-graduate; logs
@@ -45,14 +47,16 @@ The original four are **built and in production use** as of 2026-04-19 (Stages 1
                orchestrator-tokens.sh → orchestrator_tokens, artifact write,
                render, PR comment POST)
 
-/adamsreview:fix [threshold]
+/adamsreview:fix [threshold] [--granular-commits]
 ├── Phase 7 — Load artifact; leftover-attempted abort; clean-tree gate; staleness check
 ├── Phase 8 — Per-fix-group agents edit working tree (no git ops);
 │              each group reports files_modified + files_created
 └── Phase 9 — Post-fix Opus review pre-commit; aggregate outcomes per group;
               revert regression groups (checkout modified, rm created);
-              re-tally subagent_tokens + orchestrator_tokens; commit surviving groups with outcome
-              in message; push; append fix_attempts
+              re-tally subagent_tokens + orchestrator_tokens; commit surviving
+              groups with outcome in message (one combined commit by default;
+              one per fix group under --granular-commits); push; append
+              fix_attempts
               (on 9.pre overlap: offer reconcile | abort | inspect — reconcile
                dispatches one Opus merge agent, collapses fix_groups to FG-RECON
                in memory, then runs Phase 9a/9b/9c unchanged; original
@@ -77,6 +81,9 @@ the full review → fix / add / walkthrough arc:
 - **`subagent_tokens`** — rolled up from `tokens.jsonl` (every
   dispatched sub-agent's cost). Captures Phase 1 lenses, Phase 4
   validators, Phase 8 fix groups, Phase 9 post-fix reviewer, etc.
+  External CLIs invoked under `--ensemble` (CodeRabbit, Codex) are
+  billed by their own providers and are NOT in `tokens.jsonl` —
+  only the Phase 1.5 Sonnet normalizer pass over their output is.
 - **`orchestrator_tokens`** — rolled up from the Claude Code session
   transcript(s) under `~/.claude/projects/<cwd-slug>/` (main-session
   `message.usage` per assistant turn, filtered by timestamp ≥
@@ -249,13 +256,13 @@ adamsreview/
 │   └── marketplace.json            ← single-plugin marketplace (source: "./")
 ├── .gitattributes                  ← LF enforcement for *.sh / *.py / *.json / *.md
 ├── docs/
-│   └── archive/                    ← frozen historical docs (not maintained)
-│       ├── README.md               ← frozen-as-of banner
-│       ├── DESIGN.md               ← rev 8 normative design (historical)
-│       └── BUILD.md                ← stage-by-stage build journal (historical)
-├── plans/                          ← per-stage plans (all original-roadmap stages closed:
-│                                     1–3 + 2.5/2.6/2.7/2.8, plugin-conversion,
-│                                     post-plugin-improvements, stage-4-fragment-shrink).
+│   ├── archive/                    ← frozen historical docs (not maintained)
+│   │   ├── README.md               ← frozen-as-of banner
+│   │   ├── DESIGN.md               ← rev 8 normative design (historical)
+│   │   └── BUILD.md                ← stage-by-stage build journal (historical)
+│   └── case-studies/               ← real-PR review writeups (calibration material)
+├── plans/                          ← per-stage plans and design notes;
+│                                     see `plans/` for the complete index.
 │                                     Forward-looking work lives in `plans/backlog.md`;
 │                                     chronological idea log + DONE markers live in
 │                                     `plans/post-conversion-ideas.md`.
@@ -280,7 +287,7 @@ adamsreview/
 ├── scripts/
 │   └── dev-run.sh                  ← `claude --plugin-dir` wrapper for plugin-author iteration
 └── test/
-    ├── smoke.sh                    ← 204-assertion harness
+    ├── smoke.sh                    ← smoke harness
     └── fixtures/
 ```
 
@@ -315,7 +322,7 @@ Enough to work without opening the archive. Each rule is a decision that was lea
 
 2. **uv shebang for Python helpers.** `#!/usr/bin/env -S uv run --script` with a `# /// script` inline dep spec. Never `pip install` directly (PEP 668 blocks it on Homebrew Python 3.12+).
 
-3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 6=expected-mismatch (--apply-decisions tuple count != --expected; recover by re-dispatch), 64=usage`. Defined in `bin/_common.py`; reuse, don't invent.
+3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 6=expected-mismatch (--apply-decisions tuple count != --expected; recover by re-dispatch), 64=usage`. Codes 2 and 3 are context-sensitive — `parse-validator-result.py` reuses 2 for score-unrecoverable; `source-family-map.py` reuses 3 for unknown-family. Defined in `bin/_common.py`; reuse, don't invent.
 
 4. **Error-as-prompt on every helper.** Non-zero exits emit `ERROR:` / `Valid input:` / `Did you mean:` / `Action:` stderr sections. No stack traces on expected errors. See `bin/_common.py:suggest()`.
 
@@ -361,7 +368,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 | `artifact-seed.sh` | Bash | Phase 0.15 initial-artifact seed builder. Takes Phase-0 outputs as flags (`--review-id`, `--review-started-at`, `--reviewed-sha`, `--base-branch`, `--head-branch`, `--mode`, `--pr-state`, `--pr-number`, `--comment-id`, `--trivial-mode`, `--base-context <json>`, `--reviewed-files-all <newline-sep>`, `--claude-md-paths <newline-sep>`, `--files-changed`, `--lines-changed`) and emits the schema-shaped seed JSON on stdout. Pipe to `artifact-patch.py --init -` for persistence. Seeds `reviewer_sources: ["internal"]`, `generated_at = review_started_at`, empty `findings` / `cross_cutting_groups`, zeroed `subagent_tokens`, nulled `metrics`. Nullable flags (`--pr-state`, `--pr-number`, `--comment-id`) accept empty string → JSON null. The §13.10 `base_context` sub-object is still built via `jq -n` in the fragment (preserves explicit null-handling for offline paths) and passed as a single JSON string. Pure output helper — no on-disk mutations; `--init` is what writes. |
 | `parse-with-repair.py` | Python | Stdin-to-stdout tolerant JSON parser. Layers: strict `json.loads` → fence-strip → `json-repair` → fence-strip+repair. Exit 0 = clean JSON on stdout, exit 1 = unrecoverable with error-as-prompt stderr. Foundation for the two normalizers below; used at the ensemble-adapter normalizer boundary (messiest external-tool output). |
 | `parse-validator-result.py` | Python | Canonicalizes Phase 4 validator output to `{score_phase4, actionability, confirmed_strength, decision, notes, validation_result, related_candidates_to_investigate}`. Handles shape drift: `{score_phase4}`, `{score:{correctness}}`, `{overall_numeric}` (1-5), `{severity: low/medium/high}`, ambiguous `{score: N}` (heuristic 1-5 / 1-10 / pass-through). `--lane deep\|light`. Exit 2 = score unrecoverable (caller routes to `uncertain` with `score_phase4: null`). Uses `parse-with-repair.py` internally. Deep-lane `validation_result` is schema-checked against `bin/schema-v1.json#/$defs/validation_result` after any top-level lift; drift (missing sub-objects, alternative keys, malformed `blast_radius`, etc.) drops `validation_result` to `null` with a "shape unrecoverable" note so the downstream `--apply-decisions` batch doesn't halt on one drifted tuple. |
-| `source-family-map.py` | Python | Maps lens-emitted `source_family` to canonical (eight families: diff, structural, policy, ux, security, holistic, external-deep, external-add — the last emitted by `/adamsreview:add`). `--input <raw>` → canonical on stdout (exit 0) or `UNKNOWN_FAMILY:` on stderr (exit 3). Phase 1 join-step uses exit 3 to tag the candidate `source_family: "unknown"` + log drift — preserves the finding rather than silently dropping it. |
+| `source-family-map.py` | Python | Maps lens-emitted `source_family` to canonical (eight families, all `*-family`-suffixed: `diff-family`, `structural-family`, `policy-family`, `ux-family`, `security-family`, `holistic-family`, `external-deep-family`, `external-add-family` — the last emitted by `/adamsreview:add`). `--input <raw>` → canonical on stdout (exit 0) or `UNKNOWN_FAMILY:` on stderr (exit 3). Phase 1 join-step uses exit 3 to tag the candidate `source_family: "unknown"` + log drift — preserves the finding rather than silently dropping it. |
 
 **Writers (orchestrator-only):**
 

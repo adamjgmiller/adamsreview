@@ -15,7 +15,7 @@ Forward-looking consolidation of everything still on the adamsreview plugin's ba
 |---|---|---|
 | **§1. Data-driven decisions** | #1B, #1C, #24 (threshold-decision portion) | ~10 reviews of Phase 3 telemetry data accumulate (instrumentation shipped 2026-04-22 in `ee81715`) |
 | **§2. Already-planned, dedicated session** | #2, #14 (Stage 4 fragment shrink) | *Closed 2026-04-23* — commit range `84c96ee..f9ccda0` (close-out commit `e1af3e9`; `f9ccda0` is a post-close self-review reconcile). Body kept for reference; Appendix B in the plan has the measurement snapshot |
-| **§3. Session / issue follow-ups** | Transcluded-fragment `allowed-tools` gap; broader `parse-with-repair.py` migration; telemetry data collection; post-fix robustness lens (GH #2); L5-ux line-range root-cause (GH #2) | Surfaced 2026-04-22 session or in GH #2 (2026-04-20); per-item triggers |
+| **§3. Session / issue follow-ups** | Transcluded-fragment `allowed-tools` gap; broader `parse-with-repair.py` migration; telemetry data collection; exit-code reuse cleanup; post-fix robustness lens (GH #2); L5-ux line-range root-cause (GH #2) | Surfaced 2026-04-22 / 2026-04-26 sessions or in GH #2 (2026-04-20); per-item triggers |
 | **§4. Probably leave alone** | #3, #4, #5, #6, #7, #8, #17 | Per-item "probably never" triggers — documented for completeness, not expected to fire |
 | **§5. Big refactors, unlikely to be worth it** | #1D, #1E | Cost becomes irrelevant / full architectural rewrite motivated |
 
@@ -127,6 +127,20 @@ Phase 3 `demote_rate` + `score_phase3_histogram` are now in `phases.jsonl` on ev
 
 - **Effort:** zero ongoing — the telemetry is automatic. Decision-time effort is M (read the telemetry, make three decisions, land three separate small commits).
 - **Trigger:** ~10 reviews of the telemetry + walkthrough-behavior notes accumulated.
+
+### FU-4 — Exit-code reuse cleanup in `bin/_common.py`
+
+**Source:** 2026-04-26 CLAUDE.md audit (operational rule 3 update). `bin/_common.py:31-32` allocates `EXIT_SCORE_UNRECOVERABLE = 2` and `EXIT_UNKNOWN_FAMILY = 3` — both reuses of codes already assigned to other purposes (`EXIT_INVALID_TRANSITION = 2` for `artifact-patch.py` state-transition violations; `EXIT_DRY_RUN_INVALID = 3` for `--dry-run` rejection). The reuse is documented inline in `_common.py` and now in CLAUDE.md operational rule 3 (post-2026-04-26 audit), but the contract is enforced by convention, not by the file. Each call site happens to know which helper it's invoking and which error class is possible, so today's callers route correctly — but a new helper added in the future could collide with either code without `_common.py` being updated, and a reader still has to grep `_common.py` to know whether `rc == 2` from a given helper means "transition" or "score."
+
+**Direction:** allocate fresh codes:
+- `EXIT_SCORE_UNRECOVERABLE = 7` (used by `parse-validator-result.py`)
+- `EXIT_UNKNOWN_FAMILY = 8` (used by `source-family-map.py`)
+
+Update both helpers' exit-code references; remove the inline `# also used by …` comments in `_common.py`; revert the "Codes 2 and 3 are context-sensitive" sentence in CLAUDE.md operational rule 3 once codes are unique (the reuse note is no longer needed). Smoke assertions that match on `rc == 2` / `rc == 3` for either helper get updated to the new codes — likely 1–2 assertion updates given Shape A parameterization.
+
+- **Effort:** S. ~6 lines in `_common.py`, ~2 lines per affected helper, ~1–2 smoke assertion updates, 1 sentence revert in CLAUDE.md.
+- **Risk:** None known. The reuse works correctly today because each helper's callers know which helper they're calling. Switching to fresh codes is purely a hardening exercise.
+- **Trigger:** opportunistic — bundle into the next session that touches `bin/_common.py` for an unrelated reason. Or fires sooner if a new helper needs an additional exit-code class and the 2/3 overloading gets in the way.
 
 ### P2 — Post-fix robustness lens (from GH #2)
 
