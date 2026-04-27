@@ -97,6 +97,16 @@ follow has to live inside the blockquote.
 > not where a finding lives. To cite a line, read the `+`-prefixed lines
 > in the hunk and count forward from the hunk's post-image start; do
 > not reuse `a` or `c` verbatim.
+>
+> Default `origin: "introduced_by_pr"`, `origin_confidence: "high"`. Set
+> `origin: "pre_existing"` only when BOTH (1) the implicated code is
+> unchanged by this diff AND (2) the bug exists independently of this
+> PR — reverting this PR would not close the finding. If pre-existing-
+> looking code became wrong because of new code this PR adds elsewhere
+> (a stale diagram now contradicted by a new pipeline step; a function
+> missing a field a new caller needs; a doc bullet contradicted by a
+> new fallback path), keep `origin: "introduced_by_pr"` — the PR is
+> causally responsible, even though the cited lines are old.
 
 Lens-specific extensions the shared block does **not** cover (keep
 inline in each lens sub-section):
@@ -108,12 +118,21 @@ inline in each lens sub-section):
   don't.
 - "Over-flag; Phase 3 will filter" directive — appears in L1, L2, L6,
   L7 where over-flag is the intended posture; L3/L4/L5 don't carry it.
-- Default `origin: "introduced_by_pr"`, `origin_confidence: "high"`
-  unless the code is clearly unchanged by this diff — L1 and L7 carry
-  this explicit default; other lenses rely on `origin-crosscheck.sh`
-  (step 1.4 step 2a) to correct blame-traceable cases.
 - Lens-specific failure modes, checklist items, impact-type tags, and
   source-family tags.
+
+Origin defaults (the `introduced_by_pr` / `pre_existing` rule) live in
+the shared block above and apply to every lens uniformly. After
+dispatch, `origin-crosscheck.sh` (step 1.4 step 2a) blame-traces each
+candidate. Its main path trusts the lens's origin call (downgrades
+`pre_existing/high` to medium when blame disagrees, and sets
+`pre_existing/medium` when the lens said `introduced_by_pr` but blame
+is fully ancestor — covering both wrong-line-range cites and exposure
+findings). Its rename-follow path is the one place blame trumps the
+lens, overriding to `pre_existing/high` for content-preserving file
+extractions where `git log --follow` reaches a pre-PR ancestor (F038
+case) — there the extraction trace is stronger evidence than the
+lens claim.
 
 ### 1.2a. Ensemble readiness gate (§13.12)
 
@@ -301,9 +320,6 @@ Prompt essence (prepended with the shared invariants from step 1.2.1):
 > anything a linter would catch.
 >
 > Set `impact_type: "correctness"`, `source_family: "diff-family"`.
->
-> Default `origin: "introduced_by_pr"`, `origin_confidence: "high"` unless
-> the implicated code is clearly unchanged by this diff.
 
 #### L2 — structural / blast-radius (Opus; skipped if `trivial_mode`)
 
@@ -712,9 +728,6 @@ freely):
 > `evidence_snippet` may be a multi-file trace when the finding spans
 > layers. Set `source_family: "holistic-family"`; `impact_type` may be
 > any of `correctness | security | ux | policy | architecture`.
->
-> Default `origin: "introduced_by_pr"`, `origin_confidence: "high"` unless
-> the implicated code is clearly unchanged by this diff.
 
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 
