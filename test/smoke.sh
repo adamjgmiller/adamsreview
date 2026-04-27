@@ -5093,11 +5093,11 @@ bb10_pre="$REPO/fragments/00-preflight.md"
 bb10_cmd="$REPO/commands/review.md"
 if grep -q '^### 0\.6a\. Branch-behind-base check' "$bb10_pre" \
     && grep -q 'branch-behind-base.sh --comparison-ref "\$comparison_ref" --reviewed-files @-' "$bb10_pre" \
-    && grep -q 'preflight_warnings+=("branch_behind_base behind=' "$bb10_pre" \
+    && grep -q 'preflight_warnings+=("branch_behind_base behind=.* comparison_ref_used=' "$bb10_pre" \
     && grep -q 'branch_overlap_count > 0' "$bb10_pre" \
     && grep -q 'branch_overlap_count == 0' "$bb10_pre" \
-    && grep -q 'Bash(branch-behind-base.sh:\*)' "$bb10_cmd"; then
-    pass "BB-10-review-warning: :review 0.6a wires helper + AskUserQuestion + commands/review.md grants Bash(branch-behind-base.sh:*)"
+    && grep -qE '^allowed-tools:.*Bash\(branch-behind-base\.sh:\*\)' "$bb10_cmd"; then
+    pass "BB-10-review-warning: :review 0.6a wires helper + unconditional resolution buffer (incl. comparison_ref_used) + commands/review.md grants helper"
 else
     fail "BB-10: missing fragment wiring or allowed-tools grant" "pre=$(grep -c '0\.6a' "$bb10_pre") cmd=$(grep -c branch-behind-base "$bb10_cmd")"
 fi
@@ -5127,11 +5127,116 @@ if grep -q '^### 3a\. Branch-behind-base check' "$bb12_cmd" \
     && grep -q 'branch-behind-base.sh --fetch-base "\$base_branch" --reviewed-files @-' "$bb12_cmd" \
     && grep -q 'branch_behind_base behind=%s overlap=%s comparison_ref_used=%s' "$bb12_cmd" \
     && grep -q '.warnings\[\]?' "$bb12_cmd" \
-    && grep -q 'Bash(branch-behind-base.sh:\*)' "$bb12_cmd" \
-    && grep -q 'AskUserQuestion' "$bb12_cmd"; then
-    pass "BB-12-add-warning: :add step 3a wires helper (active-fetch) + warnings/resolution trace + commands/add.md grants helper + AskUserQuestion"
+    && grep -qE '^allowed-tools:.*Bash\(branch-behind-base\.sh:\*\)' "$bb12_cmd" \
+    && grep -qE '^allowed-tools:.*AskUserQuestion' "$bb12_cmd"; then
+    pass "BB-12-add-warning: :add step 3a wires helper (active-fetch) + warnings/resolution trace + commands/add.md allowed-tools grants helper + AskUserQuestion"
 else
     fail "BB-12: missing fragment wiring or allowed-tools grant in commands/add.md"
+fi
+
+# BB-13: boundary at exactly OVERLAP_TRUNCATE (10) overlap files. No
+# truncation should happen — overlap_files length=10, no "…+" sentinel.
+# Verifies the `-gt OVERLAP_TRUNCATE` comparison is exclusive at 10.
+bb13_branch_files=""
+bb13_main_files=""
+for i in 01 02 03 04 05 06 07 08 09 10; do
+    bb13_branch_files="${bb13_branch_files}src/edge_${i}.ts"$'\n'
+    bb13_main_files="${bb13_main_files}src/edge_${i}.ts"$'\n'
+done
+bb_make_repo "$BB_DIR/bb13" 10 "$bb13_branch_files" "$bb13_main_files"
+bb13_out=$(cd "$BB_DIR/bb13" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "$bb13_branch_files" 2>/dev/null)
+bb13_overlap=$(echo "$bb13_out" | jq -r '.overlap_count')
+bb13_files_len=$(echo "$bb13_out" | jq '.overlap_files | length')
+bb13_has_sentinel=$(echo "$bb13_out" | jq -r '[.overlap_files[] | select(test("…\\+"))] | length')
+if [[ "$bb13_overlap" == "10" && "$bb13_files_len" == "10" \
+    && "$bb13_has_sentinel" == "0" ]]; then
+    pass "BB-13-boundary-10: exactly OVERLAP_TRUNCATE overlap files → length=10, no '…+N more' sentinel"
+else
+    fail "BB-13: expected overlap=10 files_len=10 sentinels=0; got overlap=$bb13_overlap files_len=$bb13_files_len sentinels=$bb13_has_sentinel"
+fi
+
+# BB-14: boundary at exactly OVERLAP_TRUNCATE+1 (11) overlap files. One
+# more than 13's count → truncation kicks in: 10 paths + "…+1 more" as
+# element 11. Locks in the off-by-one boundary on the other side.
+bb14_branch_files=""
+bb14_main_files=""
+for i in 01 02 03 04 05 06 07 08 09 10 11; do
+    bb14_branch_files="${bb14_branch_files}src/edge_${i}.ts"$'\n'
+    bb14_main_files="${bb14_main_files}src/edge_${i}.ts"$'\n'
+done
+bb_make_repo "$BB_DIR/bb14" 11 "$bb14_branch_files" "$bb14_main_files"
+bb14_out=$(cd "$BB_DIR/bb14" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "$bb14_branch_files" 2>/dev/null)
+bb14_overlap=$(echo "$bb14_out" | jq -r '.overlap_count')
+bb14_files_len=$(echo "$bb14_out" | jq '.overlap_files | length')
+bb14_sentinel=$(echo "$bb14_out" | jq -r '.overlap_files[10] // ""')
+if [[ "$bb14_overlap" == "11" && "$bb14_files_len" == "11" \
+    && "$bb14_sentinel" == "…+1 more" ]]; then
+    pass "BB-14-boundary-11: OVERLAP_TRUNCATE+1 overlap files → length=11 (10 paths + '…+1 more' sentinel)"
+else
+    fail "BB-14: expected overlap=11 files_len=11 sentinel='…+1 more'; got overlap=$bb14_overlap files_len=$bb14_files_len sentinel='$bb14_sentinel'"
+fi
+
+# BB-15: merge-commit regression. main has a merge commit M whose tree
+# adds c.txt (a file neither parent commit modified — the change exists
+# only in the merge resolution). The old `git log HEAD..main --name-only
+# --pretty=format:` would skip M's per-file output by default and miss
+# c.txt; the new `git diff --name-only HEAD...main` (merge-base symmetric)
+# sees c.txt because it's in M's tree. Reviewing branch's staleness
+# envelope contains c.txt → expect overlap=1.
+mkdir -p "$BB_DIR/bb15"
+(
+    cd "$BB_DIR/bb15"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email s@e.com
+    git config user.name s
+    printf 'seed\n' > seed.txt && git add seed.txt && git commit --quiet -m A
+    # Cut feat from A.
+    git checkout --quiet -b feat
+    git checkout --quiet main
+    # Side branch from A modifies a.txt only.
+    git checkout --quiet -b side
+    printf '1\n' > a.txt && git add a.txt && git commit --quiet -m "side adds a"
+    # Main advances independently with b.txt only.
+    git checkout --quiet main
+    printf '2\n' > b.txt && git add b.txt && git commit --quiet -m "main adds b"
+    # Merge side into main with --no-commit, then add c.txt as a
+    # resolution-only change before completing the merge. c.txt is in
+    # neither parent (main-prev nor side).
+    git merge --quiet --no-ff --no-commit side >/dev/null 2>&1
+    printf 'merge-only\n' > c.txt && git add c.txt
+    git commit --quiet -m "merge: side + resolution-introduced c.txt"
+    git checkout --quiet feat
+)
+bb15_out=$(cd "$BB_DIR/bb15" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "c.txt"$'\n'"unrelated.txt" 2>/dev/null)
+bb15_overlap=$(echo "$bb15_out" | jq -r '.overlap_count')
+bb15_first=$(echo "$bb15_out" | jq -r '.overlap_files[0] // ""')
+if [[ "$bb15_overlap" == "1" && "$bb15_first" == "c.txt" ]]; then
+    pass "BB-15-merge-commit: file added only in merge resolution surfaces in overlap (git diff HEAD...ref vs git log HEAD..ref)"
+else
+    fail "BB-15: expected overlap=1 first=c.txt; got overlap=$bb15_overlap first='$bb15_first'"
+fi
+
+# BB-16: stdin path coverage. Mirror BB-2's setup but invoke the helper
+# via `--reviewed-files @-` to exercise the stdin code path (the
+# production call sites all use @-, but BB-1..BB-9 use inline).
+bb_make_repo "$BB_DIR/bb16" 3 "src/foo.ts" \
+    "src/foo.ts"$'\n'"src/main_only.ts"$'\n'"src/other.ts"
+bb16_out=$(cd "$BB_DIR/bb16" \
+    && printf '%s\n' "src/foo.ts" \
+    | "$TOOLS/branch-behind-base.sh" \
+        --comparison-ref main --reviewed-files @- 2>/dev/null)
+bb16_behind=$(echo "$bb16_out" | jq -r '.behind_count')
+bb16_overlap=$(echo "$bb16_out" | jq -r '.overlap_count')
+bb16_first=$(echo "$bb16_out" | jq -r '.overlap_files[0] // ""')
+if [[ "$bb16_behind" == "3" && "$bb16_overlap" == "1" \
+    && "$bb16_first" == "src/foo.ts" ]]; then
+    pass "BB-16-stdin: --reviewed-files @- reads newline-separated paths from stdin (production call-site path)"
+else
+    fail "BB-16: expected behind=3 overlap=1 first=src/foo.ts; got behind=$bb16_behind overlap=$bb16_overlap first='$bb16_first'"
 fi
 
 echo
