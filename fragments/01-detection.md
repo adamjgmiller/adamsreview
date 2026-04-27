@@ -821,11 +821,16 @@ For each sub-agent result, in the order it returns:
    lens-supplied `pre_existing/high` confirmed by blame is respected;
    lens-supplied `pre_existing/high` whose blame includes PR commits is
    downgraded to medium (so §13.1 doesn't force-route to footnote);
-   lens-supplied `introduced_by_pr` whose blame is fully ancestor of
-   `$comparison_ref` is set to `pre_existing/medium` with
-   `action=downgraded` — Phase 3 + Phase 4 then decide instead of
-   force-routing wrong-line-range cites or exposure findings to the
-   footnote (Option A2). **Rename-follow path** is the lone case where
+   any lens output that is NOT `pre_existing/high` (introduced_by_pr at
+   any confidence, `pre_existing/medium`, `pre_existing/low`, or
+   unknown) whose blame is fully ancestor of `$comparison_ref` is set
+   to `pre_existing/medium` with `action=downgraded` — Phase 3 + Phase
+   4 then decide instead of force-routing wrong-line-range cites or
+   exposure findings to the footnote (Option A2). The audit `reason`
+   distinguishes the two main lens-input cases:
+   `lens-introduced-by-pr-but-all-blame-ancestor` (when the lens said
+   `introduced_by_pr`) vs. `lens-not-preexisting-high-but-all-blame-ancestor`
+   (everything else). **Rename-follow path** is the lone case where
    blame trumps the lens: a content-preserving extraction whose
    `git log --follow` ancestor pre-dates the PR overrides to
    `pre_existing/high` (F038 case). See `CLAUDE.md`'s helper-index
