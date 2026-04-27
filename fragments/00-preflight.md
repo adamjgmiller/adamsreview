@@ -214,16 +214,18 @@ bb_json=$(printf '%s\n' "$reviewed_files_all" \
 branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
 branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
 branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
+comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
+
+# Always buffer the resolution line — independent of behind-count — so the
+# 0.15 flush makes the gate's outcome explicit in trace.md, matching the
+# unconditional resolution trace in :fix 7.6a / :add 3a. An operator
+# correlating a :review at offline-time (passive, local <base>) with a
+# later :fix (active-fetch, origin/<base>) can read both lines and see
+# why behind_count differs.
+preflight_warnings+=("branch_behind_base behind=$branch_behind_count overlap=$branch_overlap_count comparison_ref_used=$comparison_ref_used")
 ```
 
 If `branch_behind_count == 0`, skip the rest of this step.
-
-If `branch_behind_count > 0`, append a buffered warning for the trace
-flush at 0.15:
-
-```bash
-preflight_warnings+=("branch_behind_base behind=$branch_behind_count overlap=$branch_overlap_count")
-```
 
 Then `AskUserQuestion` with three options. The prompt body adapts to
 overlap:
