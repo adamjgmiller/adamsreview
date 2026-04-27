@@ -1,0 +1,210 @@
+# Plan — exposure-aware origin classification (Option A)
+
+Branch: `pre-existing-fix`. Drafted 2026-04-26 in response to a misclassification audit on `beta-briefing@memory-2.0` (review `rev_01KQ6600SDPAMF5H6YJVT50NAM`).
+
+## Background — the problem
+
+The `/adamsreview:review` pipeline tagged five findings as `origin: pre_existing, origin_confidence: high`, which routed them via the §13.1 override to `disposition: pre_existing_report` (footnote-only, never validated). The user (manual git-blame audit against merge-base `6a146aa`) verified all five were caused by this PR. Walkthrough off-menu promote (`human_confirmation`) recovered four of them (F007/F017/F020/F021); F052 is still parked as `pre_existing_report`.
+
+The five findings split into two failure modes:
+
+**Mode 1 — wrong `line_range` (F007, F017).** The lens correctly described a PR-introduced bug in `claim`, but cited line numbers pointing at unrelated pre-existing prose (memory.py:552-553 instead of the real 510-518; notify.py:50-51 instead of the real 346). `origin-crosscheck.sh` blamed the wrong lines, found them all ancestor of `$comparison_ref`, and (correctly per its current logic) overrode to `pre_existing/high`.
+
+**Mode 2 — exposure findings (F020, F021, F052).** The cited lines genuinely pre-date the PR (CLAUDE.md:138-145, CLAUDE.md:239, pipeline.py:364-431). What changed is *elsewhere* in the PR — `load_memory_context()` was added, the F051 alert was added, the F065 fallback was added — making the cited pre-existing prose/function wrong. Reverting the PR would close every one of these. But origin-crosscheck has no signal that "blame is pre-existing AND the bug is PR-caused" can both be true.
+
+## Scope of this plan
+
+**In scope (Option A):**
+- F020 / F021 / F052 (exposure findings) — fully fixed.
+- F007 / F017 (wrong line ranges) — partially mitigated. The lens's `introduced_by_pr` survives (instead of being overridden to pre_existing/high), so the finding routes through Phase 3 + Phase 4 normally. The wrong line range itself isn't corrected here; that's Mode 1's residual.
+
+**Out of scope:**
+- Mode 1 full fix — needs Phase 4 deep validator origin-correction authority. Track as Option B follow-up if F007/F017-class misses recur post-Option-A.
+- Schema changes (no new `exposed_by_pr` enum or `exposure_in_pr` field).
+- F038 rename-follow path. Content-preserving file extraction has a stronger evidentiary basis (we walked `git log --follow` to a pre-PR ancestor), so it stays auto-corrected to `pre_existing/high`. The rare combination "exposure finding inside an extracted file" is accepted as a known limitation, recoverable via walkthrough off-menu promote.
+
+## Pipeline anchors (verified 2026-04-26)
+
+- `bin/origin-crosscheck.sh` lines 281–291: the **main path** override-to-high site (lens introduced_by_pr + blame ancestor → override to `pre_existing/high`). This is where all five findings were misclassified.
+- `bin/origin-crosscheck.sh` lines 228–241: the **rename-follow path** override-to-high site (F038 case). Untouched.
+- `bin/origin-crosscheck.sh` lines 299–303: the symmetric **downgrade** site (lens pre_existing/high + blame includes PR commits → downgrade to medium). Already implements the symmetry pattern we're propagating to the main path.
+- `fragments/01-detection.md` §1.2.1 (lines 58–99): shared lens-prompt invariant blockquote — the place all lenses see verbatim.
+- `fragments/01-detection.md` lines 102–114: post-blockquote annotation list explaining what each lens carries inline (currently delegates origin defaults to L1/L7 + origin-crosscheck for others).
+- `fragments/01-detection.md` lines 305–306 (L1) and lines 716–717 (L7): inline `origin: introduced_by_pr` defaults that need updating.
+- `fragments/05-validation.md` §4.6 (lines 611–637): the post-Phase-4 re-assertion sweep. Unchanged here — Phase 4 still doesn't write origin, so this loop only catches what the lens + origin-crosscheck already produced.
+- `fragments/04-scoring-gate.md` §3.1 (lines 11–34): the Phase-3 short-circuit that routes pre_existing/high to `pre_existing_report` before scoring. Unchanged behaviorally; just sees fewer inputs.
+- `test/smoke.sh` OC-1 (line 1075): the existing assertion that flips. OC-9 (line 1229): rename-follow happy path, untouched.
+
+## Edits
+
+### A1 — `fragments/01-detection.md` shared origin rule
+
+**Add to the shared invariants blockquote (§1.2.1, after the `line_range` paragraph at line 99):**
+
+> Set `origin: "pre_existing"` only when BOTH (1) the implicated code is unchanged by this diff AND (2) the bug exists independently of this PR — reverting this PR would not close the finding. If pre-existing-looking code became wrong because of new code this PR adds elsewhere (a stale diagram now contradicted by a new pipeline step; a function missing a field a new caller needs; a doc bullet contradicted by a new fallback path), keep `origin: "introduced_by_pr"` — the PR is causally responsible. Default `origin: "introduced_by_pr"`, `origin_confidence: "high"`.
+
+**Update L1's lens-specific extension (lines 305–306) and L7's (lines 716–717)** — replace their existing two-sentence default with a one-line reference: "Origin defaults per shared invariants in §1.2.1." Keeps the rule single-sourced.
+
+**Update the annotation list (lines 102–114)** — drop the bullet "Default `origin: "introduced_by_pr"`, `origin_confidence: "high"` unless the code is clearly unchanged by this diff — L1 and L7 carry this explicit default; other lenses rely on `origin-crosscheck.sh` (step 1.4 step 2a) to correct blame-traceable cases." Replace with a one-liner noting origin defaults are now in the shared block and apply to every lens.
+
+**Why every lens needs the rule, not just L1/L7.** Today L3 (CLAUDE.md compliance) and L4 (comment compliance) have no explicit origin guidance — they rely on origin-crosscheck for correction. Once we stop the main-path override (A2), those lenses need explicit guidance or every L3/L4 finding lands as whatever the LLM's interpretation of the schema enum is. F020/F021 came from L3 specifically.
+
+### A2 — `bin/origin-crosscheck.sh` main-path symmetry fix
+
+**Lines 281–291** — current logic:
+
+```bash
+if [[ "$all_ancestor" == "1" ]]; then
+    if [[ "$lens_origin" == "pre_existing" && "$lens_conf" == "high" ]]; then
+        action="respected"
+        reason="blame-confirms-preexisting"
+    else
+        new_origin="pre_existing"
+        new_conf="high"
+        action="overridden"
+        reason="all-blame-ancestor-of-comparison-ref"
+    fi
+```
+
+**Proposed:**
+
+```bash
+if [[ "$all_ancestor" == "1" ]]; then
+    if [[ "$lens_origin" == "pre_existing" && "$lens_conf" == "high" ]]; then
+        action="respected"
+        reason="blame-confirms-preexisting"
+    else
+        new_origin="pre_existing"
+        new_conf="medium"
+        action="downgraded"
+        reason="lens-introduced-by-pr-but-all-blame-ancestor"
+    fi
+```
+
+Effect: §13.1 override needs `origin_confidence == "high"` to fire. Dropping to `medium` prevents the Phase 3.1 short-circuit; the finding goes through Phase 3 scoring + Phase 4 validation, gets a real disposition.
+
+**Rename-follow path (lines 228–241)** — keep as-is. The `git log --follow` extraction trace is a stronger signal than the main path's "all blame ancestor" check.
+
+**Helper-header docstring (lines 13–29)** — update the decision table's "all SHAs reachable from comparison_ref" row to read:
+
+```
+all SHAs reachable from comparison_ref:
+    lens already pre_existing/high     → respect (no-op)
+    otherwise                          → set pre_existing/medium
+                                          (lens disagrees with blame; let
+                                          Phase 3 + Phase 4 decide instead
+                                          of force-routing to footnote)
+```
+
+### A3 — Doc updates
+
+**`CLAUDE.md` Helper index entry for `origin-crosscheck.sh`** — current text reads "forces `pre_existing:high` if fully reachable from `$comparison_ref`; downgrades conflicting lens verdicts."
+
+Replace with: "main-path: respects lens-supplied `pre_existing/high` when blame agrees, downgrades to `pre_existing/medium` when the lens said `introduced_by_pr` but blame is ancestor (so Phase 3.1 doesn't short-circuit exposure findings); rename-follow path still overrides to `pre_existing/high` for F038-class extractions; downgrades lens-supplied `pre_existing/high` to medium when blame includes PR commits."
+
+**`CLAUDE.md` §Score gates "Pre-existing override"** — unchanged. The §13.1 rule itself is unchanged; only its inputs are.
+
+### A4 — Smoke tests (`test/smoke.sh`)
+
+| Assertion | Today | After A2 |
+|---|---|---|
+| OC-1 (~line 1075) | expects `origin=pre_existing,conf=high` + `action=overridden` + `reason=all-blame-ancestor-of-comparison-ref` | expects `origin=pre_existing,conf=medium` + `action=downgraded` + `reason=lens-introduced-by-pr-but-all-blame-ancestor` |
+| OC-2 through OC-8 | error / PR-modified / mixed cases | unchanged |
+| OC-9 (~line 1229) | rename-follow happy path → `pre_existing/high` | **unchanged** (rename-follow path untouched) |
+| OC-10, OC-11 | regression guards | unchanged |
+
+**Add OC-12** — positive test for "lens already pre_existing/high + blame agrees → respect, no-op". OC-1's input direction has flipped, so a dedicated assertion makes the lens-AGREES-with-blame case explicit and resistant to future drift.
+
+**Add OC-13** — prompt-rule fixture. Grep `fragments/01-detection.md` §1.2.1 shared block for the exposure-aware sentence ("reverting this PR would not close the finding"). Cheap regression guard against future drift in the prompt text.
+
+### A5 — Phase 2 dedup keeper-promotion guard (post-merge addendum, 2026-04-26)
+
+**Note (2026-04-26):** A5's keeper-conditional rule (the `pre_existing` keeper keeps its own value, never raised, never demoted) was superseded by **C1 below** after a second Codex review surfaced an order-dependence gap. The current Phase 2 rule for pre_existing-origin keepers is "lowest `origin_confidence` across pre_existing-origin members of the group" — order-independent. Treat the A5 description below as the historical record of commit d69ed6a; C1 below describes the current behavior.
+
+**Discovered by Codex CLI second-opinion review of commits 9e05dfb / dc87ce3 / f23e162.** The blast-radius checklist below missed that `fragments/03-dedup.md` is itself a *writer* of `origin_confidence` — Phase 2 reconciles the highest confidence across each duplicate group and patches it back onto the keeper. Combined with A2's new `pre_existing/medium` downgrade emitter, the original reconciliation rule re-creates the exact bug Option A2 fixes whenever a duplicate group contains both a downgraded keeper and a `pre_existing/high` sibling (e.g. main-path L1 candidate at lines 50–55 → `pre_existing/medium` via A2; L7 holistic candidate at the same lines → `pre_existing/high` via lens-respect; dedup → `max_conf=high` → §13.1 fires → footnote-only).
+
+**Edit.** `fragments/03-dedup.md` Routing-field reconciliation rules (the `origin_confidence` bullet) and the jq snippet under Step 3:
+
+- Prose rule: split into two sub-bullets — `introduced_by_pr` keeper takes highest across group (unchanged); `pre_existing` keeper keeps its own value (does not raise). Rename-follow override-to-high is keeper-supplied so the rule never demotes legitimate pre-existing findings.
+- jq snippet: read `keeper_origin` + `keeper_conf` at the top of Step 3, then gate `max_conf` — `pre_existing` keeper → `$keeper_conf`; otherwise → `sort_by | last` as before.
+
+**Smoke.** Add **DD-1** asserting the new behavior: a fixture group `[{id:K,origin:pre_existing,origin_confidence:medium},{id:D1,origin:pre_existing,origin_confidence:high}]` reconciles to `max_conf=medium` under the new rule, and `[{id:K,origin:introduced_by_pr,origin_confidence:medium},{id:D1,origin:introduced_by_pr,origin_confidence:high}]` still reconciles to `max_conf=high` under the unchanged path.
+
+**Why a fragment edit is sufficient.** Phase 2 dedup is LLM-orchestrated (Sonnet sub-agent following the fragment as a recipe), not a helper script — the fragment *is* the implementation. The smoke fixture mirrors the fragment's jq snippet against synthetic group_json so a future drift between the prose rule and the snippet (or either of those vs. the helper-level invariants) fails loudly.
+
+**Doc-staleness sweep (also discovered post-A4 review).**
+
+- `fragments/01-detection.md:818-825` step 2a still described the pre-Option-A main-path override behavior (anything-ancestor → `pre_existing/high` → §13.1). Rewritten to describe the post-A2 decision table inline.
+- `bin/origin-crosscheck.sh:13-22` decision-table comment for the rename-follow override case clarified — the `--follow` extraction trace remains the lone main-path-style override-to-HIGH for content-preserving extractions; the same Mode 2 risk profile A2 just removed from the main path persists here as an accepted limitation (recoverable via walkthrough off-menu promote).
+- **OC-13** strengthened to assert the exposure-aware origin sentence appears on a `>`-prefixed line (i.e. inside the dispatched §1.2.1 blockquote) before the "Lens-specific extensions" delimiter, not just somewhere in the file. Closes the regression class where someone moves the rule into reader-facing commentary outside the dispatch boundary.
+
+### C1 — A5 keeper-order dependence (post-A5 follow-up addendum, 2026-04-26)
+
+**Discovered by Codex CLI second-opinion review of commits 9e05dfb / dc87ce3 / f23e162 / d69ed6a / b4db6e3.** A5 closed the dedup re-promotion bug for the case where the *keeper* arrives at `pre_existing/medium` — but Phase 2's keeper is the first id in the dedup sub-agent's group output, and the sub-agent picks order. If the sub-agent returns the group as `[pre_existing/high sibling, pre_existing/medium corrective]`, the high-confidence sibling becomes keeper, A5's "keep keeper's own value" path keeps `high`, and §13.1 still routes the finding to footnote — same bug Option A2 fixed, surfaced through a different keeper order. DD-1/DD-3 in commit d69ed6a happened to test the protected (medium-keeper) order; DD-3 explicitly asserted high-keeper-stays-high, codifying the gap.
+
+**Root cause.** A5 made the rule keeper-conditional on a property (`origin_confidence`) that should bind at the *group* level — any pre_existing-origin member arriving as a corrective medium signals group-level uncertainty regardless of which member became keeper. The keeper-conditional rule was implicitly probabilistic on Sonnet's ordering decisions.
+
+**Edit.** `fragments/03-dedup.md` Routing-field reconciliation rules (the `origin_confidence` bullet) and the jq snippet under Step 3:
+
+- Prose rule: replace the keeper-conditional pre_existing arm with a group-symmetric rule — `pre_existing` keeper takes LOWEST `origin_confidence` across all `pre_existing`-origin members of the group. Order-independent. Document the rename-follow trade-off explicitly: a legitimate `pre_existing/high` keeper (F038-class extraction override surviving A2) gets demoted to `medium` when grouped with any `pre_existing/medium` sibling, and routes through Phase 3 + Phase 4 instead of the §13.1 footnote — Phase 4 re-validates and the extraction trace typically re-confirms. Single-id groups (no siblings, no reconciliation runs) preserve the rename-follow override untouched, so the recall cost is bounded.
+- jq snippet: drop the `keeper_conf` read; replace `max_conf="$keeper_conf"` with `jq | select(.origin == "pre_existing") | sort_by({"low":1,"medium":2,"high":3}[.]) | first` over `group_json`. The `introduced_by_pr` arm is unchanged (still `sort_by | last`).
+
+**Smoke.** Update DD-1, DD-2, DD-3 inline jq to mirror the new production snippet (so future drift between prose, snippet, and fixture fails loudly). Flip DD-3's expectation from `high` to `medium` — DD-3 *is* the high-keeper-first scenario Codex called out, and under C1 both keeper orders yield the same group-symmetric `medium` result. Update DD-3's comment to explain the order-independence semantics and the rename-follow trade-off. Smoke stays at 276 assertions (no new assertion needed — DD-1 covers medium-keeper-first, DD-3 covers high-keeper-first).
+
+**Why a fragment edit is sufficient.** Same as A5 — Phase 2 dedup is LLM-orchestrated; the fragment *is* the implementation. DD-1/DD-2/DD-3 paste-mirror the production jq snippet against synthetic group_json so any drift between rule, snippet, and downstream consumers fails loudly.
+
+**Trade-off accepted (later closed by C2 below).** Cross-origin sibling cases (e.g. keeper `pre_existing/high` + sibling `introduced_by_pr/high` for the same underlying issue) were initially out of scope for C1. The pre_existing filter deliberately excluded non-pre_existing siblings — keeper origin stays the keeper's value (per the unchanged "leave `origin` on keeper" rule), and same-origin reconciliation alone left a third order-dependent disguise of the original Mode 2 bug. **C2 below closed this gap** after a third Codex review independently flagged it as a real practical concern.
+
+### C2 — cross-origin cap on pre_existing keepers (post-C1 follow-up addendum, 2026-04-26)
+
+**Discovered by Codex CLI third-opinion review of the seven-commit branch.** C1 closed the same-origin order-dependence (any pre_existing/medium sibling demotes the group), but Phase 2's keeper is the first id in the dedup sub-agent's output and the unchanged "leave `origin` on keeper" rule meant a `[pre_existing/high keeper, introduced_by_pr/high sibling]` group would keep `keeper.origin=pre_existing` AND `max_conf=high` (C1's pre_existing-only filter sees just the keeper) — §13.1 still fires. Reverse keeper order routes correctly (introduced_by_pr keeper → §13.1 doesn't fire on introduced_by_pr). C1 plus the unchanged keeper-origin rule combined to produce a third order-dependent disguise of the original Mode 2 bug.
+
+**Root cause.** Two order-dependent rules combined produce a third order-dependent rule. C1 made the pre_existing/pre_existing case order-independent. The "leave `origin` on keeper" rule is correct in isolation (changing it requires a separate origin-merge design) but order-dependent when the group is cross-origin. The cumulative combination — keeper-conditional origin + same-origin-only filter on confidence — let §13.1 fire on group orderings the individual rules wouldn't.
+
+**Edit.** `fragments/03-dedup.md` Routing-field reconciliation rules and the jq snippet under Step 3:
+
+- Prose rule: extend the `pre_existing` keeper sub-bullet from a single-stage rule (C1) to a two-stage rule (C1 + C2). C2 — cross-origin cap: if C1's lowest is still `high` AND the group has any non-pre_existing member, cap `max_conf` at `medium`. Cross-origin disagreement is itself signal of group-level origin uncertainty, independent of individual confidences. Together C1 + C2 make the pre_existing branch fully order-independent: §13.1 cannot fire on any dedup group containing same-origin medium evidence OR cross-origin disagreement, regardless of which member became keeper.
+- jq snippet: add a C2 stage after C1 — `if [ "$max_conf" = "high" ]; then ... has_cross_origin=$(jq -r 'any(.[].origin; . != "pre_existing")' ...) ...; fi`. Two-stage shell logic is clearer than embedding the cap into a single jq pipeline. Only fires when C1 already left `max_conf=high` (so it never *raises* confidence; only caps).
+
+**Smoke.** Update DD-1/DD-2/DD-3 inline jq to mirror the new C1+C2 production snippet (paste-pattern intent — production drift fails loudly). Add **DD-4** (`pre_existing/high` keeper + `introduced_by_pr/high` sibling → `max_conf=medium`; the exact Codex scenario) and **DD-5** (same as DD-4 with sibling at medium → still `max_conf=medium`; cap independent of sibling confidence). DD-1/DD-2/DD-3 outcomes are unchanged because they have no cross-origin members — the C2 stage doesn't fire on same-origin or introduced_by_pr-keeper groups. Smoke goes 276 → 278 (+2 new fixtures).
+
+**Why a fragment edit is sufficient.** Same as C1 — Phase 2 dedup is LLM-orchestrated; the fragment *is* the implementation. DD-1 through DD-5 paste-mirror the production jq + shell logic against synthetic group_json so any drift between rule, snippet, and downstream consumers fails loudly.
+
+**Trade-off accepted.** Recall trade-off symmetric to A2's: legitimate `pre_existing/high` findings that happen to be grouped with a (possibly incorrect) cross-origin sibling lose §13.1 footnote routing and route through Phase 3 + Phase 4. Phase 4 re-validates and, if the finding is genuinely pre-existing, scores it normally — possibly ending up actionable, expanding the PR's fix scope to old code. This is the same broad shape as A2's recall trade-off; we accepted it once for the high-frequency main-path case, and accept it here for the rarer cross-origin-dedup case. If volume becomes a concern, surface a `phases.jsonl` counter (`phase_2_cross_origin_capped`) for post-deploy calibration.
+
+**Cross-origin keeper note.** C2 does NOT cap introduced_by_pr keepers when grouped with cross-origin pre_existing siblings — `keeper.origin=introduced_by_pr` already routes correctly through §13.1 (the gate doesn't fire on non-pre_existing origins), so capping confidence on the introduced_by_pr branch would only over-restrict Phase 4 weighting without closing any §13.1 path. The asymmetry is deliberate.
+
+## Risks & mitigations
+
+1. **Recall regression on lens-confused pre-existing.** A lens that flags genuinely-old code as `introduced_by_pr` (rare, but the case origin-crosscheck used to auto-rescue) now goes through Phase 3 + Phase 4 instead of the report-only footnote.
+   - *Mitigation*: Phase 4 deep-lane validation is a safety net — confirms (good, the user wanted to see it) or denies (`disproven` keeps it out of actionable). Cost is some Phase 4 token budget.
+   - *Worth-tracking (optional)*: a phases.jsonl counter for `origin_crosscheck_main_downgraded` would surface frequency post-deploy. Flag for follow-up if it matters.
+
+2. **L3 / L4 lens output shape change.** Today these lenses don't carry an explicit origin default; the schema enum gives the LLM three choices and it picks. After A1 the shared block forces a default. Smoke catches the prompt text, not lens behavior.
+   - *Mitigation*: spot-check on a real review (re-run `/adamsreview:review` on `beta-briefing@memory-2.0` with the patched fragment loaded) before declaring done.
+
+3. **F038-style exposure inside an extracted file.** Rare combination — exposure finding inside a content-preserving-extracted file would still be force-overridden to pre_existing/high by the rename-follow path. Accept as a known limitation; walkthrough off-menu promote covers it.
+
+## Verification
+
+1. `test/smoke.sh` → green (existing assertions plus OC-12, OC-13).
+2. Hand-check the five-finding fixtures: shape candidate JSON like the lens output for F007/F017/F020/F021/F052, run `origin-crosscheck.sh --comparison-ref 6a146aa --candidates @-`, verify each comes out `pre_existing/medium` with `action=downgraded`. Use the user's already-recorded artifact as the truth set.
+3. *Optional calibration*: re-run `/adamsreview:review` on `beta-briefing@memory-2.0` against the patched fragment to see whether the new prompt rule shifts L3/L4 behavior on the CLAUDE.md findings (F020/F021). Treat as a data point, not a blocker.
+
+## Commit shape
+
+Three core commits, one per logical edit (per CLAUDE.md "commit at natural breakpoints"):
+
+1. `01-detection.md: shared-block exposure-aware origin rule (Option A1)` — fragment + L1/L7 simplification.
+2. `origin-crosscheck.sh: symmetric main-path downgrade for lens-introduced_by_pr (Option A2)` — helper + header docstring + CLAUDE.md helper-index entry.
+3. `smoke: OC-1 expectation flip + OC-12/OC-13 additions (Option A4)` — test updates.
+
+Plus follow-up commits across the post-merge addenda (A5 / doc-sweep / C1 / Opus-nit / C2 / doc-fix); see `git log main..HEAD` on this branch for the actual landed shape.
+
+## Blast-radius checklist (per global CLAUDE.md)
+
+- **Every writer of `origin/origin_confidence`**: lens prompts (set initial), `origin-crosscheck.sh` (corrects), `parse-validator-result.py` (does NOT touch origin — verified). Phase 4.6 sweep reads but doesn't write origin. ✓
+- **Every consumer of `origin/origin_confidence`**: `fragments/04-scoring-gate.md` §3.1 (Phase 3.1 short-circuit), `fragments/05-validation.md` §4.6 (re-assertion). Both gate on `origin == "pre_existing" AND origin_confidence == "high"`. After A2, fewer findings reach that state via the main path; the gate semantics are unchanged. ✓
+- **Parallel code paths**: rename-follow and main path inside `origin-crosscheck.sh` are siblings. Decision: change main only, document the asymmetry (rename-follow has stronger evidence). Documented in §A2 + helper docstring + CLAUDE.md helper-index entry. ✓
+- **Stale comments / docs**: helper header comment block (§A2 last paragraph), CLAUDE.md helper-index entry (§A3). Fragment annotation list at lines 102–114 (§A1). All updated in this plan. ✓
+- **Fix the class, not the instance**: the symmetry fix applies to `origin-crosscheck.sh`'s only override-to-high site on the main path; rename-follow is the deliberately-preserved sibling. The lens-prompt rule applies to the shared invariant so all lenses inherit it. ✓
