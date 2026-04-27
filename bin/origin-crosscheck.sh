@@ -6,16 +6,30 @@
 # candidate's line range is entirely pre-existing (every implicated SHA is
 # reachable from $comparison_ref) vs. PR-modified. The §13.1 pre-existing
 # override (origin=pre_existing AND origin_confidence=high →
-# disposition=pre_existing_report) keys off origin, so correcting it here
-# — before --add-finding — routes pre-existing candidates to the footnote
-# section automatically.
+# disposition=pre_existing_report) keys off the {origin, origin_confidence}
+# pair, so correcting it here — before --add-finding — feeds §13.1 the
+# right inputs: lens-respect (already pre_existing/high) and rename-follow
+# extraction (override to high) fire the override at Phase 3; main-path
+# lens-vs-blame disagreement (Option A2) is downgraded to medium so
+# Phase 3 + Phase 4 decide instead of force-routing to footnote.
 #
 # Decision table per candidate:
 #   file not in comparison_ref tree:
 #       git log --follow reveals pre-PR ancestor AND blame SHAs ⊆ {file-add
 #         commits}                         → override to pre_existing/high
 #         (file was renamed/extracted from a pre-PR ancestor and the
-#         candidate lines came in with that extraction — F038 case)
+#         candidate lines came in with that extraction — F038 case;
+#         this is the one main-path-style override that survives because
+#         the --follow trace is stronger evidence than a lens claim.
+#         Caveat: this branch retains the same Mode 2 risk profile A2
+#         removed from the main path — an exposure finding whose cited
+#         lines live inside an extracted file would still be force-
+#         classified pre_existing/high here. Accepted limitation per
+#         plans/pre-existing-fix.md §A2; recoverable via walkthrough
+#         off-menu promote. Note: Phase 2 dedup C1+C2 in
+#         fragments/03-dedup.md may later cap this override to medium
+#         when grouped with same-origin non-high or any cross-origin
+#         sibling; single-id groups preserve the override untouched.)
 #       git log --follow reveals pre-PR ancestor but blame sees later PR
 #         commits                          → respect lens (content was added
 #         AFTER extraction, within the PR)
@@ -23,7 +37,12 @@
 #   blame fails                            → respect lens (skipped)
 #   all SHAs reachable from comparison_ref:
 #       lens already pre_existing/high     → respect (no-op)
-#       otherwise                          → override to pre_existing/high
+#       otherwise                          → set pre_existing/medium
+#         (lens disagrees with blame — either the cited line range is
+#         wrong or the bug is an "exposure" finding where new code in
+#         this PR makes old code stale; in either case let Phase 3 +
+#         Phase 4 decide instead of force-routing through the §13.1
+#         override to the report-only footnote)
 #   any SHA NOT reachable:
 #       lens is pre_existing/high          → downgrade confidence to medium
 #       otherwise                          → respect
@@ -284,10 +303,37 @@ for (( i = 0; i < N; i++ )); do
                         action="respected"
                         reason="blame-confirms-preexisting"
                     else
+                        # Lens did NOT assert pre_existing/high; blame is
+                        # fully ancestor of comparison_ref. The branch
+                        # covers every non-(pre_existing && high) lens
+                        # output: introduced_by_pr at any confidence,
+                        # pre_existing/medium, pre_existing/low, or
+                        # unknown. Two failure modes motivate the
+                        # downgrade: (a) the lens cited the wrong line
+                        # range (the claim is real, the cited lines
+                        # aren't); (b) the cited lines are pre-existing
+                        # but the bug is "exposure" — new code elsewhere
+                        # in the PR made these old lines wrong (stale
+                        # diagram, doc bullet contradicted by a new
+                        # fallback, function missing a field a new caller
+                        # needs). In either case do NOT promote to
+                        # pre_existing/high — that would force-route via
+                        # §13.1 to the report-only footnote and skip
+                        # Phase 4 validation. Downgrade to
+                        # pre_existing/medium so §13.1 does not fire and
+                        # the finding still flows through Phase 3 +
+                        # Phase 4 like any other candidate. The reason
+                        # string distinguishes the two main lens-output
+                        # cases so a debugger can tell which signal
+                        # triggered the branch.
                         new_origin="pre_existing"
-                        new_conf="high"
-                        action="overridden"
-                        reason="all-blame-ancestor-of-comparison-ref"
+                        new_conf="medium"
+                        action="downgraded"
+                        if [[ "$lens_origin" == "introduced_by_pr" ]]; then
+                            reason="lens-introduced-by-pr-but-all-blame-ancestor"
+                        else
+                            reason="lens-not-preexisting-high-but-all-blame-ancestor"
+                        fi
                     fi
                 else
                     # At least one SHA is in comparison_ref..HEAD.

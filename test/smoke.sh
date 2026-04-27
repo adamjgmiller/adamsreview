@@ -1073,16 +1073,43 @@ PY
 )
 
 # Assertion OC-1: pre-existing range (lines 1-2 of file_a.py — untouched).
-# Lens default (introduced_by_pr/high) should be OVERRIDDEN to pre_existing/high.
+# Lens default (introduced_by_pr/high) should be DOWNGRADED to pre_existing/
+# medium so the §13.1 override does NOT fire — Phase 3 + Phase 4 decide.
+# Covers two failure modes that look identical at this layer: (a) lens cited
+# the wrong line range (claim is real, cited lines aren't); (b) the bug is
+# an "exposure" finding where this PR added new code elsewhere that makes
+# old code wrong. Either way, force-routing to the report-only footnote
+# would skip validation; keep the finding flowing through the pipeline.
 out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
     --comparison-ref main \
-    --candidates '[{"id":"C1","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
+    --candidates '[{"id":"C1","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2> "$OC_DIR/c1.err")
 origin=$(echo "$out" | jq -r '.[0].origin')
 conf=$(echo "$out" | jq -r '.[0].origin_confidence')
-if [[ "$origin" == "pre_existing" && "$conf" == "high" ]]; then
-    pass "OC-1 (§13.11): fully-ancestor line range overrides lens to pre_existing/high"
+if [[ "$origin" == "pre_existing" && "$conf" == "medium" ]] \
+    && grep -q 'action=downgraded' "$OC_DIR/c1.err" \
+    && grep -q 'reason=lens-introduced-by-pr-but-all-blame-ancestor' "$OC_DIR/c1.err"; then
+    pass "OC-1 (§13.11): lens=introduced_by_pr + all-blame-ancestor → pre_existing/medium (action=downgraded; §13.1 does not fire)"
 else
-    fail "OC-1: expected origin=pre_existing,conf=high; got origin=$origin conf=$conf"
+    fail "OC-1: expected pre_existing/medium + action=downgraded + reason=lens-introduced-by-pr-but-all-blame-ancestor; got origin=$origin conf=$conf stderr=$(cat "$OC_DIR/c1.err")"
+fi
+
+# Assertion OC-12: lens AGREES with blame (lens already pre_existing/high
+# AND every blame SHA is ancestor of comparison_ref). The respect/no-op
+# path on the main branch — separate assertion from OC-1 because their
+# input directions are now opposite, and a future drift in either branch
+# of the if/else should fail loudly. Reason should be `blame-confirms-
+# preexisting`, not the downgrade reason.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C12","file":"file_a.py","line_range":[1,2],"origin":"pre_existing","origin_confidence":"high"}]' 2> "$OC_DIR/c12.err")
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "pre_existing" && "$conf" == "high" ]] \
+    && grep -q 'action=respected' "$OC_DIR/c12.err" \
+    && grep -q 'reason=blame-confirms-preexisting' "$OC_DIR/c12.err"; then
+    pass "OC-12 (§13.11): lens=pre_existing/high + all-blame-ancestor → respected (no-op, reason=blame-confirms-preexisting)"
+else
+    fail "OC-12: expected pre_existing/high + action=respected + reason=blame-confirms-preexisting; got origin=$origin conf=$conf stderr=$(cat "$OC_DIR/c12.err")"
 fi
 
 # Assertion OC-2: PR-modified range (line 4 of file_a.py — the sed change).
@@ -1296,6 +1323,234 @@ if [[ "$origin" == "introduced_by_pr" && "$conf" == "high" ]] \
     pass "OC-11 (§13.11, Project G): PR-added lines in an extracted file are NOT overridden (blame SHA not in ancestor nor file-add set) — lens respected"
 else
     fail "OC-11: expected introduced_by_pr/high + reason=rename-follow-but-lines-modified-in-pr; got origin=$origin conf=$conf stderr=$(cat "$OC_RN_DIR/rf3.err")"
+fi
+
+# Assertion OC-13: prompt-rule fixture. The shared §1.2.1 invariant block
+# in fragments/01-detection.md must carry the exposure-aware origin rule
+# ("reverting this PR would not close the finding"). This is a cheap
+# regression guard — the rule is what stops lenses from labeling exposure
+# findings (PR adds new code that makes old code stale) as pre_existing
+# in the first place. Removing the wording would re-create the bug
+# origin-crosscheck's main-path downgrade was added to mitigate.
+if grep -q 'reverting this PR would not close the finding' \
+        "$REPO/fragments/01-detection.md"; then
+    pass "OC-13 (§13.11/01-detection §1.2.1): shared lens-prompt block carries the exposure-aware origin rule"
+else
+    fail "OC-13: expected fragments/01-detection.md to contain the exposure-aware origin sentence ('reverting this PR would not close the finding')"
+fi
+
+# Assertion OC-13b: blockquote-position guard for the §1.2.1 origin rule.
+# OC-13 above only checks that the sentence exists somewhere in the file —
+# it would still pass if a future edit moved the sentence into reader-facing
+# commentary outside the dispatched `>`-prefixed blockquote. That's exactly
+# the regression class this rule's location is meant to prevent: lens
+# sub-agents only see the blockquote contents in their prompt. Assert the
+# sentence appears on a `>`-prefixed line AND that it sits in §1.2.1 (i.e.
+# before the post-blockquote `Lens-specific extensions` annotation list).
+quote_line=$(grep -nE '^> .*reverting this PR would not close the finding' \
+    "$REPO/fragments/01-detection.md" | head -1 | cut -d: -f1)
+ext_line=$(grep -nE '^Lens-specific extensions' \
+    "$REPO/fragments/01-detection.md" | head -1 | cut -d: -f1)
+if [ -n "$quote_line" ] && [ -n "$ext_line" ] && [ "$quote_line" -lt "$ext_line" ]; then
+    pass "OC-13b (§13.11/01-detection §1.2.1): exposure-aware origin rule on a > blockquote line inside §1.2.1 (line $quote_line < Lens-specific extensions at line $ext_line)"
+else
+    fail "OC-13b: expected exposure-aware sentence on a > line before 'Lens-specific extensions'; quote_line=$quote_line ext_line=$ext_line"
+fi
+
+# Assertions DD-1 through DD-5: Phase 2 dedup origin_confidence
+# reconciliation (fragments/03-dedup.md §2.3). For pre_existing-origin
+# keepers the rule is order-independent and two-stage:
+#
+#   C1 — same-origin lowest: lowest origin_confidence across all
+#        pre_existing-origin members of the group. Any corrective-medium
+#        from origin-crosscheck.sh's main path A2 downgrade binds the
+#        whole group regardless of which member became keeper.
+#
+#   C2 — cross-origin cap: if C1's lowest is still high AND any group
+#        member has a non-pre_existing origin, cap max_conf at medium.
+#        Cross-origin disagreement (one lens classified the finding as
+#        PR-caused, another as pre-existing — same underlying bug) is
+#        itself signal of group-level origin uncertainty, independent
+#        of individual confidence levels.
+#
+# Together C1 + C2 make the pre_existing branch fully order-independent:
+# §13.1 cannot fire on any dedup group containing same-origin medium
+# evidence OR cross-origin disagreement, regardless of which member
+# became keeper. DD-1 (medium-keeper, same-origin) and DD-3 (high-keeper,
+# same-origin) cover C1's symmetry; DD-4 (high-keeper + cross-origin/high
+# sibling) and DD-5 (high-keeper + cross-origin/medium sibling) cover
+# C2's cap. DD-2 covers the unchanged introduced_by_pr keeper path.
+# Fixtures paste-mirror the fragment's jq snippet against synthetic
+# group_json so any drift between prose rule, snippet, or downstream
+# consumers fails loudly.
+
+# Assertion DD-1: pre_existing/medium keeper + pre_existing/high sibling
+# → max_conf=medium (C1: same-origin lowest binds group)
+group_json='[
+  {"id":"K","origin":"pre_existing","origin_confidence":"medium"},
+  {"id":"D1","origin":"pre_existing","origin_confidence":"high"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
+    if [ "$max_conf" = "high" ]; then
+        has_cross_origin=$(jq -r 'any(.[].origin; . != "pre_existing")' <<<"$group_json")
+        if [ "$has_cross_origin" = "true" ]; then
+            max_conf="medium"
+        fi
+    fi
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "medium" ]; then
+    pass "DD-1 (§03-dedup §2.3): pre_existing/medium keeper + pre_existing/high sibling → max_conf=medium (C1 same-origin lowest binds group; §13.1 does NOT fire)"
+else
+    fail "DD-1: expected max_conf=medium for pre_existing keeper; got $max_conf"
+fi
+
+# Assertion DD-2: introduced_by_pr keeper + mixed-confidence group still
+# picks the HIGHEST — regression-checks that the pre_existing branch's
+# C1+C2 rule didn't accidentally break corroboration-raises-confidence
+# for the introduced_by_pr branch.
+group_json='[
+  {"id":"K","origin":"introduced_by_pr","origin_confidence":"medium"},
+  {"id":"D1","origin":"introduced_by_pr","origin_confidence":"high"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
+    if [ "$max_conf" = "high" ]; then
+        has_cross_origin=$(jq -r 'any(.[].origin; . != "pre_existing")' <<<"$group_json")
+        if [ "$has_cross_origin" = "true" ]; then
+            max_conf="medium"
+        fi
+    fi
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "high" ]; then
+    pass "DD-2 (§03-dedup §2.3): introduced_by_pr keeper + mixed-confidence group → max_conf=high (corroboration-raises-confidence path unchanged)"
+else
+    fail "DD-2: expected max_conf=high for introduced_by_pr keeper; got $max_conf"
+fi
+
+# Assertion DD-3: pre_existing/HIGH keeper + pre_existing/medium sibling
+# → max_conf=medium. DD-1 covered medium-keeper-first; DD-3 covers
+# high-keeper-first. Both yield medium under C1's same-origin-lowest
+# rule; symmetry confirms order-independence within same-origin groups.
+# Trade-off: a legitimate rename-follow override-to-high keeper
+# (F038-class extraction) gets demoted to medium when grouped with any
+# pre_existing/medium sibling, and routes through Phase 3 + Phase 4
+# instead of the §13.1 footnote — Phase 4 re-validates and the
+# extraction trace typically re-confirms.
+group_json='[
+  {"id":"K","origin":"pre_existing","origin_confidence":"high"},
+  {"id":"D1","origin":"pre_existing","origin_confidence":"medium"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
+    if [ "$max_conf" = "high" ]; then
+        has_cross_origin=$(jq -r 'any(.[].origin; . != "pre_existing")' <<<"$group_json")
+        if [ "$has_cross_origin" = "true" ]; then
+            max_conf="medium"
+        fi
+    fi
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "medium" ]; then
+    pass "DD-3 (§03-dedup §2.3): pre_existing/high keeper + pre_existing/medium sibling → max_conf=medium (C1 order-independence: high-keeper order matches DD-1's medium-keeper order)"
+else
+    fail "DD-3: expected max_conf=medium for pre_existing/high keeper with sibling-medium; got $max_conf"
+fi
+
+# Assertion DD-4: pre_existing/high keeper + introduced_by_pr/high
+# sibling → max_conf=medium (C2 cross-origin cap). The exact scenario
+# Codex round-2 surfaced: C1 alone filters to pre_existing-only members
+# (just the keeper, max_conf=high), and the unchanged "leave origin on
+# keeper" rule keeps keeper.origin=pre_existing — §13.1 still fires
+# under C1 alone. C2 caps to medium when cross-origin disagreement
+# exists, breaking the third order-dependent disguise of the original
+# Mode 2 bug.
+group_json='[
+  {"id":"K","origin":"pre_existing","origin_confidence":"high"},
+  {"id":"D1","origin":"introduced_by_pr","origin_confidence":"high"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
+    if [ "$max_conf" = "high" ]; then
+        has_cross_origin=$(jq -r 'any(.[].origin; . != "pre_existing")' <<<"$group_json")
+        if [ "$has_cross_origin" = "true" ]; then
+            max_conf="medium"
+        fi
+    fi
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "medium" ]; then
+    pass "DD-4 (§03-dedup §2.3): pre_existing/high keeper + introduced_by_pr/high sibling → max_conf=medium (C2 cross-origin cap; §13.1 does NOT fire)"
+else
+    fail "DD-4: expected max_conf=medium under C2 cross-origin cap; got $max_conf"
+fi
+
+# Assertion DD-5: pre_existing/high keeper + introduced_by_pr/medium
+# sibling → max_conf=medium. Same as DD-4 with sibling at lower
+# confidence — the cross-origin cap is independent of the sibling's
+# own confidence level. C1 filters to pre_existing-only (keeper alone,
+# max_conf=high), then C2 caps to medium because has_cross_origin is
+# true regardless of sibling confidence.
+group_json='[
+  {"id":"K","origin":"pre_existing","origin_confidence":"high"},
+  {"id":"D1","origin":"introduced_by_pr","origin_confidence":"medium"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
+    if [ "$max_conf" = "high" ]; then
+        has_cross_origin=$(jq -r 'any(.[].origin; . != "pre_existing")' <<<"$group_json")
+        if [ "$has_cross_origin" = "true" ]; then
+            max_conf="medium"
+        fi
+    fi
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "medium" ]; then
+    pass "DD-5 (§03-dedup §2.3): pre_existing/high keeper + introduced_by_pr/medium sibling → max_conf=medium (C2 cross-origin cap independent of sibling confidence)"
+else
+    fail "DD-5: expected max_conf=medium under C2 cross-origin cap; got $max_conf"
 fi
 
 # ------------------------------------------------------------------ Stage 2.6.C
@@ -3390,18 +3645,20 @@ else
 fi
 
 # L7-3: origin-crosscheck on a synthetic L7 candidate whose line range
-# is entirely ancestor of $comparison_ref gets overridden to
-# pre_existing/high — same behavior as L1..L6 (source-family-agnostic).
-# Reuse the OC scratch repo if it still exists from OC-*.
+# is entirely ancestor of $comparison_ref gets DOWNGRADED to
+# pre_existing/medium — same behavior as L1..L6 (source-family-agnostic).
+# Mirrors the OC-1 expectation (post-Option-A): no main-path override to
+# /high; downgrade to /medium so §13.1 doesn't fire and Phase 3 + Phase 4
+# decide. Reuse the OC scratch repo if it still exists from OC-*.
 out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
     --comparison-ref main \
     --candidates '[{"id":"L7C1","sources":["L7-holistic"],"source_family":"holistic-family","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
 origin=$(echo "$out" | jq -r '.[0].origin')
 conf=$(echo "$out" | jq -r '.[0].origin_confidence')
-if [[ "$origin" == "pre_existing" && "$conf" == "high" ]]; then
-    pass "L7-3 (§2.9.D): origin-crosscheck flips L7-holistic candidate (ancestor range) to pre_existing/high"
+if [[ "$origin" == "pre_existing" && "$conf" == "medium" ]]; then
+    pass "L7-3 (§2.9.D): origin-crosscheck downgrades L7-holistic candidate (ancestor range) to pre_existing/medium (source-family-agnostic)"
 else
-    fail "L7-3: expected pre_existing/high on ancestor L7 range; got origin=$origin conf=$conf"
+    fail "L7-3: expected pre_existing/medium on ancestor L7 range; got origin=$origin conf=$conf"
 fi
 
 # L7-4: CLAUDE.md pipeline-shape narrative reflects the 6-vs-7 lens
