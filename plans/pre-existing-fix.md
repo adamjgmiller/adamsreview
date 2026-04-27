@@ -119,6 +119,8 @@ Replace with: "main-path: respects lens-supplied `pre_existing/high` when blame 
 
 ### A5 — Phase 2 dedup keeper-promotion guard (post-merge addendum, 2026-04-26)
 
+**Note (2026-04-26):** A5's keeper-conditional rule (the `pre_existing` keeper keeps its own value, never raised, never demoted) was superseded by **C1 below** after a second Codex review surfaced an order-dependence gap. The current Phase 2 rule for pre_existing-origin keepers is "lowest `origin_confidence` across pre_existing-origin members of the group" — order-independent. Treat the A5 description below as the historical record of commit d69ed6a; C1 below describes the current behavior.
+
 **Discovered by Codex CLI second-opinion review of commits 9e05dfb / dc87ce3 / f23e162.** The blast-radius checklist below missed that `fragments/03-dedup.md` is itself a *writer* of `origin_confidence` — Phase 2 reconciles the highest confidence across each duplicate group and patches it back onto the keeper. Combined with A2's new `pre_existing/medium` downgrade emitter, the original reconciliation rule re-creates the exact bug Option A2 fixes whenever a duplicate group contains both a downgraded keeper and a `pre_existing/high` sibling (e.g. main-path L1 candidate at lines 50–55 → `pre_existing/medium` via A2; L7 holistic candidate at the same lines → `pre_existing/high` via lens-respect; dedup → `max_conf=high` → §13.1 fires → footnote-only).
 
 **Edit.** `fragments/03-dedup.md` Routing-field reconciliation rules (the `origin_confidence` bullet) and the jq snippet under Step 3:
@@ -135,6 +137,23 @@ Replace with: "main-path: respects lens-supplied `pre_existing/high` when blame 
 - `fragments/01-detection.md:818-825` step 2a still described the pre-Option-A main-path override behavior (anything-ancestor → `pre_existing/high` → §13.1). Rewritten to describe the post-A2 decision table inline.
 - `bin/origin-crosscheck.sh:13-22` decision-table comment for the rename-follow override case clarified — the `--follow` extraction trace remains the lone main-path-style override-to-HIGH for content-preserving extractions; the same Mode 2 risk profile A2 just removed from the main path persists here as an accepted limitation (recoverable via walkthrough off-menu promote).
 - **OC-13** strengthened to assert the exposure-aware origin sentence appears on a `>`-prefixed line (i.e. inside the dispatched §1.2.1 blockquote) before the "Lens-specific extensions" delimiter, not just somewhere in the file. Closes the regression class where someone moves the rule into reader-facing commentary outside the dispatch boundary.
+
+### C1 — A5 keeper-order dependence (post-A5 follow-up addendum, 2026-04-26)
+
+**Discovered by Codex CLI second-opinion review of commits 9e05dfb / dc87ce3 / f23e162 / d69ed6a / b4db6e3.** A5 closed the dedup re-promotion bug for the case where the *keeper* arrives at `pre_existing/medium` — but Phase 2's keeper is the first id in the dedup sub-agent's group output, and the sub-agent picks order. If the sub-agent returns the group as `[pre_existing/high sibling, pre_existing/medium corrective]`, the high-confidence sibling becomes keeper, A5's "keep keeper's own value" path keeps `high`, and §13.1 still routes the finding to footnote — same bug Option A2 fixed, surfaced through a different keeper order. DD-1/DD-3 in commit d69ed6a happened to test the protected (medium-keeper) order; DD-3 explicitly asserted high-keeper-stays-high, codifying the gap.
+
+**Root cause.** A5 made the rule keeper-conditional on a property (`origin_confidence`) that should bind at the *group* level — any pre_existing-origin member arriving as a corrective medium signals group-level uncertainty regardless of which member became keeper. The keeper-conditional rule was implicitly probabilistic on Sonnet's ordering decisions.
+
+**Edit.** `fragments/03-dedup.md` Routing-field reconciliation rules (the `origin_confidence` bullet) and the jq snippet under Step 3:
+
+- Prose rule: replace the keeper-conditional pre_existing arm with a group-symmetric rule — `pre_existing` keeper takes LOWEST `origin_confidence` across all `pre_existing`-origin members of the group. Order-independent. Document the rename-follow trade-off explicitly: a legitimate `pre_existing/high` keeper (F038-class extraction override surviving A2) gets demoted to `medium` when grouped with any `pre_existing/medium` sibling, and routes through Phase 3 + Phase 4 instead of the §13.1 footnote — Phase 4 re-validates and the extraction trace typically re-confirms. Single-id groups (no siblings, no reconciliation runs) preserve the rename-follow override untouched, so the recall cost is bounded.
+- jq snippet: drop the `keeper_conf` read; replace `max_conf="$keeper_conf"` with `jq | select(.origin == "pre_existing") | sort_by({"low":1,"medium":2,"high":3}[.]) | first` over `group_json`. The `introduced_by_pr` arm is unchanged (still `sort_by | last`).
+
+**Smoke.** Update DD-1, DD-2, DD-3 inline jq to mirror the new production snippet (so future drift between prose, snippet, and fixture fails loudly). Flip DD-3's expectation from `high` to `medium` — DD-3 *is* the high-keeper-first scenario Codex called out, and under C1 both keeper orders yield the same group-symmetric `medium` result. Update DD-3's comment to explain the order-independence semantics and the rename-follow trade-off. Smoke stays at 276 assertions (no new assertion needed — DD-1 covers medium-keeper-first, DD-3 covers high-keeper-first).
+
+**Why a fragment edit is sufficient.** Same as A5 — Phase 2 dedup is LLM-orchestrated; the fragment *is* the implementation. DD-1/DD-2/DD-3 paste-mirror the production jq snippet against synthetic group_json so any drift between rule, snippet, and downstream consumers fails loudly.
+
+**Trade-off accepted.** Cross-origin sibling cases (e.g. keeper `pre_existing/high` + sibling `introduced_by_pr/high` for the same underlying issue) are out of scope for C1. The pre_existing filter in the new jq deliberately excludes non-pre_existing siblings — keeper origin stays the keeper's value (per the unchanged "leave `origin` on keeper" rule), and we don't currently use sibling-disagreement-on-origin as confidence signal. If a future review surfaces that as a real recall regression, treat it as a separate fix with its own design.
 
 ## Risks & mitigations
 

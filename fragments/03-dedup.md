@@ -93,19 +93,30 @@ the array union, before deleting the dupes):
   - **If the keeper's `origin == "introduced_by_pr"`**: take the
     HIGHEST across the group (`high` > `medium` > `low`). Corroborating
     PR-caused signals raise confidence — the standard case.
-  - **If the keeper's `origin == "pre_existing"`**: keep the keeper's
-    own value; do NOT raise it. `origin-crosscheck.sh`'s main path
-    emits `pre_existing/medium` as a *corrective* downgrade — a
-    deliberate refusal to fire the §13.1 short-circuit on
-    wrong-line-range cites or exposure findings (lens said
+  - **If the keeper's `origin == "pre_existing"`**: take the LOWEST
+    `origin_confidence` across all `pre_existing`-origin members of
+    the group. Order-independent — the dedup sub-agent picks group
+    order and the first id becomes keeper, so any rule that depends
+    on which member is keeper is implicitly probabilistic. The
+    relevant signal lives at the *group* level: if any
+    `pre_existing` member arrived as a corrective `medium` (from
+    `origin-crosscheck.sh`'s main path A2 downgrade — lens said
     `introduced_by_pr` but blame is fully ancestor of
-    `$comparison_ref`). Promoting that medium to `high` because a
-    sibling lens independently labeled the same wrong cite as
-    pre-existing re-fires §13.1 and silently re-creates the
-    routed-to-footnote bug Option A2 fixed. The rename-follow
-    override-to-`pre_existing/high` is keeper-supplied (already
-    `high`), so this rule never demotes legitimate pre-existing
-    findings — it only refuses to *raise* a corrective downgrade.
+    `$comparison_ref`, or lens said `pre_existing/high` but blame
+    sees PR commits), the group as a whole is uncertain and §13.1
+    should not fire. Promoting medium to high — or letting a
+    corroborating sibling's high *survive* as keeper — re-fires §13.1
+    and silently re-creates the routed-to-footnote bug Option A2 fixed.
+    Trade-off: a legitimate rename-follow `pre_existing/high` keeper
+    (the F038-class extraction override that survived A2) gets
+    demoted to `medium` when grouped with any `pre_existing/medium`
+    sibling, and routes through Phase 3 + Phase 4 instead of the
+    §13.1 footnote. Phase 4 re-validates and the extraction trace
+    typically re-confirms the finding as pre-existing — the recall
+    cost is bounded, and it's the right place to do that confirmation
+    when sibling signal disagrees. Single-id groups (no siblings,
+    no reconciliation runs) preserve the rename-follow override
+    untouched.
 - `validation_lane`: `deep` wins over `light` if any group member is
   deep. Safer routing — deep validation of a potentially-light issue
   costs more tokens, but light validation of a deep issue risks
@@ -142,21 +153,25 @@ Concretely, for each group `[K, D1, D2, ...]` (K = keeper, Di = dupes):
    and `sort_by ... | last` picks the highest-ranked value deterministically:
 
     ```bash
-    # Read the keeper's current origin + origin_confidence — needed to
-    # gate the origin_confidence reconciliation below. Substitute the
-    # actual keeper id for "K".
+    # Read the keeper's current origin — needed to gate the
+    # origin_confidence reconciliation below. Substitute the actual
+    # keeper id for "K".
     keeper_origin=$(jq -r --arg kid "K" \
       '.[] | select(.id==$kid) | .origin' <<<"$group_json")
-    keeper_conf=$(jq -r --arg kid "K" \
-      '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
 
-    # origin_confidence reconciliation:
+    # origin_confidence reconciliation (order-independent):
     #   introduced_by_pr keeper: take HIGHEST across group (corroboration raises).
-    #   pre_existing keeper:     keep keeper's own value (do NOT raise).
-    # See the prose rule above for why pre_existing must not be promoted —
-    # crosscheck's pre_existing/medium is corrective and §13.1 fires on high.
+    #   pre_existing keeper:     take LOWEST across pre_existing-origin members
+    #                            (any corrective-medium in the group binds the
+    #                            whole group; never let §13.1 fire on a group
+    #                            containing a corrective downgrade).
+    # See the prose rule above for the rationale and the rename-follow
+    # trade-off.
     if [ "$keeper_origin" = "pre_existing" ]; then
-        max_conf="$keeper_conf"
+        max_conf=$(jq -r '
+          [.[] | select(.origin == "pre_existing") | .origin_confidence]
+          | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+        ' <<<"$group_json")
     else
         max_conf=$(jq -r '
           [.[].origin_confidence]

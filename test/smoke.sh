@@ -1357,24 +1357,33 @@ else
     fail "OC-13b: expected exposure-aware sentence on a > line before 'Lens-specific extensions'; quote_line=$quote_line ext_line=$ext_line"
 fi
 
-# Assertion DD-1: Phase 2 dedup keeper-promotion guard (fragments/03-dedup.md
-# §2.3). origin_confidence reconciliation must NOT raise a pre_existing
-# keeper's confidence: origin-crosscheck.sh's main path now emits
-# pre_existing/medium as a *corrective* downgrade, and a corroborating
+# Assertion DD-1: Phase 2 dedup origin_confidence reconciliation
+# (fragments/03-dedup.md §2.3). For pre_existing-origin keepers the rule
+# is order-independent: lowest origin_confidence across all pre_existing
+# members of the group. origin-crosscheck.sh's main path emits
+# pre_existing/medium as a *corrective* downgrade (lens said
+# introduced_by_pr but blame is fully ancestor of $comparison_ref, or lens
+# said pre_existing/high but blame sees PR commits), and a corroborating
 # sibling lens can independently mislabel the same wrong cite as
-# pre_existing/high. Promoting medium → high would re-fire §13.1 and
-# silently re-create the routed-to-footnote bug Option A2 fixed. This
-# fixture mirrors the fragment's jq snippet against synthetic group_json
-# so any drift between prose rule, snippet, or downstream consumers fails
-# loudly.
+# pre_existing/high. The signal lives at the *group* level — any
+# corrective medium in the group binds the whole group, regardless of
+# which member became keeper. Letting the high sibling's confidence
+# survive (under either keeper order) re-fires §13.1 and silently
+# re-creates the routed-to-footnote bug Option A2 fixed. DD-1 covers the
+# medium-keeper order; DD-3 covers the high-keeper order; both must yield
+# medium. Fixtures mirror the fragment's jq snippet against synthetic
+# group_json so any drift between prose rule, snippet, or downstream
+# consumers fails loudly.
 group_json='[
   {"id":"K","origin":"pre_existing","origin_confidence":"medium"},
   {"id":"D1","origin":"pre_existing","origin_confidence":"high"}
 ]'
 keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
-keeper_conf=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
 if [ "$keeper_origin" = "pre_existing" ]; then
-    max_conf="$keeper_conf"
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
 else
     max_conf=$(jq -r '
       [.[].origin_confidence]
@@ -1382,23 +1391,26 @@ else
     ' <<<"$group_json")
 fi
 if [ "$max_conf" = "medium" ]; then
-    pass "DD-1 (§03-dedup §2.3): pre_existing keeper + pre_existing/high sibling → max_conf=medium (corrective downgrade preserved; §13.1 does NOT fire)"
+    pass "DD-1 (§03-dedup §2.3): pre_existing/medium keeper + pre_existing/high sibling → max_conf=medium (corrective downgrade binds group; §13.1 does NOT fire)"
 else
     fail "DD-1: expected max_conf=medium for pre_existing keeper; got $max_conf"
 fi
 
 # Assertion DD-2: standard reconciliation path unchanged. introduced_by_pr
 # keeper + mixed-confidence group still picks the HIGHEST — regression-
-# checks that the DD-1 guard didn't accidentally break corroboration-
-# raises-confidence for the introduced_by_pr branch.
+# checks that the pre_existing branch's group-symmetric rule didn't
+# accidentally break corroboration-raises-confidence for the
+# introduced_by_pr branch.
 group_json='[
   {"id":"K","origin":"introduced_by_pr","origin_confidence":"medium"},
   {"id":"D1","origin":"introduced_by_pr","origin_confidence":"high"}
 ]'
 keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
-keeper_conf=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
 if [ "$keeper_origin" = "pre_existing" ]; then
-    max_conf="$keeper_conf"
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
 else
     max_conf=$(jq -r '
       [.[].origin_confidence]
@@ -1411,29 +1423,39 @@ else
     fail "DD-2: expected max_conf=high for introduced_by_pr keeper; got $max_conf"
 fi
 
-# Assertion DD-3: pre_existing keeper already at HIGH stays HIGH. The DD-1
-# guard preserves the keeper's own value — it never *demotes* a legitimate
-# pre-existing finding. Models the rename-follow override case (the lone
-# main-path-style override surviving Option A2): keeper arrives at high,
-# corroborating sibling at medium, reconciled value is keeper's high.
+# Assertion DD-3: pre_existing/HIGH keeper + pre_existing/medium sibling.
+# DD-1 covered medium-keeper-first order; DD-3 covers high-keeper-first.
+# Both yield max_conf=medium because the group-symmetric "lowest across
+# pre_existing members" rule does not depend on which member became
+# keeper. Trade-off: a legitimate rename-follow override-to-high keeper
+# (F038-class extraction, the lone main-path-style override surviving
+# Option A2) gets demoted to medium when grouped with any
+# pre_existing/medium sibling, and routes through Phase 3 + Phase 4
+# instead of the §13.1 footnote — Phase 4 re-validates and the extraction
+# trace typically re-confirms. Single-id groups (no siblings, no
+# reconciliation runs) preserve the rename-follow override untouched, so
+# the recall cost is bounded to genuinely-grouped cases where sibling
+# signal disagrees.
 group_json='[
   {"id":"K","origin":"pre_existing","origin_confidence":"high"},
   {"id":"D1","origin":"pre_existing","origin_confidence":"medium"}
 ]'
 keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
-keeper_conf=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
 if [ "$keeper_origin" = "pre_existing" ]; then
-    max_conf="$keeper_conf"
+    max_conf=$(jq -r '
+      [.[] | select(.origin == "pre_existing") | .origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | first
+    ' <<<"$group_json")
 else
     max_conf=$(jq -r '
       [.[].origin_confidence]
       | sort_by({"low":1, "medium":2, "high":3}[.]) | last
     ' <<<"$group_json")
 fi
-if [ "$max_conf" = "high" ]; then
-    pass "DD-3 (§03-dedup §2.3): pre_existing keeper already at high stays high (guard preserves keeper, never demotes legitimate pre-existing/high)"
+if [ "$max_conf" = "medium" ]; then
+    pass "DD-3 (§03-dedup §2.3): pre_existing/high keeper + pre_existing/medium sibling → max_conf=medium (order-independent: high-keeper order matches DD-1's medium-keeper order; rename-follow override demoted by sibling-medium → re-validated by Phase 4)"
 else
-    fail "DD-3: expected max_conf=high for pre_existing/high keeper; got $max_conf"
+    fail "DD-3: expected max_conf=medium for pre_existing/high keeper with sibling-medium; got $max_conf"
 fi
 
 # ------------------------------------------------------------------ Stage 2.6.C
