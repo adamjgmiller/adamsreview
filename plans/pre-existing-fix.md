@@ -193,11 +193,13 @@ Replace with: "main-path: respects lens-supplied `pre_existing/high` when blame 
 
 ## Commit shape
 
-Three commits, one per logical edit (per CLAUDE.md "commit at natural breakpoints"):
+Three core commits, one per logical edit (per CLAUDE.md "commit at natural breakpoints"):
 
 1. `01-detection.md: shared-block exposure-aware origin rule (Option A1)` — fragment + L1/L7 simplification.
 2. `origin-crosscheck.sh: symmetric main-path downgrade for lens-introduced_by_pr (Option A2)` — helper + header docstring + CLAUDE.md helper-index entry.
 3. `smoke: OC-1 expectation flip + OC-12/OC-13 additions (Option A4)` — test updates.
+
+Plus follow-up commits across the post-merge addenda (A5 / doc-sweep / C1 / Opus-nit / C2 / doc-fix); see `git log main..HEAD` on this branch for the actual landed shape.
 
 ## Blast-radius checklist (per global CLAUDE.md)
 

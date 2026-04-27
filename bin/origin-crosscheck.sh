@@ -26,7 +26,10 @@
 #         lines live inside an extracted file would still be force-
 #         classified pre_existing/high here. Accepted limitation per
 #         plans/pre-existing-fix.md §A2; recoverable via walkthrough
-#         off-menu promote.)
+#         off-menu promote. Note: Phase 2 dedup C1+C2 in
+#         fragments/03-dedup.md may later cap this override to medium
+#         when grouped with same-origin non-high or any cross-origin
+#         sibling; single-id groups preserve the override untouched.)
 #       git log --follow reveals pre-PR ancestor but blame sees later PR
 #         commits                          → respect lens (content was added
 #         AFTER extraction, within the PR)

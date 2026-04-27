@@ -126,9 +126,9 @@ the shared block above and apply to every lens uniformly. After
 dispatch, `origin-crosscheck.sh` (step 1.4 step 2a) blame-traces each
 candidate. Its main path trusts the lens's origin call (downgrades
 `pre_existing/high` to medium when blame disagrees, and sets
-`pre_existing/medium` when the lens said `introduced_by_pr` but blame
-is fully ancestor — covering both wrong-line-range cites and exposure
-findings). Its rename-follow path is the one place blame trumps the
+`pre_existing/medium` for any non-`pre_existing/high` lens output
+whose blame is fully ancestor — covering both wrong-line-range cites
+and exposure findings). Its rename-follow path is the one place blame trumps the
 lens, overriding to `pre_existing/high` for content-preserving file
 extractions where `git log --follow` reaches a pre-PR ancestor (F038
 case) — there the extraction trace is stronger evidence than the
