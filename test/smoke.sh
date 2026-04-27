@@ -1073,16 +1073,43 @@ PY
 )
 
 # Assertion OC-1: pre-existing range (lines 1-2 of file_a.py — untouched).
-# Lens default (introduced_by_pr/high) should be OVERRIDDEN to pre_existing/high.
+# Lens default (introduced_by_pr/high) should be DOWNGRADED to pre_existing/
+# medium so the §13.1 override does NOT fire — Phase 3 + Phase 4 decide.
+# Covers two failure modes that look identical at this layer: (a) lens cited
+# the wrong line range (claim is real, cited lines aren't); (b) the bug is
+# an "exposure" finding where this PR added new code elsewhere that makes
+# old code wrong. Either way, force-routing to the report-only footnote
+# would skip validation; keep the finding flowing through the pipeline.
 out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
     --comparison-ref main \
-    --candidates '[{"id":"C1","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
+    --candidates '[{"id":"C1","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2> "$OC_DIR/c1.err")
 origin=$(echo "$out" | jq -r '.[0].origin')
 conf=$(echo "$out" | jq -r '.[0].origin_confidence')
-if [[ "$origin" == "pre_existing" && "$conf" == "high" ]]; then
-    pass "OC-1 (§13.11): fully-ancestor line range overrides lens to pre_existing/high"
+if [[ "$origin" == "pre_existing" && "$conf" == "medium" ]] \
+    && grep -q 'action=downgraded' "$OC_DIR/c1.err" \
+    && grep -q 'reason=lens-introduced-by-pr-but-all-blame-ancestor' "$OC_DIR/c1.err"; then
+    pass "OC-1 (§13.11): lens=introduced_by_pr + all-blame-ancestor → pre_existing/medium (action=downgraded; §13.1 does not fire)"
 else
-    fail "OC-1: expected origin=pre_existing,conf=high; got origin=$origin conf=$conf"
+    fail "OC-1: expected pre_existing/medium + action=downgraded + reason=lens-introduced-by-pr-but-all-blame-ancestor; got origin=$origin conf=$conf stderr=$(cat "$OC_DIR/c1.err")"
+fi
+
+# Assertion OC-12: lens AGREES with blame (lens already pre_existing/high
+# AND every blame SHA is ancestor of comparison_ref). The respect/no-op
+# path on the main branch — separate assertion from OC-1 because their
+# input directions are now opposite, and a future drift in either branch
+# of the if/else should fail loudly. Reason should be `blame-confirms-
+# preexisting`, not the downgrade reason.
+out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
+    --comparison-ref main \
+    --candidates '[{"id":"C12","file":"file_a.py","line_range":[1,2],"origin":"pre_existing","origin_confidence":"high"}]' 2> "$OC_DIR/c12.err")
+origin=$(echo "$out" | jq -r '.[0].origin')
+conf=$(echo "$out" | jq -r '.[0].origin_confidence')
+if [[ "$origin" == "pre_existing" && "$conf" == "high" ]] \
+    && grep -q 'action=respected' "$OC_DIR/c12.err" \
+    && grep -q 'reason=blame-confirms-preexisting' "$OC_DIR/c12.err"; then
+    pass "OC-12 (§13.11): lens=pre_existing/high + all-blame-ancestor → respected (no-op, reason=blame-confirms-preexisting)"
+else
+    fail "OC-12: expected pre_existing/high + action=respected + reason=blame-confirms-preexisting; got origin=$origin conf=$conf stderr=$(cat "$OC_DIR/c12.err")"
 fi
 
 # Assertion OC-2: PR-modified range (line 4 of file_a.py — the sed change).
@@ -1296,6 +1323,20 @@ if [[ "$origin" == "introduced_by_pr" && "$conf" == "high" ]] \
     pass "OC-11 (§13.11, Project G): PR-added lines in an extracted file are NOT overridden (blame SHA not in ancestor nor file-add set) — lens respected"
 else
     fail "OC-11: expected introduced_by_pr/high + reason=rename-follow-but-lines-modified-in-pr; got origin=$origin conf=$conf stderr=$(cat "$OC_RN_DIR/rf3.err")"
+fi
+
+# Assertion OC-13: prompt-rule fixture. The shared §1.2.1 invariant block
+# in fragments/01-detection.md must carry the exposure-aware origin rule
+# ("reverting this PR would not close the finding"). This is a cheap
+# regression guard — the rule is what stops lenses from labeling exposure
+# findings (PR adds new code that makes old code stale) as pre_existing
+# in the first place. Removing the wording would re-create the bug
+# origin-crosscheck's main-path downgrade was added to mitigate.
+if grep -q 'reverting this PR would not close the finding' \
+        "$REPO/fragments/01-detection.md"; then
+    pass "OC-13 (§13.11/01-detection §1.2.1): shared lens-prompt block carries the exposure-aware origin rule"
+else
+    fail "OC-13: expected fragments/01-detection.md to contain the exposure-aware origin sentence ('reverting this PR would not close the finding')"
 fi
 
 # ------------------------------------------------------------------ Stage 2.6.C
@@ -3390,18 +3431,20 @@ else
 fi
 
 # L7-3: origin-crosscheck on a synthetic L7 candidate whose line range
-# is entirely ancestor of $comparison_ref gets overridden to
-# pre_existing/high — same behavior as L1..L6 (source-family-agnostic).
-# Reuse the OC scratch repo if it still exists from OC-*.
+# is entirely ancestor of $comparison_ref gets DOWNGRADED to
+# pre_existing/medium — same behavior as L1..L6 (source-family-agnostic).
+# Mirrors the OC-1 expectation (post-Option-A): no main-path override to
+# /high; downgrade to /medium so §13.1 doesn't fire and Phase 3 + Phase 4
+# decide. Reuse the OC scratch repo if it still exists from OC-*.
 out=$(cd "$OC_DIR/repo" && "$TOOLS/origin-crosscheck.sh" \
     --comparison-ref main \
     --candidates '[{"id":"L7C1","sources":["L7-holistic"],"source_family":"holistic-family","file":"file_a.py","line_range":[1,2],"origin":"introduced_by_pr","origin_confidence":"high"}]' 2>/dev/null)
 origin=$(echo "$out" | jq -r '.[0].origin')
 conf=$(echo "$out" | jq -r '.[0].origin_confidence')
-if [[ "$origin" == "pre_existing" && "$conf" == "high" ]]; then
-    pass "L7-3 (§2.9.D): origin-crosscheck flips L7-holistic candidate (ancestor range) to pre_existing/high"
+if [[ "$origin" == "pre_existing" && "$conf" == "medium" ]]; then
+    pass "L7-3 (§2.9.D): origin-crosscheck downgrades L7-holistic candidate (ancestor range) to pre_existing/medium (source-family-agnostic)"
 else
-    fail "L7-3: expected pre_existing/high on ancestor L7 range; got origin=$origin conf=$conf"
+    fail "L7-3: expected pre_existing/medium on ancestor L7 range; got origin=$origin conf=$conf"
 fi
 
 # L7-4: CLAUDE.md pipeline-shape narrative reflects the 6-vs-7 lens
