@@ -89,8 +89,23 @@ across group members. Delete every non-keeper.
 **Routing-field reconciliation rules** (applied to the keeper after
 the array union, before deleting the dupes):
 
-- `origin_confidence`: take the HIGHEST across the group (`high` >
-  `medium` > `low`). Corroboration raises confidence.
+- `origin_confidence`:
+  - **If the keeper's `origin == "introduced_by_pr"`**: take the
+    HIGHEST across the group (`high` > `medium` > `low`). Corroborating
+    PR-caused signals raise confidence — the standard case.
+  - **If the keeper's `origin == "pre_existing"`**: keep the keeper's
+    own value; do NOT raise it. `origin-crosscheck.sh`'s main path
+    emits `pre_existing/medium` as a *corrective* downgrade — a
+    deliberate refusal to fire the §13.1 short-circuit on
+    wrong-line-range cites or exposure findings (lens said
+    `introduced_by_pr` but blame is fully ancestor of
+    `$comparison_ref`). Promoting that medium to `high` because a
+    sibling lens independently labeled the same wrong cite as
+    pre-existing re-fires §13.1 and silently re-creates the
+    routed-to-footnote bug Option A2 fixed. The rename-follow
+    override-to-`pre_existing/high` is keeper-supplied (already
+    `high`), so this rule never demotes legitimate pre-existing
+    findings — it only refuses to *raise* a corrective downgrade.
 - `validation_lane`: `deep` wins over `light` if any group member is
   deep. Safer routing — deep validation of a potentially-light issue
   costs more tokens, but light validation of a deep issue risks
@@ -127,11 +142,27 @@ Concretely, for each group `[K, D1, D2, ...]` (K = keeper, Di = dupes):
    and `sort_by ... | last` picks the highest-ranked value deterministically:
 
     ```bash
-    # highest origin_confidence across group: high > medium > low
-    max_conf=$(jq -r '
-      [.[].origin_confidence]
-      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
-    ' <<<"$group_json")
+    # Read the keeper's current origin + origin_confidence — needed to
+    # gate the origin_confidence reconciliation below. Substitute the
+    # actual keeper id for "K".
+    keeper_origin=$(jq -r --arg kid "K" \
+      '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+    keeper_conf=$(jq -r --arg kid "K" \
+      '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
+
+    # origin_confidence reconciliation:
+    #   introduced_by_pr keeper: take HIGHEST across group (corroboration raises).
+    #   pre_existing keeper:     keep keeper's own value (do NOT raise).
+    # See the prose rule above for why pre_existing must not be promoted —
+    # crosscheck's pre_existing/medium is corrective and §13.1 fires on high.
+    if [ "$keeper_origin" = "pre_existing" ]; then
+        max_conf="$keeper_conf"
+    else
+        max_conf=$(jq -r '
+          [.[].origin_confidence]
+          | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+        ' <<<"$group_json")
+    fi
 
     # deep wins over light if any member is deep
     max_lane=$(jq -r '

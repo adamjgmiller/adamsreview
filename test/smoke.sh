@@ -1339,6 +1339,103 @@ else
     fail "OC-13: expected fragments/01-detection.md to contain the exposure-aware origin sentence ('reverting this PR would not close the finding')"
 fi
 
+# Assertion OC-13b: blockquote-position guard for the §1.2.1 origin rule.
+# OC-13 above only checks that the sentence exists somewhere in the file —
+# it would still pass if a future edit moved the sentence into reader-facing
+# commentary outside the dispatched `>`-prefixed blockquote. That's exactly
+# the regression class this rule's location is meant to prevent: lens
+# sub-agents only see the blockquote contents in their prompt. Assert the
+# sentence appears on a `>`-prefixed line AND that it sits in §1.2.1 (i.e.
+# before the post-blockquote `Lens-specific extensions` annotation list).
+quote_line=$(grep -nE '^> .*reverting this PR would not close the finding' \
+    "$REPO/fragments/01-detection.md" | head -1 | cut -d: -f1)
+ext_line=$(grep -nE '^Lens-specific extensions' \
+    "$REPO/fragments/01-detection.md" | head -1 | cut -d: -f1)
+if [ -n "$quote_line" ] && [ -n "$ext_line" ] && [ "$quote_line" -lt "$ext_line" ]; then
+    pass "OC-13b (§13.11/01-detection §1.2.1): exposure-aware origin rule on a > blockquote line inside §1.2.1 (line $quote_line < Lens-specific extensions at line $ext_line)"
+else
+    fail "OC-13b: expected exposure-aware sentence on a > line before 'Lens-specific extensions'; quote_line=$quote_line ext_line=$ext_line"
+fi
+
+# Assertion DD-1: Phase 2 dedup keeper-promotion guard (fragments/03-dedup.md
+# §2.3). origin_confidence reconciliation must NOT raise a pre_existing
+# keeper's confidence: origin-crosscheck.sh's main path now emits
+# pre_existing/medium as a *corrective* downgrade, and a corroborating
+# sibling lens can independently mislabel the same wrong cite as
+# pre_existing/high. Promoting medium → high would re-fire §13.1 and
+# silently re-create the routed-to-footnote bug Option A2 fixed. This
+# fixture mirrors the fragment's jq snippet against synthetic group_json
+# so any drift between prose rule, snippet, or downstream consumers fails
+# loudly.
+group_json='[
+  {"id":"K","origin":"pre_existing","origin_confidence":"medium"},
+  {"id":"D1","origin":"pre_existing","origin_confidence":"high"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+keeper_conf=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf="$keeper_conf"
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "medium" ]; then
+    pass "DD-1 (§03-dedup §2.3): pre_existing keeper + pre_existing/high sibling → max_conf=medium (corrective downgrade preserved; §13.1 does NOT fire)"
+else
+    fail "DD-1: expected max_conf=medium for pre_existing keeper; got $max_conf"
+fi
+
+# Assertion DD-2: standard reconciliation path unchanged. introduced_by_pr
+# keeper + mixed-confidence group still picks the HIGHEST — regression-
+# checks that the DD-1 guard didn't accidentally break corroboration-
+# raises-confidence for the introduced_by_pr branch.
+group_json='[
+  {"id":"K","origin":"introduced_by_pr","origin_confidence":"medium"},
+  {"id":"D1","origin":"introduced_by_pr","origin_confidence":"high"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+keeper_conf=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf="$keeper_conf"
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "high" ]; then
+    pass "DD-2 (§03-dedup §2.3): introduced_by_pr keeper + mixed-confidence group → max_conf=high (corroboration-raises-confidence path unchanged)"
+else
+    fail "DD-2: expected max_conf=high for introduced_by_pr keeper; got $max_conf"
+fi
+
+# Assertion DD-3: pre_existing keeper already at HIGH stays HIGH. The DD-1
+# guard preserves the keeper's own value — it never *demotes* a legitimate
+# pre-existing finding. Models the rename-follow override case (the lone
+# main-path-style override surviving Option A2): keeper arrives at high,
+# corroborating sibling at medium, reconciled value is keeper's high.
+group_json='[
+  {"id":"K","origin":"pre_existing","origin_confidence":"high"},
+  {"id":"D1","origin":"pre_existing","origin_confidence":"medium"}
+]'
+keeper_origin=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin' <<<"$group_json")
+keeper_conf=$(jq -r --arg kid "K" '.[] | select(.id==$kid) | .origin_confidence' <<<"$group_json")
+if [ "$keeper_origin" = "pre_existing" ]; then
+    max_conf="$keeper_conf"
+else
+    max_conf=$(jq -r '
+      [.[].origin_confidence]
+      | sort_by({"low":1, "medium":2, "high":3}[.]) | last
+    ' <<<"$group_json")
+fi
+if [ "$max_conf" = "high" ]; then
+    pass "DD-3 (§03-dedup §2.3): pre_existing keeper already at high stays high (guard preserves keeper, never demotes legitimate pre-existing/high)"
+else
+    fail "DD-3: expected max_conf=high for pre_existing/high keeper; got $max_conf"
+fi
+
 # ------------------------------------------------------------------ Stage 2.6.C
 # Renderer surfaces §13.10 freshness state in the header when non-default.
 
