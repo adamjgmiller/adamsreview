@@ -247,20 +247,29 @@ we checked the remote. Prompt body adapts to overlap exactly as in
   cannot detect from the original review's blast radius. Merging
   `$base_branch` first is conservative.
 
-Options:
+Options. Both (a) and (c) must pop the stash if step 7.5 took one,
+mirroring step 7.6's abort path so the user's working tree is restored
+when we bail before Phase 8 runs:
 
-- **(a) Stop — I'll merge `$base_branch` first** (recommended). Pop
-  stash if taken (so the user's working tree is restored), then exit
-  0 with: `Stopping. Run \`git merge $base_branch\` on \`$head_branch\`,
-  then re-run /adamsreview:fix.` Exit happens **before** step 7.8 —
-  no `run_id`, no `input_sha`, no `fix_attempts` row, no commit, no push.
+```bash
+# Common to (a) and (c):
+if [[ "${stash_taken:-false}" == "true" ]]; then
+    git stash pop || true
+fi
+```
+
+- **(a) Stop — I'll merge `$base_branch` first** (recommended). Run the
+  pop-stash block above, then exit 0 with: `Stopping. Run \`git merge
+  $base_branch\` on \`$head_branch\`, then re-run /adamsreview:fix.`
+  Exit happens **before** step 7.8 — no `run_id`, no `input_sha`, no
+  `fix_attempts` row, no commit, no push.
 - **(b) Proceed.** Append a buffered trace line:
   ```bash
   printf '[%s] branch_behind_base proceeded\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
   ```
   Continue to step 7.7.
-- **(c) Abort.** Pop stash if taken, then exit 0 with `Aborted.`.
+- **(c) Abort.** Run the pop-stash block above, then exit 0 with `Aborted.`.
 
 ### 7.7. PR eligibility recheck
 
