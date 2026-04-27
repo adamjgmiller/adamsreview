@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent
+allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(branch-behind-base.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), AskUserQuestion, Read, Agent
 argument-hint: "[<paste...>] [--file path --line N --claim \"...\"] [--impact <type>] [--no-dedup]"
 description: Inject externally-sourced findings (cloud /ultrareview, manual finds, etc.) into the most recent /adamsreview:review artifact for this branch. Validates via Phase 4, re-renders, re-publishes.
 disable-model-invocation: false
@@ -214,6 +214,72 @@ message and abort (same shape as Phase 7 step 4 in
 
 Append a one-line `add_rejected_leftover_attempted: ids=...` entry to
 `trace.md` for audit, then exit non-zero.
+
+### 3a. Branch-behind-base check
+
+Same shape as `:fix` step 7.6a (`fragments/08-fix-loader.md`) — covers
+the rotated staleness axis (HEAD vs `$base_branch`). Active-fetch mode:
+at add-time `$base_branch` may have moved since `:review`, so the
+helper fetches `origin/<base>` fresh rather than relying on the
+artifact's review-time snapshot. Falls back to local `<base>` on
+no-remote / fetch failure (logged via `warnings[]` + `comparison_ref_used`).
+
+```bash
+base_branch=$(artifact-read.sh \
+    --path "$artifact_path" --filter '.base_branch')
+reviewed_files_all=$(artifact-read.sh \
+    --path "$artifact_path" --filter '.reviewed_files_all[]?')
+
+bb_json=$(printf '%s\n' "$reviewed_files_all" \
+  | branch-behind-base.sh --fetch-base "$base_branch" --reviewed-files @-)
+branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
+branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
+branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
+comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
+
+# Flush any active-fetch warnings (no_remote / fetch_failed) to trace.md.
+while IFS= read -r w; do
+    [[ -n "$w" ]] && printf '[%s] branch_behind_base %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$w" >> "$trace_log_path"
+done < <(echo "$bb_json" | jq -r '.warnings[]?')
+
+# Always log the resolution line — independent of behind-count — so the
+# trace makes the active-fetch resolution explicit.
+printf '[%s] branch_behind_base behind=%s overlap=%s comparison_ref_used=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_behind_count" "$branch_overlap_count" \
+    "$comparison_ref_used" >> "$trace_log_path"
+```
+
+If `branch_behind_count == 0`, skip the rest of this step.
+
+If `branch_behind_count > 0`, `AskUserQuestion` with three options.
+Reference `$comparison_ref_used` in the prompt body so a fetch-fallback
+("vs `main` (fetch failed; comparing against local)") doesn't pretend
+we checked the remote.
+
+- **`branch_overlap_count > 0`:** Branch behind by N commits vs
+  `$comparison_ref_used`, of which `$branch_overlap_count` modified
+  files in this PR (`$branch_overlap_files_csv`). Recommend merging
+  `$base_branch` first.
+- **`branch_overlap_count == 0`:** Branch behind by N commits vs
+  `$comparison_ref_used`. None of those commits touched files in this
+  PR — but `$base_branch` may have shifted shared context (renames,
+  API changes, dep bumps) that the dedup / validation passes won't
+  see from the diff alone. Merging `$base_branch` first is conservative.
+
+Options:
+
+- **(a) Stop — I'll merge `$base_branch` first** (recommended). Exit 0
+  with: `Stopping. Run \`git merge $base_branch\` on \`$head_branch\`,
+  then re-run /adamsreview:add.` The artifact is untouched at this
+  point — no candidate normalization, no `--add-finding` invocations.
+- **(b) Proceed.** Append a buffered trace line:
+  ```bash
+  printf '[%s] branch_behind_base proceeded\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
+  ```
+  Continue to step 4.
+- **(c) Abort.** Exit 0 with `Aborted.`. Artifact untouched.
 
 ### 4. Build candidate array
 

@@ -5118,6 +5118,22 @@ else
     fail "BB-11: missing fragment wiring or allowed-tools grant" "frag=$(grep -c '7\.6a' "$bb11_frag") cmd=$(grep -c branch-behind-base "$bb11_cmd")"
 fi
 
+# BB-12: commands/add.md has step 3a wired with the helper (active-fetch
+# mode) + warnings flush + resolution trace line, the helper grant in
+# allowed-tools, and AskUserQuestion granted (3a's prompt path needs it
+# even though :add did not previously grant it).
+bb12_cmd="$REPO/commands/add.md"
+if grep -q '^### 3a\. Branch-behind-base check' "$bb12_cmd" \
+    && grep -q 'branch-behind-base.sh --fetch-base "\$base_branch" --reviewed-files @-' "$bb12_cmd" \
+    && grep -q 'branch_behind_base behind=%s overlap=%s comparison_ref_used=%s' "$bb12_cmd" \
+    && grep -q '.warnings\[\]?' "$bb12_cmd" \
+    && grep -q 'Bash(branch-behind-base.sh:\*)' "$bb12_cmd" \
+    && grep -q 'AskUserQuestion' "$bb12_cmd"; then
+    pass "BB-12-add-warning: :add step 3a wires helper (active-fetch) + warnings/resolution trace + commands/add.md grants helper + AskUserQuestion"
+else
+    fail "BB-12: missing fragment wiring or allowed-tools grant in commands/add.md"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
