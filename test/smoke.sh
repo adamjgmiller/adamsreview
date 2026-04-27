@@ -5044,6 +5044,44 @@ else
     fail "AF-DRIFT-EDGE: $af_drift_edge_fail"
 fi
 
+# BB-1..3: branch-behind-base advisory gate is wired into all three
+# lifecycle commands. Template-integrity check (the gate is inline
+# bash + AskUserQuestion prose, no helper script). Asserts: header at
+# the right step, behind-count rev-list, fail-open `|| echo 0`.
+BB_PRE="$REPO/fragments/00-preflight.md"
+if grep -q '### 0.6a. Branch-behind-base advisory' "$BB_PRE" \
+   && grep -qF 'git rev-list --count "HEAD..$comparison_ref"' "$BB_PRE" \
+   && grep -qF '|| echo 0' "$BB_PRE" \
+   && grep -q 'preflight_warnings+=("branch_behind_base proceeded' "$BB_PRE"; then
+    pass "BB-1: /adamsreview:review §0.6a branch-behind-base gate present (passive count vs comparison_ref + preflight_warnings buffer)"
+else
+    fail "BB-1: §0.6a header/rev-list/fail-open/preflight_warnings missing in $BB_PRE"
+fi
+
+BB_FIX="$REPO/fragments/08-fix-loader.md"
+if grep -q '### 7.6a. Branch-behind-base advisory' "$BB_FIX" \
+   && grep -qF 'git fetch origin "$base_branch" --quiet' "$BB_FIX" \
+   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_FIX" \
+   && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_FIX" \
+   && grep -qF '|| echo 0' "$BB_FIX" \
+   && grep -q 'git stash pop || true' "$BB_FIX"; then
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + two-step rev-list + stash-pop on Stop/Abort)"
+else
+    fail "BB-2: §7.6a header/fetch/two-step rev-list/stash-pop missing in $BB_FIX"
+fi
+
+BB_ADD="$REPO/commands/add.md"
+if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
+   && grep -qF 'git fetch origin "$base_branch" --quiet' "$BB_ADD" \
+   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_ADD" \
+   && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_ADD" \
+   && grep -qF '|| echo 0' "$BB_ADD" \
+   && grep -q 'AskUserQuestion' "$BB_ADD"; then
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + two-step rev-list + AskUserQuestion grant)"
+else
+    fail "BB-3: §3a header/fetch/two-step rev-list/AskUserQuestion grant missing in $BB_ADD"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
