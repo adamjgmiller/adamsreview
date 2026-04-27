@@ -195,6 +195,31 @@ used by step 0.11 (trivial check) AND by step 0.15 (seed's
 unconditionally — if step 0.11 is skipped by `--full`, these still need
 to exist.
 
+### 0.6a. Branch-behind-base advisory
+
+Step 0.2a already fetched, so this is passive — `$comparison_ref` is the
+freshest base ref available. When HEAD is behind it, the lens diff
+includes phantom deletions for code that landed on the base after this
+branch was cut.
+
+```bash
+behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null || echo 0)
+```
+
+If `$behind > 0`, `AskUserQuestion` once:
+
+> Branch `$head_branch` is `$behind` commits behind `$base_branch`. The
+> lens diff includes phantom deletions for code that landed on
+> `$base_branch` after this branch was cut, and may have shifted code
+> your branch calls into. Recommend merging `$base_branch` first.
+
+- **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
+- **(b) Proceed.** Append a buffered warning and continue:
+  ```bash
+  preflight_warnings+=("branch_behind_base proceeded behind=$behind")
+  ```
+- **(c) Abort.** Exit 0 with `Aborted.`.
+
 ### 0.7. Enumerate `claude_md_paths`
 
 Run:
