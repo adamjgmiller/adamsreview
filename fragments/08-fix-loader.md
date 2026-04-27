@@ -186,6 +186,47 @@ fi
 
 Capture `latest_known_sha`, `staleness_verdict`.
 
+### 7.6a. Branch-behind-base advisory
+
+Active fetch — the artifact's review-time freshness snapshot may have
+aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`,
+fall back to local on fetch failure or no-remote.
+
+```bash
+base_branch=$(jq -r '.base_branch' "$artifact_path")
+git fetch origin "$base_branch" --quiet 2>/dev/null || true
+behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
+       || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
+       || echo 0)
+```
+
+Fail-open on any non-zero git exit — the gate is a warning surface, not
+a precondition.
+
+If `$behind > 0`, `AskUserQuestion` once:
+
+> Branch `$head_branch` is `$behind` commits behind `$base_branch`. The
+> fix run will edit code that may merge-conflict with `$base_branch`,
+> and `$base_branch` may have shifted shared context the fix planner
+> can't see. Recommend merging `$base_branch` first.
+
+For (a) and (c): pop the stash if step 7.5 took one (same shape as
+§7.6's unsafe-staleness exit):
+
+```bash
+if [[ "${stash_taken:-false}" == "true" ]]; then
+    git stash pop || true
+fi
+```
+
+- **(a) Stop — I'll merge first, then re-run.** Pop stash, exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:fix.`
+- **(b) Proceed.** Append a trace line and continue:
+  ```bash
+  printf '[%s] branch_behind_base proceeded behind=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" >> "$trace_log_path"
+  ```
+- **(c) Abort.** Pop stash, exit 0 with `Aborted.`.
+
 ### 7.7. PR eligibility recheck
 
 Load `mode` and `pr_number` from the artifact:
