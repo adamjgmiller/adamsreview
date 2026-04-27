@@ -4787,6 +4787,305 @@ else
     fail "AF-DRIFT-EDGE: $af_drift_edge_fail"
 fi
 
+# ------------------------------------------------------------------ BB-* branch-behind-base.sh
+# plans/branch-behind-base-gate.md — preflight check for the rotated
+# staleness axis (HEAD vs comparison_ref). Companion to freshness-gate.sh
+# (which covers local_base vs remote_base). Two modes: passive
+# (--comparison-ref, no fetch) and active-fetch (--fetch-base, runs
+# `git fetch origin <base>` with 30s soft timeout, falls back to local
+# on no_remote / fetch failure). Truncates overlap_files to 10 + sentinel.
+
+BB_DIR="$WORK/branch-behind-base"
+
+# Build a "branch behind by N" fixture under $1 (path), where:
+#   - main has N commits the branch lacks
+#   - branch is on $head_branch with M of those touching files in
+#     $reviewed_files (passed as $3 newline-separated)
+# Returns nothing; sets up the working tree at $1 with HEAD on the
+# feature branch.
+#
+# $1 path
+# $2 N (number of commits ahead on main since branch divergence)
+# $3 newline-separated list of files to also touch on the feature
+#    branch (these become the staleness envelope) — must include
+#    files in $4 if you want overlap.
+# $4 newline-separated list of files to touch on main (within the N
+#    commits) — drives overlap_count when intersected with $3.
+bb_make_repo() {
+    local path="$1" n="$2" branch_files="$3" main_files="$4"
+    mkdir -p "$path"
+    (
+        cd "$path"
+        git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+        git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+        git config user.email smoke@example.com
+        git config user.name smoke
+        printf 'init\n' > seed.txt
+        git add seed.txt && git commit --quiet -m "initial"
+        # Cut feature branch BEFORE main moves forward.
+        git checkout --quiet -b feat
+        # Feature branch touches its own files (the staleness envelope).
+        if [[ -n "$branch_files" ]]; then
+            while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                mkdir -p "$(dirname "$f")"
+                printf 'feat-edit\n' > "$f"
+                git add "$f"
+            done <<< "$branch_files"
+            git commit --quiet -m "feat: edit branch files"
+        fi
+        # Now switch back to main and add N commits, distributing
+        # main_files across them (one file per commit, cycling if N >
+        # count(main_files) or padded with placeholder files if N <
+        # count). Simplest: one commit per main_file, ignore N if it
+        # disagrees — tests pass exact N + matching file lists.
+        git checkout --quiet main
+        local commit_count=0
+        if [[ -n "$main_files" ]]; then
+            while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                mkdir -p "$(dirname "$f")"
+                printf 'main-edit-%s\n' "$commit_count" > "$f"
+                git add "$f"
+                git commit --quiet -m "main: $f"
+                commit_count=$((commit_count + 1))
+            done <<< "$main_files"
+        fi
+        # Pad with placeholder commits if N > main_files count.
+        while [[ "$commit_count" -lt "$n" ]]; do
+            printf 'pad-%s\n' "$commit_count" > "pad_$commit_count.txt"
+            git add "pad_$commit_count.txt"
+            git commit --quiet -m "main: pad $commit_count"
+            commit_count=$((commit_count + 1))
+        done
+        # Return to feature branch — that's where HEAD must be when the
+        # helper is invoked.
+        git checkout --quiet feat
+    )
+}
+
+# BB-1: passive mode, behind=0 (no main movement after branch cut).
+bb_make_repo "$BB_DIR/bb1" 0 "src/foo.ts" ""
+bb1_out=$(cd "$BB_DIR/bb1" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "src/foo.ts" 2>/dev/null)
+bb1_behind=$(echo "$bb1_out" | jq -r '.behind_count')
+bb1_overlap=$(echo "$bb1_out" | jq -r '.overlap_count')
+bb1_compref=$(echo "$bb1_out" | jq -r '.comparison_ref_used')
+bb1_warn_len=$(echo "$bb1_out" | jq '.warnings | length')
+bb1_files_len=$(echo "$bb1_out" | jq '.overlap_files | length')
+if [[ "$bb1_behind" == "0" && "$bb1_overlap" == "0" \
+    && "$bb1_compref" == "main" && "$bb1_warn_len" == "0" \
+    && "$bb1_files_len" == "0" ]]; then
+    pass "BB-1-zero-passive: passive mode, behind=0 short-circuits with zeros + empty warnings"
+else
+    fail "BB-1: expected behind=0 overlap=0 main [] []; got behind=$bb1_behind overlap=$bb1_overlap compref=$bb1_compref warn_len=$bb1_warn_len files_len=$bb1_files_len"
+fi
+
+# BB-2: passive mode, behind=3 with one overlapping file.
+# Branch touches src/foo.ts; main also modifies src/foo.ts in one of its
+# 3 advancing commits. Overlap should be 1 (src/foo.ts).
+bb_make_repo "$BB_DIR/bb2" 3 "src/foo.ts" \
+    "$(printf 'src/foo.ts\nsrc/other.ts\nsrc/third.ts\n')"
+bb2_out=$(cd "$BB_DIR/bb2" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "src/foo.ts" 2>/dev/null)
+bb2_behind=$(echo "$bb2_out" | jq -r '.behind_count')
+bb2_overlap=$(echo "$bb2_out" | jq -r '.overlap_count')
+bb2_files=$(echo "$bb2_out" | jq -r '.overlap_files | join(",")')
+bb2_compref=$(echo "$bb2_out" | jq -r '.comparison_ref_used')
+if [[ "$bb2_behind" == "3" && "$bb2_overlap" == "1" \
+    && "$bb2_files" == "src/foo.ts" && "$bb2_compref" == "main" ]]; then
+    pass "BB-2-overlap-passive: passive mode, behind=3 with one overlap (src/foo.ts)"
+else
+    fail "BB-2: expected behind=3 overlap=1 src/foo.ts main; got behind=$bb2_behind overlap=$bb2_overlap files='$bb2_files' compref=$bb2_compref"
+fi
+
+# BB-3: passive mode, behind=3 with no overlap. Branch touches
+# src/branchonly.ts; main touches a/b/c.ts. No intersection.
+bb_make_repo "$BB_DIR/bb3" 3 "src/branchonly.ts" \
+    "$(printf 'src/main_a.ts\nsrc/main_b.ts\nsrc/main_c.ts\n')"
+bb3_out=$(cd "$BB_DIR/bb3" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "src/branchonly.ts" 2>/dev/null)
+bb3_behind=$(echo "$bb3_out" | jq -r '.behind_count')
+bb3_overlap=$(echo "$bb3_out" | jq -r '.overlap_count')
+bb3_files_len=$(echo "$bb3_out" | jq '.overlap_files | length')
+if [[ "$bb3_behind" == "3" && "$bb3_overlap" == "0" && "$bb3_files_len" == "0" ]]; then
+    pass "BB-3-no-overlap-passive: passive mode, behind=3 with no overlap (overlap_files: [])"
+else
+    fail "BB-3: expected behind=3 overlap=0 [] ; got behind=$bb3_behind overlap=$bb3_overlap files_len=$bb3_files_len"
+fi
+
+# BB-4: passive mode, unresolvable ref → exit 1 + error-as-prompt.
+bb4_err="$BB_DIR/bb4.err"
+mkdir -p "$BB_DIR/bb4"
+(
+    cd "$BB_DIR/bb4"
+    git init --quiet
+    git config user.email s@e.com
+    git config user.name s
+    printf 'a\n' > f.txt && git add f.txt && git commit --quiet -m i
+)
+( cd "$BB_DIR/bb4" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref does-not-exist --reviewed-files "f.txt" \
+    >/dev/null 2>"$bb4_err" ) && bb4_rc=0 || bb4_rc=$?
+if [[ "$bb4_rc" == "1" ]] \
+    && grep -q "^ERROR: comparison ref 'does-not-exist' does not resolve" "$bb4_err" \
+    && grep -q "^Action: " "$bb4_err"; then
+    pass "BB-4-bad-ref-passive: passive mode, unresolvable ref → exit 1 + ERROR/Action stderr"
+else
+    fail "BB-4: expected rc=1 with ERROR/Action stderr; got rc=$bb4_rc" "$(cat "$bb4_err" 2>/dev/null)"
+fi
+
+# BB-5: passive mode, truncation cutoff. Branch touches 25 files; main
+# also modifies all 25 in 25 advancing commits. Expect overlap_count=25,
+# overlap_files length=11 (10 paths + "…+15 more" sentinel as element 11).
+bb5_branch_files=""
+bb5_main_files=""
+for i in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+    bb5_branch_files="${bb5_branch_files}src/over_${i}.ts"$'\n'
+    bb5_main_files="${bb5_main_files}src/over_${i}.ts"$'\n'
+done
+bb_make_repo "$BB_DIR/bb5" 25 "$bb5_branch_files" "$bb5_main_files"
+bb5_out=$(cd "$BB_DIR/bb5" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "$bb5_branch_files" 2>/dev/null)
+bb5_overlap=$(echo "$bb5_out" | jq -r '.overlap_count')
+bb5_files_len=$(echo "$bb5_out" | jq '.overlap_files | length')
+bb5_sentinel=$(echo "$bb5_out" | jq -r '.overlap_files[10] // ""')
+if [[ "$bb5_overlap" == "25" && "$bb5_files_len" == "11" \
+    && "$bb5_sentinel" == "…+15 more" ]]; then
+    pass "BB-5-truncate: 25-overlap → overlap_count=25, overlap_files length=11 (10 paths + '…+15 more' sentinel)"
+else
+    fail "BB-5: expected overlap=25 files_len=11 sentinel='…+15 more'; got overlap=$bb5_overlap files_len=$bb5_files_len sentinel='$bb5_sentinel'"
+fi
+
+# BB-6: active-fetch mode, fetch success. Set up an origin clone whose
+# main has commits the local repo's HEAD lacks; helper fetches, computes
+# behind>0, sets comparison_ref_used to "origin/main", warnings=[].
+mkdir -p "$BB_DIR/bb6/origin"
+(
+    cd "$BB_DIR/bb6/origin"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email s@e.com
+    git config user.name s
+    printf 'a\n' > f.txt && git add f.txt && git commit --quiet -m initial
+)
+git clone --quiet "$BB_DIR/bb6/origin" "$BB_DIR/bb6/repo" 2>/dev/null
+(
+    cd "$BB_DIR/bb6/repo"
+    git config user.email s@e.com
+    git config user.name s
+    git checkout --quiet -b feat
+    printf 'b\n' > feat_only.txt && git add feat_only.txt
+    git commit --quiet -m "feat: branch work"
+)
+# Now advance origin/main by 2 commits, both touching feat_only.txt
+# (so we get overlap=1 between behind-files and reviewed-files).
+(
+    cd "$BB_DIR/bb6/origin"
+    git checkout --quiet main
+    printf 'main-1\n' > feat_only.txt && git add feat_only.txt
+    git commit --quiet -m "main: bump"
+    printf 'main-2\n' > unrelated.txt && git add unrelated.txt
+    git commit --quiet -m "main: unrelated"
+)
+bb6_out=$(cd "$BB_DIR/bb6/repo" && "$TOOLS/branch-behind-base.sh" \
+    --fetch-base main --reviewed-files "feat_only.txt" 2>/dev/null)
+bb6_behind=$(echo "$bb6_out" | jq -r '.behind_count')
+bb6_overlap=$(echo "$bb6_out" | jq -r '.overlap_count')
+bb6_compref=$(echo "$bb6_out" | jq -r '.comparison_ref_used')
+bb6_warn_len=$(echo "$bb6_out" | jq '.warnings | length')
+if [[ "$bb6_behind" == "2" && "$bb6_overlap" == "1" \
+    && "$bb6_compref" == "origin/main" && "$bb6_warn_len" == "0" ]]; then
+    pass "BB-6-fetch-success: active-fetch mode, success → comparison_ref_used=origin/main, warnings=[]"
+else
+    fail "BB-6: expected behind=2 overlap=1 origin/main 0; got behind=$bb6_behind overlap=$bb6_overlap compref=$bb6_compref warn_len=$bb6_warn_len"
+fi
+
+# BB-7: active-fetch mode, no `origin` remote → fall back to local <base>,
+# warnings=["no_remote"]. behind/overlap computed against local main.
+mkdir -p "$BB_DIR/bb7"
+(
+    cd "$BB_DIR/bb7"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email s@e.com
+    git config user.name s
+    printf 'a\n' > f.txt && git add f.txt && git commit --quiet -m initial
+    # cut feat
+    git checkout --quiet -b feat
+    printf 'b\n' > feat.txt && git add feat.txt && git commit --quiet -m "feat work"
+    # advance main by one commit
+    git checkout --quiet main
+    printf 'a2\n' > f.txt && git add f.txt && git commit --quiet -m "main bump"
+    git checkout --quiet feat
+)
+bb7_out=$(cd "$BB_DIR/bb7" && "$TOOLS/branch-behind-base.sh" \
+    --fetch-base main --reviewed-files "feat.txt" 2>/dev/null)
+bb7_compref=$(echo "$bb7_out" | jq -r '.comparison_ref_used')
+bb7_warn_head=$(echo "$bb7_out" | jq -r '.warnings[0] // ""')
+bb7_behind=$(echo "$bb7_out" | jq -r '.behind_count')
+if [[ "$bb7_compref" == "main" && "$bb7_warn_head" == "no_remote" \
+    && "$bb7_behind" == "1" ]]; then
+    pass "BB-7-fetch-no-remote: active-fetch with no origin → falls back to local main, warnings=['no_remote']"
+else
+    fail "BB-7: expected main / no_remote / behind=1; got compref=$bb7_compref warn_head='$bb7_warn_head' behind=$bb7_behind"
+fi
+
+# BB-8: active-fetch mode, fetch failure (origin URL points at a
+# nonexistent path) → fall back to local <base>, warnings carries
+# `fetch_failed origin main rc=...`.
+mkdir -p "$BB_DIR/bb8"
+(
+    cd "$BB_DIR/bb8"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email s@e.com
+    git config user.name s
+    printf 'a\n' > f.txt && git add f.txt && git commit --quiet -m initial
+    git remote add origin "$BB_DIR/bb8/nonexistent_remote_xyz"
+    git checkout --quiet -b feat
+    printf 'b\n' > feat.txt && git add feat.txt && git commit --quiet -m "feat work"
+    git checkout --quiet main
+    printf 'a2\n' > f.txt && git add f.txt && git commit --quiet -m "main bump"
+    git checkout --quiet feat
+)
+bb8_out=$(cd "$BB_DIR/bb8" && "$TOOLS/branch-behind-base.sh" \
+    --fetch-base main --reviewed-files "feat.txt" 2>/dev/null)
+bb8_compref=$(echo "$bb8_out" | jq -r '.comparison_ref_used')
+bb8_warn_head=$(echo "$bb8_out" | jq -r '.warnings[0] // ""')
+bb8_behind=$(echo "$bb8_out" | jq -r '.behind_count')
+if [[ "$bb8_compref" == "main" && "$bb8_behind" == "1" ]] \
+    && echo "$bb8_warn_head" | grep -q '^fetch_failed origin main '; then
+    pass "BB-8-fetch-fail: active-fetch with unreachable origin → falls back to local main, fetch_failed warning buffered"
+else
+    fail "BB-8: expected main/behind=1/fetch_failed; got compref=$bb8_compref behind=$bb8_behind warn_head='$bb8_warn_head'"
+fi
+
+# BB-9: mode mutex usage error. Both flags → exit 64; neither → exit 64.
+bb9_err="$BB_DIR/bb9.err"
+mkdir -p "$BB_DIR/bb9_repo"
+(
+    cd "$BB_DIR/bb9_repo"
+    git init --quiet
+    git config user.email s@e.com
+    git config user.name s
+    printf 'a\n' > f.txt && git add f.txt && git commit --quiet -m i
+)
+( cd "$BB_DIR/bb9_repo" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --fetch-base main \
+    --reviewed-files "f.txt" \
+    >/dev/null 2>"$bb9_err" ) && bb9_both_rc=0 || bb9_both_rc=$?
+( cd "$BB_DIR/bb9_repo" && "$TOOLS/branch-behind-base.sh" \
+    --reviewed-files "f.txt" \
+    >/dev/null 2>>"$bb9_err" ) && bb9_neither_rc=0 || bb9_neither_rc=$?
+if [[ "$bb9_both_rc" == "64" && "$bb9_neither_rc" == "64" ]] \
+    && grep -q "ERROR: --comparison-ref and --fetch-base are mutually exclusive" "$bb9_err" \
+    && grep -q "ERROR: one of --comparison-ref or --fetch-base is required" "$bb9_err"; then
+    pass "BB-9-mutex: both / neither of --comparison-ref / --fetch-base → exit 64 + error-as-prompt"
+else
+    fail "BB-9: both_rc=$bb9_both_rc neither_rc=$bb9_neither_rc" "$(cat "$bb9_err" 2>/dev/null)"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
