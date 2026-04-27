@@ -5102,6 +5102,22 @@ else
     fail "BB-10: missing fragment wiring or allowed-tools grant" "pre=$(grep -c '0\.6a' "$bb10_pre") cmd=$(grep -c branch-behind-base "$bb10_cmd")"
 fi
 
+# BB-11: fragments/08-fix-loader.md has step 7.6a wired with the helper
+# (active-fetch mode) + warnings flush + resolution trace line, and
+# commands/fix.md grants the helper.
+bb11_frag="$REPO/fragments/08-fix-loader.md"
+bb11_cmd="$REPO/commands/fix.md"
+if grep -q '^### 7\.6a\. Branch-behind-base check' "$bb11_frag" \
+    && grep -q 'branch-behind-base.sh --fetch-base "\$base_branch" --reviewed-files @-' "$bb11_frag" \
+    && grep -q 'branch_behind_base behind=%s overlap=%s comparison_ref_used=%s' "$bb11_frag" \
+    && grep -q '.warnings\[\]?' "$bb11_frag" \
+    && grep -q 'comparison_ref_used' "$bb11_frag" \
+    && grep -q 'Bash(branch-behind-base.sh:\*)' "$bb11_cmd"; then
+    pass "BB-11-fix-warning: :fix 7.6a wires helper (active-fetch) + warnings/resolution trace + commands/fix.md grants helper"
+else
+    fail "BB-11: missing fragment wiring or allowed-tools grant" "frag=$(grep -c '7\.6a' "$bb11_frag") cmd=$(grep -c branch-behind-base "$bb11_cmd")"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

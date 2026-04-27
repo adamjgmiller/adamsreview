@@ -186,6 +186,82 @@ fi
 
 Capture `latest_known_sha`, `staleness_verdict`.
 
+### 7.6a. Branch-behind-base check
+
+Phase-7 invariant covering the rotated staleness axis (HEAD vs
+`$comparison_ref`) — companion to step 7.6's file-overlap staleness
+(HEAD vs `$latest_known_sha`). At fix-time we want the freshest signal
+because `$base_branch` may have moved since `:review` ran, so this step
+uses `branch-behind-base.sh`'s **active-fetch mode** — the helper runs
+`git fetch origin <base>` (30s soft timeout, falls back to local on
+no-remote / fetch failure) rather than relying on the artifact's
+review-time snapshot. Resolution is exposed via `comparison_ref_used`
++ `warnings[]` so a fetch-fallback is visible in the prompt rather than
+silently misleading.
+
+```bash
+base_branch=$(artifact-read.sh \
+    --path "$artifact_path" --filter '.base_branch')
+reviewed_files_all=$(artifact-read.sh \
+    --path "$artifact_path" --filter '.reviewed_files_all[]?')
+
+bb_json=$(printf '%s\n' "$reviewed_files_all" \
+  | branch-behind-base.sh --fetch-base "$base_branch" --reviewed-files @-)
+branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
+branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
+branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
+comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
+
+# Flush any active-fetch warnings (no_remote / fetch_failed) to trace.md
+# so the resolution path is auditable.
+while IFS= read -r w; do
+    [[ -n "$w" ]] && printf '[%s] branch_behind_base %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$w" >> "$trace_log_path"
+done < <(echo "$bb_json" | jq -r '.warnings[]?')
+
+# Always log the resolution line — independent of behind-count — so the
+# trace makes the active-fetch resolution explicit (origin/<base> on
+# success, <base> on fallback).
+printf '[%s] branch_behind_base behind=%s overlap=%s comparison_ref_used=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_behind_count" "$branch_overlap_count" \
+    "$comparison_ref_used" >> "$trace_log_path"
+```
+
+If `branch_behind_count == 0`, skip the rest of this step.
+
+If `branch_behind_count > 0`, `AskUserQuestion` with three options.
+Reference `$comparison_ref_used` in the prompt body so a fetch-fallback
+("vs `main` (fetch failed; comparing against local)") doesn't pretend
+we checked the remote. Prompt body adapts to overlap exactly as in
+`:review` 0.6a:
+
+- **`branch_overlap_count > 0`:** Branch behind by N commits vs
+  `$comparison_ref_used`, of which `$branch_overlap_count` modified
+  files in this PR (`$branch_overlap_files_csv`). The fix run will
+  edit code that may merge-conflict with `$base_branch`. Recommend
+  merging `$base_branch` first.
+- **`branch_overlap_count == 0`:** Branch behind by N commits vs
+  `$comparison_ref_used`. None of those commits touched files this
+  fix run will edit, but `$base_branch` may have shifted shared
+  context (renames, API changes, dep bumps) that the fix planner
+  cannot detect from the original review's blast radius. Merging
+  `$base_branch` first is conservative.
+
+Options:
+
+- **(a) Stop — I'll merge `$base_branch` first** (recommended). Pop
+  stash if taken (so the user's working tree is restored), then exit
+  0 with: `Stopping. Run \`git merge $base_branch\` on \`$head_branch\`,
+  then re-run /adamsreview:fix.` Exit happens **before** step 7.8 —
+  no `run_id`, no `input_sha`, no `fix_attempts` row, no commit, no push.
+- **(b) Proceed.** Append a buffered trace line:
+  ```bash
+  printf '[%s] branch_behind_base proceeded\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
+  ```
+  Continue to step 7.7.
+- **(c) Abort.** Pop stash if taken, then exit 0 with `Aborted.`.
+
 ### 7.7. PR eligibility recheck
 
 Load `mode` and `pr_number` from the artifact:
