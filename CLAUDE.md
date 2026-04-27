@@ -24,7 +24,9 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
 /adamsreview:review [--ensemble]
 ├── Phase 0 — Pre-flight (branch/PR detect, base-branch freshness, dirty-tree,
 │              push, prior-artifact prompt, record review_started_at,
-│              trivial-diff detection, CLAUDE.md path lister)
+│              trivial-diff detection, CLAUDE.md path lister,
+│              branch-behind-base gate — passive mode, since 0.2a's
+│              freshness-gate already fetched)
 ├── Phase 1    ─┐ Detection (6 parallel lens agents, 7 under --ensemble — L7
 │               │   is a holistic Opus safety net; origin cross-check corrects
 │               │   blame-traceable verdicts; under --ensemble also invokes the
@@ -48,7 +50,9 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
                render, PR comment POST)
 
 /adamsreview:fix [threshold] [--granular-commits]
-├── Phase 7 — Load artifact; leftover-attempted abort; clean-tree gate; staleness check
+├── Phase 7 — Load artifact; leftover-attempted abort; clean-tree gate; staleness check;
+│              branch-behind-base gate (active-fetch — fetches origin/$base_branch
+│              fresh, falls back to local on no_remote / fetch failure)
 ├── Phase 8 — Per-fix-group agents edit working tree (no git ops);
 │              each group reports files_modified + files_created
 └── Phase 9 — Post-fix Opus review pre-commit; aggregate outcomes per group;
@@ -63,7 +67,9 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
                fix_group_id preserved per-finding in fix_attempts)
 
 /adamsreview:add [<paste...>] [--file path --line N --claim "..."] [--impact <type>] [--no-dedup]
-└── Locate artifact (latest.txt) → leftover-attempted gate → build candidates
+└── Locate artifact (latest.txt) → leftover-attempted gate →
+    branch-behind-base gate (active-fetch, same shape as :fix 7.6a) →
+    build candidates
     (paste-normalizer Sonnet | structured one-shot | mixed) → dedup against
     existing findings (Sonnet, one-direction) → assign IDs continuing past
     max existing F-id (assign-finding-ids.sh --start-from) → --add-finding loop →
@@ -386,6 +392,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 | `log-phase.sh` | Bash | Appends `trace.md` + `phases.jsonl`. Every phase fragment calls this. |
 | `log-tokens.sh` | Bash | Appends `tokens.jsonl`. Every sub-agent dispatch. |
 | `freshness-gate.sh` | Bash | Phase 0.2a base-branch freshness reconciliation. Detects remote, fetches (30s soft timeout), computes behind_count; emits JSON `{comparison_ref, base_freshness, remote_sha, behind_count, preflight_warnings[]}` with `base_freshness ∈ {fresh, fast_forwarded, used_remote_ref, proceeded_stale, no_remote, no_fetch, pending_user_gate}`. `pending_user_gate` signals the orchestrator to dispatch `AskUserQuestion` and re-invoke with `--after-choice <a|b|c>`; the helper then applies the chosen side-effect (fast-forward / used_remote_ref / proceeded_stale) and re-emits terminal JSON. Non-FF on (a) re-emits pending with `ff_available: false` so the orchestrator re-asks with only (b)/(c)/(d). |
+| `branch-behind-base.sh` | Bash | Preflight check for the rotated staleness axis (HEAD vs `$comparison_ref`) — companion to `freshness-gate.sh` (which covers local_base vs remote_base). Two mutually-exclusive modes: passive (`--comparison-ref <ref>`, no fetch — used by `:review` 0.6a since 0.2a already fetched), and active-fetch (`--fetch-base <name>`, runs `git fetch origin <base>` with the same 30s soft timeout pattern as `freshness-gate.sh`, falls back to local `<base>` on no_remote / fetch failure — used by `:fix` 7.6a and `:add` 3a so the freshest signal is checked at fix/add time). Reads the staleness envelope as `--reviewed-files @-` (stdin) or inline. Emits JSON `{behind_count, overlap_count, overlap_files[], comparison_ref_used, warnings[]}` with `overlap_files` truncated to the first 10 paths plus a `"…+N more"` sentinel. Behind = 0 short-circuits without computing the diff. The orchestrator surfaces the result via `AskUserQuestion` (Stop / Proceed / Abort) when behind > 0, with the prompt body adapting to whether the file-overlap is empty (latent-baseline risk) or non-empty (phantom-deletion risk + listed paths). |
 | `tally-subagent-tokens.sh` | Bash | Rolls `tokens.jsonl` into `subagent_tokens` on the artifact. Pure readback, idempotent. Called at Phase 6 finalize and before each lifecycle command's final re-render so the published total stays cumulative across review → fix / add / walkthrough. |
 | `orchestrator-tokens.sh` | Bash | Rolls Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/` into `orchestrator_tokens`. Complements `tally-subagent-tokens.sh` by capturing the main-session per-turn spend that `subagent_tokens` deliberately excludes (§11). **Opt-in via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`** (default skip — the transcript scan trips the macOS Sequoia/Tahoe "access data from other apps" prompt because Claude Code marks transcripts with the `com.apple.provenance` xattr; opt-out exits 0 with a `skipped` stdout line and leaves the artifact untouched, preserving any prior opted-in value). Slug algorithm is `tr '/.' '-'` (both chars map to `-`). `--since` filters by assistant-line timestamp; when opted in, v1 accepts soft over-count modes from unrelated same-cwd sessions or intermission chat between lifecycle commands. |
 | `group-fixes.py` | Python | Phase 8 union-find over `files_planned` across eligible findings. Emits `[{id, finding_ids, files_planned}]`. |
