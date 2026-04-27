@@ -5496,16 +5496,16 @@ else
     fail "BB-16: expected behind=3 overlap=1 first=src/foo.ts; got behind=$bb16_behind overlap=$bb16_overlap first='$bb16_first'"
 fi
 
-# BB-17: orphan-branch tolerance. After the git log → git diff HEAD...ref
-# switch (BB-15 locks in the merge-commit win), `git diff HEAD...ref`
-# fatals with rc=128 on branches with no shared history (orphan,
-# unrelated). The old git-log form silently returned empty. Helper must
-# continue tolerating this via the merge-base pre-check around the
-# git diff. behind_count itself is meaningful on orphan histories (main
-# has commits HEAD lacks regardless of shared ancestry), so we don't
-# constrain it; we DO constrain that the helper exits 0, that
-# overlap_count=0 (no merge-base → empty behind set → no overlap), and
-# that no `fatal:` leaks to stderr.
+# BB-17: orphan-branch coherence. On a branch with no shared history,
+# `git rev-list --count HEAD..ref` returns the entire `ref` history (a
+# meaningless integer for the "branch fell behind base" semantics) and
+# `git diff HEAD...ref` fatals with rc=128. The helper short-circuits on
+# missing merge-base by setting behind_count=0 and appending a
+# `no_merge_base` warning, so the integration sites (`:review` 0.6a /
+# `:fix` 7.6a / `:add` 3a) skip the AskUserQuestion entirely (the
+# `behind_count == 0` short-circuit). We assert: rc=0, behind=0,
+# overlap=0, no fatal leaked, and the warning is present so an operator
+# inspecting trace.md can see why the gate no-op'd.
 mkdir -p "$BB_DIR/bb17"
 (
     cd "$BB_DIR/bb17"
@@ -5523,15 +5523,76 @@ bb17_err=$(mktemp)
 bb17_out=$(cd "$BB_DIR/bb17" && "$TOOLS/branch-behind-base.sh" \
     --comparison-ref main --reviewed-files "b.txt" 2>"$bb17_err")
 bb17_rc=$?
+bb17_behind=$(echo "$bb17_out" | jq -r '.behind_count')
 bb17_overlap=$(echo "$bb17_out" | jq -r '.overlap_count')
 bb17_fatal_in_stderr=$(grep -c 'fatal:' "$bb17_err" 2>/dev/null)
-if [[ "$bb17_rc" == "0" && "$bb17_overlap" == "0" \
-    && "$bb17_fatal_in_stderr" == "0" ]]; then
-    pass "BB-17-orphan: orphan branch (no merge-base) → helper exits 0 with overlap=0, no fatal leaked to stderr"
+bb17_has_no_mb=$(echo "$bb17_out" | jq -r '[.warnings[]? | select(test("^no_merge_base"))] | length')
+if [[ "$bb17_rc" == "0" && "$bb17_behind" == "0" && "$bb17_overlap" == "0" \
+    && "$bb17_fatal_in_stderr" == "0" && "$bb17_has_no_mb" == "1" ]]; then
+    pass "BB-17-orphan: orphan branch (no merge-base) → helper exits 0 with behind=0 overlap=0 + no_merge_base warning, no fatal leaked"
 else
-    fail "BB-17: expected rc=0 overlap=0 fatal=0; got rc=$bb17_rc overlap=$bb17_overlap fatal=$bb17_fatal_in_stderr"
+    fail "BB-17: expected rc=0 behind=0 overlap=0 fatal=0 no_mb=1; got rc=$bb17_rc behind=$bb17_behind overlap=$bb17_overlap fatal=$bb17_fatal_in_stderr no_mb=$bb17_has_no_mb"
 fi
 rm -f "$bb17_err"
+
+# BB-18: artifact-driven integration. The :fix 7.6a / :add 3a sites read
+# `base_branch` and `reviewed_files_all` out of `artifact.json` before
+# invoking the helper. Earlier drafts used `artifact-read.sh --filter`
+# which runs jq WITHOUT `-r`, so the captured strings included literal
+# JSON quotes (`"main"`, `"src/foo.ts"`) and the helper rejected the ref
+# / produced overlap_count=0. BB-11/BB-12 only grep the prose and would
+# happily pass on that broken data path. BB-18 closes the gap by
+# executing the production extraction against a real artifact + repo
+# fixture and asserting behind/overlap match what BB-2 produces directly.
+bb_make_repo "$BB_DIR/bb18" 3 "src/foo.ts" \
+    "src/foo.ts"$'\n'"src/main_only.ts"$'\n'"src/other.ts"
+bb18_artifact=$(mktemp)
+cat > "$bb18_artifact" <<'EOF'
+{
+  "base_branch": "main",
+  "reviewed_files_all": ["src/foo.ts"]
+}
+EOF
+bb18_out=$(cd "$BB_DIR/bb18" && {
+    base_branch=$(jq -r '.base_branch' "$bb18_artifact")
+    reviewed_files_all=$(jq -r '.reviewed_files_all[]?' "$bb18_artifact")
+    printf '%s\n' "$reviewed_files_all" \
+      | "$TOOLS/branch-behind-base.sh" \
+          --comparison-ref "$base_branch" --reviewed-files @- 2>/dev/null
+})
+bb18_behind=$(echo "$bb18_out" | jq -r '.behind_count')
+bb18_overlap=$(echo "$bb18_out" | jq -r '.overlap_count')
+bb18_first=$(echo "$bb18_out" | jq -r '.overlap_files[0] // ""')
+bb18_compref=$(echo "$bb18_out" | jq -r '.comparison_ref_used')
+if [[ "$bb18_behind" == "3" && "$bb18_overlap" == "1" \
+    && "$bb18_first" == "src/foo.ts" && "$bb18_compref" == "main" ]]; then
+    pass "BB-18-artifact-extract: jq -r reads from artifact.json yield un-quoted base_branch + reviewed_files_all (catches the JSON-quoted-string regression)"
+else
+    fail "BB-18: expected behind=3 overlap=1 first=src/foo.ts compref=main; got behind=$bb18_behind overlap=$bb18_overlap first='$bb18_first' compref='$bb18_compref'"
+fi
+rm -f "$bb18_artifact"
+
+# BB-19: empty `--reviewed-files @-` stdin must be rejected. The inline
+# form (`--reviewed-files ""`) is already rejected at line 148; the
+# stdin form (@- with empty pipe) used to silently produce
+# overlap_count=0 because `cat || true` happily returned empty. Without
+# this guard, an integration mistake (e.g., the JSON-quoting bug from
+# BB-18 if the extraction yielded a stream of nothing) would mask a
+# behind branch as overlap=0. Assert the helper now exits 64 with
+# error-as-prompt instead of silently completing.
+bb19_err=$(mktemp)
+bb_make_repo "$BB_DIR/bb19" 2 "src/foo.ts" "src/foo.ts"$'\n'"src/bar.ts"
+bb19_rc=0
+(cd "$BB_DIR/bb19" && printf '' | "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files @- > /dev/null 2>"$bb19_err") \
+    || bb19_rc=$?
+if [[ "$bb19_rc" == "64" ]] \
+    && grep -q "ERROR: --reviewed-files @- received empty stdin" "$bb19_err"; then
+    pass "BB-19-empty-stdin: empty --reviewed-files @- → exit 64 + targeted ERROR stderr (prevents silent overlap=0 from broken upstream extraction)"
+else
+    fail "BB-19: expected rc=64 with empty-stdin ERROR; got rc=$bb19_rc" "$(cat "$bb19_err" 2>/dev/null)"
+fi
+rm -f "$bb19_err"
 
 echo
 echo "smoke: PASS ($N assertions)"

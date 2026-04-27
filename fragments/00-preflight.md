@@ -209,20 +209,30 @@ Passive mode — `freshness-gate.sh` at 0.2a already fetched, so no second
 fetch. Helper just computes behind / overlap.
 
 ```bash
-bb_json=$(printf '%s\n' "$reviewed_files_all" \
-  | branch-behind-base.sh --comparison-ref "$comparison_ref" --reviewed-files @-)
-branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
-branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
-branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
-comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
+# Run the helper. Fail-open on any non-zero exit — the gate is a
+# warning surface, not a precondition, and a helper bug should never
+# block a review. The buffered trace line "branch_behind_base
+# helper_failed rc=N" is the audit breadcrumb; the helper's stderr
+# goes to the user terminal.
+if bb_json=$(printf '%s\n' "$reviewed_files_all" \
+    | branch-behind-base.sh --comparison-ref "$comparison_ref" --reviewed-files @-); then
+    branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
+    branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
+    branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
+    comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
 
-# Always buffer the resolution line — independent of behind-count — so the
-# 0.15 flush makes the gate's outcome explicit in trace.md, matching the
-# unconditional resolution trace in :fix 7.6a / :add 3a. An operator
-# correlating a :review at offline-time (passive, local <base>) with a
-# later :fix (active-fetch, origin/<base>) can read both lines and see
-# why behind_count differs.
-preflight_warnings+=("branch_behind_base behind=$branch_behind_count overlap=$branch_overlap_count comparison_ref_used=$comparison_ref_used")
+    # Always buffer the resolution line — independent of behind-count — so the
+    # 0.15 flush makes the gate's outcome explicit in trace.md, matching the
+    # unconditional resolution trace in :fix 7.6a / :add 3a. An operator
+    # correlating a :review at offline-time (passive, local <base>) with a
+    # later :fix (active-fetch, origin/<base>) can read both lines and see
+    # why behind_count differs.
+    preflight_warnings+=("branch_behind_base behind=$branch_behind_count overlap=$branch_overlap_count comparison_ref_used=$comparison_ref_used")
+else
+    bb_rc=$?
+    preflight_warnings+=("branch_behind_base helper_failed rc=$bb_rc — fail-open, gate skipped")
+    branch_behind_count=0
+fi
 ```
 
 If `branch_behind_count == 0`, skip the rest of this step.

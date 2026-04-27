@@ -225,47 +225,65 @@ artifact's review-time snapshot. Falls back to local `<base>` on
 no-remote / fetch failure (logged via `warnings[]` + `comparison_ref_used`).
 
 ```bash
-base_branch=$(artifact-read.sh \
-    --path "$artifact_path" --filter '.base_branch')
-reviewed_files_all=$(artifact-read.sh \
-    --path "$artifact_path" --filter '.reviewed_files_all[]?')
+base_branch=$(jq -r '.base_branch' "$artifact_path")
+reviewed_files_all=$(jq -r '.reviewed_files_all[]?' "$artifact_path")
 
-bb_json=$(printf '%s\n' "$reviewed_files_all" \
-  | branch-behind-base.sh --fetch-base "$base_branch" --reviewed-files @-)
-branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
-branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
-branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
-comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
+# Run the helper. Fail-open on any non-zero exit (same shape as
+# :fix 7.6a) — the gate is a warning surface, not a precondition.
+if bb_json=$(printf '%s\n' "$reviewed_files_all" \
+    | branch-behind-base.sh --fetch-base "$base_branch" --reviewed-files @-); then
+    branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
+    branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
+    branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
+    comparison_ref_used=$(echo "$bb_json" | jq -r '.comparison_ref_used')
 
-# Flush any active-fetch warnings (no_remote / fetch_failed) to trace.md.
-while IFS= read -r w; do
-    [[ -n "$w" ]] && printf '[%s] branch_behind_base %s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$w" >> "$trace_log_path"
-done < <(echo "$bb_json" | jq -r '.warnings[]?')
+    # Flush any active-fetch warnings (no_remote / fetch_failed / no_merge_base) to trace.md.
+    while IFS= read -r w; do
+        [[ -n "$w" ]] && printf '[%s] branch_behind_base %s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$w" >> "$trace_log_path"
+    done < <(echo "$bb_json" | jq -r '.warnings[]?')
 
-# Always log the resolution line — independent of behind-count — so the
-# trace makes the active-fetch resolution explicit.
-printf '[%s] branch_behind_base behind=%s overlap=%s comparison_ref_used=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_behind_count" "$branch_overlap_count" \
-    "$comparison_ref_used" >> "$trace_log_path"
+    # Always log the resolution line — independent of behind-count — so the
+    # trace makes the active-fetch resolution explicit.
+    printf '[%s] branch_behind_base behind=%s overlap=%s comparison_ref_used=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_behind_count" "$branch_overlap_count" \
+        "$comparison_ref_used" >> "$trace_log_path"
+else
+    bb_rc=$?
+    printf '[%s] branch_behind_base helper_failed rc=%s — fail-open, gate skipped\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$bb_rc" >> "$trace_log_path"
+    branch_behind_count=0
+fi
 ```
 
-If `branch_behind_count == 0`, skip the rest of this step.
+If `branch_behind_count == 0`, skip the rest of this step (covers both
+the genuinely-not-behind case and the fail-open path above).
 
 If `branch_behind_count > 0`, `AskUserQuestion` with three options.
-Reference `$comparison_ref_used` in the prompt body so a fetch-fallback
-("vs `main` (fetch failed; comparing against local)") doesn't pretend
-we checked the remote.
+Detect a fetch-fallback by comparing `$comparison_ref_used` to
+`$base_branch`: when they're equal, the helper fell back to the local
+ref (no_remote or fetch_failed) and the prompt body must say so —
+otherwise `vs main` looks identical to a successful fetch when origin
+matches:
 
-- **`branch_overlap_count > 0`:** Branch behind by N commits vs
-  `$comparison_ref_used`, of which `$branch_overlap_count` modified
-  files in this PR (`$branch_overlap_files_csv`). Recommend merging
-  `$base_branch` first.
-- **`branch_overlap_count == 0`:** Branch behind by N commits vs
-  `$comparison_ref_used`. None of those commits touched files in this
-  PR — but `$base_branch` may have shifted shared context (renames,
-  API changes, dep bumps) that the dedup / validation passes won't
-  see from the diff alone. Merging `$base_branch` first is conservative.
+```bash
+if [[ "$comparison_ref_used" == "$base_branch" ]]; then
+    fetch_fallback_note=' (fetch failed or no remote — comparing against local)'
+else
+    fetch_fallback_note=''
+fi
+```
+
+- **`branch_overlap_count > 0`:** Branch behind by `$branch_behind_count`
+  commits vs `$comparison_ref_used`$fetch_fallback_note, of which
+  `$branch_overlap_count` modified files in this PR
+  (`$branch_overlap_files_csv`). Recommend merging `$base_branch` first.
+- **`branch_overlap_count == 0`:** Branch behind by `$branch_behind_count`
+  commits vs `$comparison_ref_used`$fetch_fallback_note. None of those
+  commits touched files in this PR — but `$base_branch` may have shifted
+  shared context (renames, API changes, dep bumps) that the dedup /
+  validation passes won't see from the diff alone. Merging `$base_branch`
+  first is conservative.
 
 Options:
 
@@ -274,18 +292,30 @@ normalization, no `--add-finding` invocations, no re-render, no
 re-publish. The only on-disk mutation is the `trace.md` resolution /
 warnings flush above (audit trail; written before the gate so an
 operator inspecting the trace later can see what `branch-behind-base.sh`
-returned even on the abort paths).
+returned even on the abort paths). (a) and (c) each append a trace line
+so the post-condition is unambiguous (the resolution line always runs;
+without these the trace can't distinguish "user chose stop" from "user
+chose proceed and crashed before the proceeded line").
 
-- **(a) Stop — I'll merge `$base_branch` first** (recommended). Exit 0
-  with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on
-  \`$head_branch\`, then re-run /adamsreview:add.`
+- **(a) Stop — I'll merge `$base_branch` first** (recommended). Append
+  the trace line, then exit 0 with: `Stopping. Run \`git merge
+  $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run
+  /adamsreview:add.`
+  ```bash
+  printf '[%s] branch_behind_base stopped\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
+  ```
 - **(b) Proceed.** Append a buffered trace line:
   ```bash
   printf '[%s] branch_behind_base proceeded\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
   ```
   Continue to step 4.
-- **(c) Abort.** Exit 0 with `Aborted.`.
+- **(c) Abort.** Append the trace line, then exit 0 with `Aborted.`.
+  ```bash
+  printf '[%s] branch_behind_base aborted\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
+  ```
 
 ### 4. Build candidate array
 

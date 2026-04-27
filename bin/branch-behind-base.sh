@@ -151,6 +151,13 @@ fi
 
 if [[ "$REVIEWED_FILES_FROM_STDIN" == "1" ]]; then
     REVIEWED_FILES_RAW="$(cat || true)"
+    # Mirror the inline empty-rejection above: empty stdin is also a
+    # caller bug (a real review's reviewed_files_all is non-empty by
+    # construction). Without this guard, an integration mistake silently
+    # returns overlap_count=0 for a branch that's actually behind.
+    if ! printf '%s\n' "$REVIEWED_FILES_RAW" | grep -q .; then
+        die_usage "--reviewed-files @- received empty stdin (use @- for stdin, or pass a newline-separated string)"
+    fi
 fi
 
 # Sanity-check we're inside a git working tree. Callers (Phase 0/7/3a)
@@ -257,6 +264,24 @@ if ! git rev-parse --verify "${COMPARISON_REF_USED}^{commit}" >/dev/null 2>&1; t
     exit 1
 fi
 
+# ---- orphan / unrelated history short-circuit --------------------------
+
+# On a branch with no shared history with $COMPARISON_REF_USED (orphan or
+# unrelated tree), `git rev-list --count HEAD..ref` would silently return
+# the entire history of `ref` — an integer that's technically correct
+# ("commits reachable from ref but not HEAD") but semantically meaningless
+# in the "branch has fallen behind base" sense the gate is checking. The
+# downstream AskUserQuestion would then prompt the user to "merge
+# $base_branch first," which is a non-trivial cross-history merge they
+# almost certainly don't want. Resolve to a single coherent state: no
+# merge-base ⇒ no behind-base relationship ⇒ behind_count=0 + warning.
+# Callers can grep for the warning if they want to surface it.
+if ! git merge-base HEAD "$COMPARISON_REF_USED" >/dev/null 2>&1; then
+    append_warning "no_merge_base HEAD vs $COMPARISON_REF_USED — orphan or unrelated history"
+    emit_terminal "0" "0" "" "$COMPARISON_REF_USED" "$WARNINGS"
+    exit 0
+fi
+
 # ---- compute behind_count ----------------------------------------------
 
 # Two-dot `HEAD..ref` for the count (commits reachable from ref but not
@@ -287,17 +312,13 @@ reviewed_files_tmp=$(mktemp -t adams-bbb-reviewed.XXXXXX)
 #     (which `git log HEAD..ref --name-only` silently drops by default,
 #     because git log skips per-file output for merge commits without
 #     -m / --first-parent / -c).
-# Pre-check merge-base: `git diff A...B` requires shared history and
-# fatals with rc=128 on orphan / unrelated branches. behind_count above
-# already tolerates the case via `|| echo 0`; mirror that here so the
-# whole helper doesn't die on an orphan target. Empty behind set →
-# overlap=0, gate passes through.
-if git merge-base HEAD "$COMPARISON_REF_USED" >/dev/null 2>&1; then
-    git diff --name-only "HEAD...$COMPARISON_REF_USED" \
-        | sort -u > "$behind_files_tmp"
-else
-    : > "$behind_files_tmp"
-fi
+# The orphan / unrelated-history short-circuit at the top of this script
+# already handled the no-merge-base case before we got here, so this
+# diff is guaranteed to have shared history. The `|| true` below is
+# belt-and-suspenders against any other diff failure mode (corrupted
+# pack, etc.).
+git diff --name-only "HEAD...$COMPARISON_REF_USED" 2>/dev/null \
+    | sort -u > "$behind_files_tmp" || true
 printf '%s\n' "$REVIEWED_FILES_RAW" | sed '/^$/d' | sort -u > "$reviewed_files_tmp"
 
 overlap_full=$(comm -12 "$behind_files_tmp" "$reviewed_files_tmp" || true)

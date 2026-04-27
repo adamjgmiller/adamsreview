@@ -111,10 +111,19 @@ Mutual-exclusion enforcement: passing both `--comparison-ref` and `--fetch-base`
 4. Validate `comparison_ref_used` resolves: `git rev-parse --verify "$comparison_ref_used^{commit}"`. On failure, exit 1 with error-as-prompt.
 5. `behind_count=$(git rev-list --count "HEAD..$comparison_ref_used")`.
 6. **Short-circuit on behind=0**: emit zeros + `comparison_ref_used` + `warnings`, exit 0. No diff computed.
-7. Otherwise compute the file-set overlap (Bash 3.2-safe):
+7. Otherwise compute the file-set overlap (Bash 3.2-safe). Note the
+   asymmetry: `behind_count` uses the 2-dot form `HEAD..ref` (commits
+   reachable from `ref` but not `HEAD`), while the file overlap uses the
+   3-dot form `git diff HEAD...ref` (symmetric difference vs. merge
+   base) — needed so that file additions which only enter via merge
+   commits surface in the overlap (BB-15 locks this in). On orphan
+   histories (no merge-base) the 3-dot diff fatals with rc=128, so the
+   helper pre-checks `git merge-base HEAD ref` and short-circuits the
+   overlap computation when there is no shared ancestor (BB-17 covers
+   this).
    ```bash
    behind_files_tmp=$(mktemp); reviewed_files_tmp=$(mktemp)
-   git diff --name-only "HEAD..$comparison_ref_used" | sort -u > "$behind_files_tmp"
+   git diff --name-only "HEAD...$comparison_ref_used" | sort -u > "$behind_files_tmp"
    printf '%s\n' "$REVIEWED_FILES" | sort -u > "$reviewed_files_tmp"
    overlap=$(comm -12 "$behind_files_tmp" "$reviewed_files_tmp")
    rm -f "$behind_files_tmp" "$reviewed_files_tmp"
