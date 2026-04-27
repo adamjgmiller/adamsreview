@@ -223,7 +223,7 @@ fall back to local on fetch failure or no-remote.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
-git fetch origin "$base_branch" --quiet 2>/dev/null || true
+GIT_TERMINAL_PROMPT=0 git fetch origin "$base_branch" --quiet 2>/dev/null || true
 behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
        || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
        || echo 0)
@@ -865,7 +865,7 @@ log-phase.sh \
 Re-tally first so the rendered report (and the downstream PR comment
 update in step 9) reflects this run's new sub-agent + orchestrator
 spend on top of the prior `/adamsreview:review` baseline. The paste
-normalizer (§3a) and any Phase-4 re-validators that ran during this
+normalizer (§4b) and any Phase-4 re-validators that ran during this
 `/adamsreview:add` invocation already logged their sub-agent usage to
 `tokens.jsonl`; the orchestrator transcript on disk captured every
 main-session turn. Both helpers are pure readbacks:

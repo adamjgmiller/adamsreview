@@ -194,7 +194,7 @@ fall back to local on fetch failure or no-remote.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
-git fetch origin "$base_branch" --quiet 2>/dev/null || true
+GIT_TERMINAL_PROMPT=0 git fetch origin "$base_branch" --quiet 2>/dev/null || true
 behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
        || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
        || echo 0)

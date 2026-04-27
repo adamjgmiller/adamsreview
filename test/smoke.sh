@@ -5072,16 +5072,22 @@ else
 fi
 
 BB_ADD="$REPO/commands/add.md"
+# `AskUserQuestion` appears twice — once in the frontmatter allowed-tools
+# (granting permission, required since :add previously had no interactive
+# surface) and once in §3a's prompt prose. Two greps so removing either
+# fails BB-3 — the bare `grep -q 'AskUserQuestion'` would pass on the
+# frontmatter alone even if the §3a invocation prose was deleted.
 if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
    && grep -qF 'git fetch origin "$base_branch" --quiet' "$BB_ADD" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_ADD" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_ADD" \
    && grep -qF '|| echo 0' "$BB_ADD" \
-   && grep -q 'AskUserQuestion' "$BB_ADD" \
+   && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
+   && grep -qF '`AskUserQuestion` once:' "$BB_ADD" \
    && grep -qF 'branch_behind_base proceeded behind=' "$BB_ADD"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + two-step rev-list + AskUserQuestion grant + Proceed trace)"
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + two-step rev-list + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
 else
-    fail "BB-3: §3a header/fetch/two-step rev-list/AskUserQuestion grant/Proceed-trace missing in $BB_ADD"
+    fail "BB-3: §3a header/fetch/two-step rev-list/AskUserQuestion grant or §3a invocation/Proceed-trace missing in $BB_ADD"
 fi
 
 echo
