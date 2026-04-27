@@ -300,25 +300,37 @@ for (( i = 0; i < N; i++ )); do
                         action="respected"
                         reason="blame-confirms-preexisting"
                     else
-                        # Lens said introduced_by_pr; blame is fully
-                        # ancestor of comparison_ref. Two possibilities:
-                        # (a) the lens cited the wrong line range (the
-                        # claim is real, the cited lines aren't); (b)
-                        # the cited lines are pre-existing but the bug
-                        # is "exposure" — new code elsewhere in the PR
-                        # made these old lines wrong (stale diagram, doc
-                        # bullet contradicted by a new fallback, function
-                        # missing a field a new caller needs). In either
-                        # case do NOT promote to pre_existing/high — that
-                        # would force-route via §13.1 to the report-only
-                        # footnote and skip Phase 4 validation. Downgrade
-                        # to pre_existing/medium so §13.1 does not fire
-                        # and the finding still flows through Phase 3 +
-                        # Phase 4 like any other candidate.
+                        # Lens did NOT assert pre_existing/high; blame is
+                        # fully ancestor of comparison_ref. The branch
+                        # covers every non-(pre_existing && high) lens
+                        # output: introduced_by_pr at any confidence,
+                        # pre_existing/medium, pre_existing/low, or
+                        # unknown. Two failure modes motivate the
+                        # downgrade: (a) the lens cited the wrong line
+                        # range (the claim is real, the cited lines
+                        # aren't); (b) the cited lines are pre-existing
+                        # but the bug is "exposure" — new code elsewhere
+                        # in the PR made these old lines wrong (stale
+                        # diagram, doc bullet contradicted by a new
+                        # fallback, function missing a field a new caller
+                        # needs). In either case do NOT promote to
+                        # pre_existing/high — that would force-route via
+                        # §13.1 to the report-only footnote and skip
+                        # Phase 4 validation. Downgrade to
+                        # pre_existing/medium so §13.1 does not fire and
+                        # the finding still flows through Phase 3 +
+                        # Phase 4 like any other candidate. The reason
+                        # string distinguishes the two main lens-output
+                        # cases so a debugger can tell which signal
+                        # triggered the branch.
                         new_origin="pre_existing"
                         new_conf="medium"
                         action="downgraded"
-                        reason="lens-introduced-by-pr-but-all-blame-ancestor"
+                        if [[ "$lens_origin" == "introduced_by_pr" ]]; then
+                            reason="lens-introduced-by-pr-but-all-blame-ancestor"
+                        else
+                            reason="lens-not-preexisting-high-but-all-blame-ancestor"
+                        fi
                     fi
                 else
                     # At least one SHA is in comparison_ref..HEAD.
