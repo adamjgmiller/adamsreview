@@ -5496,6 +5496,43 @@ else
     fail "BB-16: expected behind=3 overlap=1 first=src/foo.ts; got behind=$bb16_behind overlap=$bb16_overlap first='$bb16_first'"
 fi
 
+# BB-17: orphan-branch tolerance. After the git log → git diff HEAD...ref
+# switch (BB-15 locks in the merge-commit win), `git diff HEAD...ref`
+# fatals with rc=128 on branches with no shared history (orphan,
+# unrelated). The old git-log form silently returned empty. Helper must
+# continue tolerating this via the merge-base pre-check around the
+# git diff. behind_count itself is meaningful on orphan histories (main
+# has commits HEAD lacks regardless of shared ancestry), so we don't
+# constrain it; we DO constrain that the helper exits 0, that
+# overlap_count=0 (no merge-base → empty behind set → no overlap), and
+# that no `fatal:` leaks to stderr.
+mkdir -p "$BB_DIR/bb17"
+(
+    cd "$BB_DIR/bb17"
+    git init --quiet --initial-branch=main 2>/dev/null || git init --quiet
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email s@e.com
+    git config user.name s
+    printf 'a\n' > a.txt && git add a.txt && git commit --quiet -m "main initial"
+    # Orphan branch: no shared history with main.
+    git checkout --quiet --orphan orphan_feat
+    git rm --quiet -rf . 2>/dev/null || true
+    printf 'b\n' > b.txt && git add b.txt && git commit --quiet -m "orphan initial"
+)
+bb17_err=$(mktemp)
+bb17_out=$(cd "$BB_DIR/bb17" && "$TOOLS/branch-behind-base.sh" \
+    --comparison-ref main --reviewed-files "b.txt" 2>"$bb17_err")
+bb17_rc=$?
+bb17_overlap=$(echo "$bb17_out" | jq -r '.overlap_count')
+bb17_fatal_in_stderr=$(grep -c 'fatal:' "$bb17_err" 2>/dev/null)
+if [[ "$bb17_rc" == "0" && "$bb17_overlap" == "0" \
+    && "$bb17_fatal_in_stderr" == "0" ]]; then
+    pass "BB-17-orphan: orphan branch (no merge-base) → helper exits 0 with overlap=0, no fatal leaked to stderr"
+else
+    fail "BB-17: expected rc=0 overlap=0 fatal=0; got rc=$bb17_rc overlap=$bb17_overlap fatal=$bb17_fatal_in_stderr"
+fi
+rm -f "$bb17_err"
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

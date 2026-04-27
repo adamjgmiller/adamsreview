@@ -259,6 +259,12 @@ fi
 
 # ---- compute behind_count ----------------------------------------------
 
+# Two-dot `HEAD..ref` for the count (commits reachable from ref but not
+# HEAD — the canonical "how far has the base moved ahead" metric). The
+# overlap-files block below uses three-dot `HEAD...ref` instead because
+# it answers a different question ("what files changed on the base side
+# since divergence" — see comment there). The asymmetry is intentional;
+# don't unify them.
 behind_count=$(git rev-list --count "HEAD..$COMPARISON_REF_USED" 2>/dev/null || echo 0)
 
 if [[ "$behind_count" -eq 0 ]]; then
@@ -281,8 +287,17 @@ reviewed_files_tmp=$(mktemp -t adams-bbb-reviewed.XXXXXX)
 #     (which `git log HEAD..ref --name-only` silently drops by default,
 #     because git log skips per-file output for merge commits without
 #     -m / --first-parent / -c).
-git diff --name-only "HEAD...$COMPARISON_REF_USED" \
-    | sort -u > "$behind_files_tmp"
+# Pre-check merge-base: `git diff A...B` requires shared history and
+# fatals with rc=128 on orphan / unrelated branches. behind_count above
+# already tolerates the case via `|| echo 0`; mirror that here so the
+# whole helper doesn't die on an orphan target. Empty behind set →
+# overlap=0, gate passes through.
+if git merge-base HEAD "$COMPARISON_REF_USED" >/dev/null 2>&1; then
+    git diff --name-only "HEAD...$COMPARISON_REF_USED" \
+        | sort -u > "$behind_files_tmp"
+else
+    : > "$behind_files_tmp"
+fi
 printf '%s\n' "$REVIEWED_FILES_RAW" | sed '/^$/d' | sort -u > "$reviewed_files_tmp"
 
 overlap_full=$(comm -12 "$behind_files_tmp" "$reviewed_files_tmp" || true)
