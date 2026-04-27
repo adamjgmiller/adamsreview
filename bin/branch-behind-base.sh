@@ -249,8 +249,13 @@ fi
 # ---- validate the ref resolves -----------------------------------------
 
 if ! git rev-parse --verify "${COMPARISON_REF_USED}^{commit}" >/dev/null 2>&1; then
-    die_validation "comparison ref '$COMPARISON_REF_USED' does not resolve to a commit" \
-        "verify the branch / ref exists locally (try \`git branch -a\` or re-run with a different value)."
+    {
+        echo "ERROR: comparison ref '$COMPARISON_REF_USED' does not resolve to a commit"
+        echo "Context: branch-behind-base.sh needs a ref that git rev-parse can resolve so the behind-count and overlap diff have a valid anchor."
+        echo "Valid values: any revspec git understands (branch name, tag, remote-tracking name, SHA)."
+        echo "Action: try \`git branch -a\` to list available refs, or re-run with --fetch-base if you expected origin/<base> to exist."
+    } >&2
+    exit 1
 fi
 
 # ---- compute behind_count ----------------------------------------------

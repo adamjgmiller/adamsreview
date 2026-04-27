@@ -269,17 +269,23 @@ we checked the remote.
 
 Options:
 
+On both (a) and (c), `artifact.json` is untouched — no candidate
+normalization, no `--add-finding` invocations, no re-render, no
+re-publish. The only on-disk mutation is the `trace.md` resolution /
+warnings flush above (audit trail; written before the gate so an
+operator inspecting the trace later can see what `branch-behind-base.sh`
+returned even on the abort paths).
+
 - **(a) Stop — I'll merge `$base_branch` first** (recommended). Exit 0
   with: `Stopping. Run \`git merge $base_branch\` on \`$head_branch\`,
-  then re-run /adamsreview:add.` The artifact is untouched at this
-  point — no candidate normalization, no `--add-finding` invocations.
+  then re-run /adamsreview:add.`
 - **(b) Proceed.** Append a buffered trace line:
   ```bash
   printf '[%s] branch_behind_base proceeded\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$trace_log_path"
   ```
   Continue to step 4.
-- **(c) Abort.** Exit 0 with `Aborted.`. Artifact untouched.
+- **(c) Abort.** Exit 0 with `Aborted.`.
 
 ### 4. Build candidate array
 
