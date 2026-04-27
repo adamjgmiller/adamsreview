@@ -17,8 +17,9 @@
 #
 #   passive (--comparison-ref <ref>)
 #     Caller already has a resolved comparison_ref (e.g., :review's
-#     freshness-gate at 0.2a fetched origin/<base> minutes ago). Helper
-#     does no fetch — just computes behind_count and overlap.
+#     freshness-gate at 0.2a may have fetched origin/<base> minutes ago,
+#     or fell back to local <base> on the no_remote / no_fetch paths).
+#     Helper does no fetch — just computes behind_count and overlap.
 #
 #   active-fetch (--fetch-base <name>)
 #     Used at fix/add time when the artifact's review-time snapshot may
@@ -140,13 +141,11 @@ if [[ -z "$COMPARISON_REF" && -z "$FETCH_BASE" ]]; then
     die_usage "one of --comparison-ref or --fetch-base is required"
 fi
 
-# --reviewed-files is required in both modes.
+# --reviewed-files is required in both modes (must be non-empty).
+# Phase 0/7/3a callers always build reviewed_files_all from a non-trivial
+# diff and pipe via @-, so an empty value is a caller bug, not a valid
+# "assert empty staleness envelope" assertion.
 if [[ "$REVIEWED_FILES_FROM_STDIN" == "0" && -z "$REVIEWED_FILES_RAW" ]]; then
-    # Empty argument is permitted (caller asserts an empty staleness
-    # envelope), but the flag itself must have been passed. Distinguish
-    # "flag absent" from "flag with empty value" by tracking
-    # REVIEWED_FILES_FROM_STDIN; the simpler check is fine because the
-    # argparse loop above sets one or the other.
     die_usage "--reviewed-files is required (use @- for stdin, or pass a newline-separated string)"
 fi
 
@@ -273,13 +272,17 @@ fi
 behind_files_tmp=$(mktemp -t adams-bbb-behind.XXXXXX)
 reviewed_files_tmp=$(mktemp -t adams-bbb-reviewed.XXXXXX)
 
-# `git log HEAD..ref --name-only` lists every file touched by the
-# commits HEAD is behind on (commits reachable from ref but not HEAD).
-# Two-dot `git diff --name-only HEAD..ref` would be symmetric and also
-# include files the branch ADDED that ref lacks — those are not "behind"
-# files and would falsely inflate overlap_count.
-git log "HEAD..$COMPARISON_REF_USED" --name-only --pretty=format: \
-    | sed '/^$/d' | sort -u > "$behind_files_tmp"
+# Three-dot `git diff --name-only HEAD...ref` shows files changed
+# between merge-base(HEAD, ref) and ref — i.e., what the base side
+# added since divergence. This:
+#   - excludes branch-only adds (two-dot HEAD..ref would include them
+#     and falsely inflate overlap_count),
+#   - includes files changed only inside merge commits on the base side
+#     (which `git log HEAD..ref --name-only` silently drops by default,
+#     because git log skips per-file output for merge commits without
+#     -m / --first-parent / -c).
+git diff --name-only "HEAD...$COMPARISON_REF_USED" \
+    | sort -u > "$behind_files_tmp"
 printf '%s\n' "$REVIEWED_FILES_RAW" | sed '/^$/d' | sort -u > "$reviewed_files_tmp"
 
 overlap_full=$(comm -12 "$behind_files_tmp" "$reviewed_files_tmp" || true)
