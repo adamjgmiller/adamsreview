@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent
+allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent, AskUserQuestion
 argument-hint: "[<paste...>] [--file path --line N --claim \"...\"] [--impact <type>] [--no-dedup]"
 description: Inject externally-sourced findings (cloud /ultrareview, manual finds, etc.) into the most recent /adamsreview:review artifact for this branch. Validates via Phase 4, re-renders, re-publishes.
 disable-model-invocation: false
@@ -214,6 +214,38 @@ message and abort (same shape as Phase 7 step 4 in
 
 Append a one-line `add_rejected_leftover_attempted: ids=...` entry to
 `trace.md` for audit, then exit non-zero.
+
+### 3a. Branch-behind-base advisory
+
+Active fetch — the artifact's review-time freshness snapshot may have
+aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`,
+fall back to local on fetch failure or no-remote.
+
+```bash
+base_branch=$(jq -r '.base_branch' "$artifact_path")
+git fetch origin "$base_branch" --quiet 2>/dev/null || true
+behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
+       || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
+       || echo 0)
+```
+
+Fail-open on any non-zero git exit — the gate is a warning surface, not
+a precondition.
+
+If `$behind > 0`, `AskUserQuestion` once:
+
+> Branch `$head_branch` is `$behind` commits behind `$base_branch`. New
+> findings will be validated against the diff `:review` saw, and
+> `$base_branch` may have shifted shared context since. Recommend
+> merging `$base_branch` first.
+
+- **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`
+- **(b) Proceed.** Append a trace line and continue:
+  ```bash
+  printf '[%s] branch_behind_base proceeded behind=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" >> "$trace_log_path"
+  ```
+- **(c) Abort.** Exit 0 with `Aborted.`.
 
 ### 4. Build candidate array
 
