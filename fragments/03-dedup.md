@@ -93,30 +93,41 @@ the array union, before deleting the dupes):
   - **If the keeper's `origin == "introduced_by_pr"`**: take the
     HIGHEST across the group (`high` > `medium` > `low`). Corroborating
     PR-caused signals raise confidence — the standard case.
-  - **If the keeper's `origin == "pre_existing"`**: take the LOWEST
-    `origin_confidence` across all `pre_existing`-origin members of
-    the group. Order-independent — the dedup sub-agent picks group
-    order and the first id becomes keeper, so any rule that depends
-    on which member is keeper is implicitly probabilistic. The
-    relevant signal lives at the *group* level: if any
+  - **If the keeper's `origin == "pre_existing"`**: two-stage rule.
+    **C1: Same-origin lowest.** Take the LOWEST `origin_confidence`
+    across all `pre_existing`-origin members of the group. The signal
+    lives at the *group* level, not the keeper level — if any
     `pre_existing` member arrived as a corrective `medium` (from
     `origin-crosscheck.sh`'s main path A2 downgrade — lens said
     `introduced_by_pr` but blame is fully ancestor of
     `$comparison_ref`, or lens said `pre_existing/high` but blame
     sees PR commits), the group as a whole is uncertain and §13.1
-    should not fire. Promoting medium to high — or letting a
-    corroborating sibling's high *survive* as keeper — re-fires §13.1
-    and silently re-creates the routed-to-footnote bug Option A2 fixed.
+    should not fire. **C2: Cross-origin cap.** If C1's lowest is
+    still `high` (all `pre_existing` members agreed at high) AND any
+    group member has a non-`pre_existing` origin, cap `max_conf` at
+    `medium`. The cross-origin disagreement (one lens classified the
+    finding as PR-caused, another as pre-existing — same underlying
+    bug) is itself signal of group-level origin uncertainty,
+    independent of the individual confidence levels. Without the cap,
+    a group like `[pre_existing/high keeper, introduced_by_pr/high
+    sibling]` keeps `max_conf=high` (C1 filters to pre_existing-only
+    so the introduced_by_pr sibling is invisible to C1), `keeper.origin`
+    stays `pre_existing` per the unchanged "leave `origin` on keeper"
+    rule, and §13.1 fires — re-creating the routed-to-footnote bug
+    in a third order-dependent disguise. Together C1 + C2 make the
+    pre_existing branch fully order-independent: §13.1 cannot fire on
+    any dedup group containing same-origin `medium` evidence OR
+    cross-origin disagreement, regardless of which member became keeper.
     Trade-off: a legitimate rename-follow `pre_existing/high` keeper
     (the F038-class extraction override that survived A2) gets
     demoted to `medium` when grouped with any `pre_existing/medium`
-    sibling, and routes through Phase 3 + Phase 4 instead of the
-    §13.1 footnote. Phase 4 re-validates and the extraction trace
-    typically re-confirms the finding as pre-existing — the recall
-    cost is bounded, and it's the right place to do that confirmation
-    when sibling signal disagrees. Single-id groups (no siblings,
-    no reconciliation runs) preserve the rename-follow override
-    untouched.
+    sibling (C1) or any non-`pre_existing` sibling (C2), and routes
+    through Phase 3 + Phase 4 instead of the §13.1 footnote. Phase 4
+    re-validates and the extraction trace typically re-confirms the
+    finding as pre-existing — the recall cost is bounded, and it's
+    the right place to do that confirmation when sibling signal
+    disagrees. Single-id groups (no siblings, no reconciliation runs)
+    preserve the rename-follow override untouched.
 - `validation_lane`: `deep` wins over `light` if any group member is
   deep. Safer routing — deep validation of a potentially-light issue
   costs more tokens, but light validation of a deep issue risks
@@ -159,19 +170,32 @@ Concretely, for each group `[K, D1, D2, ...]` (K = keeper, Di = dupes):
     keeper_origin=$(jq -r --arg kid "K" \
       '.[] | select(.id==$kid) | .origin' <<<"$group_json")
 
-    # origin_confidence reconciliation (order-independent):
+    # origin_confidence reconciliation (order-independent, two-stage
+    # for pre_existing keepers):
     #   introduced_by_pr keeper: take HIGHEST across group (corroboration raises).
-    #   pre_existing keeper:     take LOWEST across pre_existing-origin members
-    #                            (any corrective-medium in the group binds the
-    #                            whole group; never let §13.1 fire on a group
-    #                            containing a corrective downgrade).
+    #   pre_existing keeper:
+    #     C1 — same-origin lowest: lowest across pre_existing-origin members
+    #          (any corrective-medium in the group binds the whole group).
+    #     C2 — cross-origin cap:   if C1's result is still high AND the
+    #          group has any non-pre_existing member, cap to medium
+    #          (cross-origin disagreement is itself uncertainty signal).
     # See the prose rule above for the rationale and the rename-follow
     # trade-off.
     if [ "$keeper_origin" = "pre_existing" ]; then
+        # C1 stage
         max_conf=$(jq -r '
           [.[] | select(.origin == "pre_existing") | .origin_confidence]
           | sort_by({"low":1, "medium":2, "high":3}[.]) | first
         ' <<<"$group_json")
+        # C2 stage — only fires when C1 left max_conf at high AND the
+        # group has cross-origin disagreement.
+        if [ "$max_conf" = "high" ]; then
+            has_cross_origin=$(jq -r \
+              'any(.[].origin; . != "pre_existing")' <<<"$group_json")
+            if [ "$has_cross_origin" = "true" ]; then
+                max_conf="medium"
+            fi
+        fi
     else
         max_conf=$(jq -r '
           [.[].origin_confidence]
