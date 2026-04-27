@@ -277,8 +277,8 @@ operator inspecting the trace later can see what `branch-behind-base.sh`
 returned even on the abort paths).
 
 - **(a) Stop — I'll merge `$base_branch` first** (recommended). Exit 0
-  with: `Stopping. Run \`git merge $base_branch\` on \`$head_branch\`,
-  then re-run /adamsreview:add.`
+  with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on
+  \`$head_branch\`, then re-run /adamsreview:add.`
 - **(b) Proceed.** Append a buffered trace line:
   ```bash
   printf '[%s] branch_behind_base proceeded\n' \

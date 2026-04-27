@@ -260,7 +260,8 @@ fi
 
 - **(a) Stop — I'll merge `$base_branch` first** (recommended). Run the
   pop-stash block above, then exit 0 with: `Stopping. Run \`git merge
-  $base_branch\` on \`$head_branch\`, then re-run /adamsreview:fix.`
+  $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run
+  /adamsreview:fix.`
   Exit happens **before** step 7.8 — no `run_id`, no `input_sha`, no
   `fix_attempts` row, no commit, no push.
 - **(b) Proceed.** Append a buffered trace line:
