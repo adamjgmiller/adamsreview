@@ -6,9 +6,12 @@
 # candidate's line range is entirely pre-existing (every implicated SHA is
 # reachable from $comparison_ref) vs. PR-modified. The §13.1 pre-existing
 # override (origin=pre_existing AND origin_confidence=high →
-# disposition=pre_existing_report) keys off origin, so correcting it here
-# — before --add-finding — routes pre-existing candidates to the footnote
-# section automatically.
+# disposition=pre_existing_report) keys off the {origin, origin_confidence}
+# pair, so correcting it here — before --add-finding — feeds §13.1 the
+# right inputs: lens-respect (already pre_existing/high) and rename-follow
+# extraction (override to high) fire the override at Phase 3; main-path
+# lens-vs-blame disagreement (Option A2) is downgraded to medium so
+# Phase 3 + Phase 4 decide instead of force-routing to footnote.
 #
 # Decision table per candidate:
 #   file not in comparison_ref tree:
@@ -17,7 +20,13 @@
 #         (file was renamed/extracted from a pre-PR ancestor and the
 #         candidate lines came in with that extraction — F038 case;
 #         this is the one main-path-style override that survives because
-#         the --follow trace is stronger evidence than a lens claim)
+#         the --follow trace is stronger evidence than a lens claim.
+#         Caveat: this branch retains the same Mode 2 risk profile A2
+#         removed from the main path — an exposure finding whose cited
+#         lines live inside an extracted file would still be force-
+#         classified pre_existing/high here. Accepted limitation per
+#         plans/pre-existing-fix.md §A2; recoverable via walkthrough
+#         off-menu promote.)
 #       git log --follow reveals pre-PR ancestor but blame sees later PR
 #         commits                          → respect lens (content was added
 #         AFTER extraction, within the PR)

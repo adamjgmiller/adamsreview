@@ -816,13 +816,20 @@ For each sub-agent result, in the order it returns:
    drop count so a silent-fallthrough regression is visible.
 
 2a. **Origin cross-check (§13.11).** Hand the lens's candidate array to
-   `origin-crosscheck.sh` so any candidate whose blame range is entirely
-   ancestor of `$comparison_ref` gets `origin=pre_existing,
-   origin_confidence=high` — which then triggers the §13.1 pre-existing
-   override at Phase 3. `introduced_by_pr` candidates that blame confirms
-   as PR-modified are respected; lens-supplied `pre_existing` whose blame
-   disagrees gets downgraded to medium confidence so the override doesn't
-   fire.
+   `origin-crosscheck.sh` so blame-traceable cases get corrected before
+   pool admission. **Main path** (file present in `$comparison_ref`):
+   lens-supplied `pre_existing/high` confirmed by blame is respected;
+   lens-supplied `pre_existing/high` whose blame includes PR commits is
+   downgraded to medium (so §13.1 doesn't force-route to footnote);
+   lens-supplied `introduced_by_pr` whose blame is fully ancestor of
+   `$comparison_ref` is set to `pre_existing/medium` with
+   `action=downgraded` — Phase 3 + Phase 4 then decide instead of
+   force-routing wrong-line-range cites or exposure findings to the
+   footnote (Option A2). **Rename-follow path** is the lone case where
+   blame trumps the lens: a content-preserving extraction whose
+   `git log --follow` ancestor pre-dates the PR overrides to
+   `pre_existing/high` (F038 case). See `CLAUDE.md`'s helper-index
+   entry for the full decision table.
 
    ```bash
    # Defensive pre-check — step 2 should have already dropped unparseable
