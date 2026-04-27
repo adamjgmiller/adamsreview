@@ -15,7 +15,9 @@
 #       git log --follow reveals pre-PR ancestor AND blame SHAs ⊆ {file-add
 #         commits}                         → override to pre_existing/high
 #         (file was renamed/extracted from a pre-PR ancestor and the
-#         candidate lines came in with that extraction — F038 case)
+#         candidate lines came in with that extraction — F038 case;
+#         this is the one main-path-style override that survives because
+#         the --follow trace is stronger evidence than a lens claim)
 #       git log --follow reveals pre-PR ancestor but blame sees later PR
 #         commits                          → respect lens (content was added
 #         AFTER extraction, within the PR)
@@ -23,7 +25,12 @@
 #   blame fails                            → respect lens (skipped)
 #   all SHAs reachable from comparison_ref:
 #       lens already pre_existing/high     → respect (no-op)
-#       otherwise                          → override to pre_existing/high
+#       otherwise                          → set pre_existing/medium
+#         (lens disagrees with blame — either the cited line range is
+#         wrong or the bug is an "exposure" finding where new code in
+#         this PR makes old code stale; in either case let Phase 3 +
+#         Phase 4 decide instead of force-routing through the §13.1
+#         override to the report-only footnote)
 #   any SHA NOT reachable:
 #       lens is pre_existing/high          → downgrade confidence to medium
 #       otherwise                          → respect
@@ -284,10 +291,25 @@ for (( i = 0; i < N; i++ )); do
                         action="respected"
                         reason="blame-confirms-preexisting"
                     else
+                        # Lens said introduced_by_pr; blame is fully
+                        # ancestor of comparison_ref. Two possibilities:
+                        # (a) the lens cited the wrong line range (the
+                        # claim is real, the cited lines aren't); (b)
+                        # the cited lines are pre-existing but the bug
+                        # is "exposure" — new code elsewhere in the PR
+                        # made these old lines wrong (stale diagram, doc
+                        # bullet contradicted by a new fallback, function
+                        # missing a field a new caller needs). In either
+                        # case do NOT promote to pre_existing/high — that
+                        # would force-route via §13.1 to the report-only
+                        # footnote and skip Phase 4 validation. Downgrade
+                        # to pre_existing/medium so §13.1 does not fire
+                        # and the finding still flows through Phase 3 +
+                        # Phase 4 like any other candidate.
                         new_origin="pre_existing"
-                        new_conf="high"
-                        action="overridden"
-                        reason="all-blame-ancestor-of-comparison-ref"
+                        new_conf="medium"
+                        action="downgraded"
+                        reason="lens-introduced-by-pr-but-all-blame-ancestor"
                     fi
                 else
                     # At least one SHA is in comparison_ref..HEAD.
