@@ -4730,6 +4730,63 @@ else
     fail "AF-DRIFT: $af_drift_fail"
 fi
 
+# AF-DRIFT-EDGE: normalization parity for the cases the table-key loop
+# above doesn't exercise. Both readers strip whitespace and lowercase
+# before lookup (Python: raw.strip().lower(); jq: gsub(...)
+# | ascii_downcase). The empty / unknown cases also lump together —
+# Python CLI exits 64 (empty) or 3 (unknown), test catches both as
+# "UNKNOWN"; jq returns null, `// "UNKNOWN"` lifts both to "UNKNOWN".
+# A regression in either reader's normalization (e.g., losing ascii_
+# downcase, or Python switching to a Unicode-aware lower) shows up
+# here even though both tables still agree on the canonical keys.
+af_drift_edge_fail=""
+af_drift_edge_count=0
+# Each line: "<input>|<expected>". Bare-key loop above proves canonical
+# pass-through; these probe whitespace, mixed-case, drift+case combo,
+# empty, and a never-seen unknown.
+for edge in \
+    "  diff-family  |diff-family" \
+    "Diff-Family|diff-family" \
+    "PROMPT-INJECTION|security-family" \
+    " stale_line_ref|policy-family" \
+    "|UNKNOWN" \
+    "totally-fake-family|UNKNOWN"
+do
+    af_drift_edge_count=$((af_drift_edge_count+1))
+    in_val="${edge%%|*}"
+    expected="${edge##*|}"
+    py_out=$("$TOOLS/source-family-map.py" --input "$in_val" 2>/dev/null) || py_out="UNKNOWN"
+    jq_out=$(jq -nr --arg raw "$in_val" '
+      def fam_canonical($raw):
+        ((if ($raw | type) == "string" then $raw else "" end)
+         | gsub("^[[:space:]]+|[[:space:]]+$"; "")
+         | ascii_downcase) as $k |
+        if   $k == "" then null
+        elif $k == "diff-family"        or $k == "structural-family"
+          or $k == "policy-family"      or $k == "ux-family"
+          or $k == "security-family"    or $k == "holistic-family"
+          or $k == "external-deep-family" or $k == "external-add-family" then $k
+        elif $k == "stale-line-ref"     or $k == "stale_line_ref"
+          or $k == "stale-behavior-claim" or $k == "stale_behavior_claim" then "policy-family"
+        elif $k == "prompt-injection"   or $k == "prompt_injection"
+          or $k == "input-validation"   or $k == "input_validation"
+          or $k == "path-traversal"     or $k == "path_traversal"
+          or $k == "terminal-injection" or $k == "terminal_injection" then "security-family"
+        else null end;
+      fam_canonical($raw) // "UNKNOWN"
+    ')
+    if [[ "$py_out" != "$expected" ]] || [[ "$jq_out" != "$expected" ]]; then
+        af_drift_edge_fail="input='$in_val' expected='$expected' py='$py_out' jq='$jq_out'"
+        break
+    fi
+done
+
+if [[ -z "$af_drift_edge_fail" ]] && [[ "$af_drift_edge_count" -gt 0 ]]; then
+    pass "AF-DRIFT-EDGE: whitespace/case/empty/unknown normalization parity ($af_drift_edge_count cases agree across Python + in-jq readers)"
+else
+    fail "AF-DRIFT-EDGE: $af_drift_edge_fail"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

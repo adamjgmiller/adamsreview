@@ -411,12 +411,22 @@ def cmd_add_findings(args):
                   "every finding was bad" vs. "your input shape was
                   wrong." Phase 1's fragment handler treats both the
                   same; /adamsreview:add migration may want to branch.
-      - 64      : EXIT_USAGE — malformed input up front. Two pathways
+      - 64      : EXIT_USAGE — malformed input up front. Three pathways
                   share this: (a) `read_json_arg()` already exits 64
                   when stdin / @file / inline isn't parseable JSON;
                   (b) this mode emits 64 when the parsed value isn't a
-                  JSON array. Plus mode-conflict (--add-findings
-                  combined with --set / --finding-id / etc.).
+                  JSON array; (c) mode-vs-non-mode-flag conflict
+                  (--add-findings combined with --set / --set-json /
+                  --append-fix-attempt / --finding-id) handled below
+                  via c.err_prompt + return c.EXIT_USAGE, plus
+                  --add-findings + --dry-run (currently rejected).
+      - 2       : argparse mutex-group violation — mode-vs-mode
+                  conflicts (e.g., --add-findings + --delete-finding)
+                  are caught by the parser's mutually-exclusive group
+                  before main() runs and exit with argparse's default
+                  code 2. Behavior matches every other mode in this
+                  script; documented here so the contract isn't
+                  mistakenly read as "all conflicts → 64."
 
     Stderr per-rejection format (machine-greppable; ONE line per
     rejected finding — no err_prompt block, to keep trace.md compact

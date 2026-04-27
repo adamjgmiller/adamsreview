@@ -295,8 +295,8 @@ Dispatch via `Agent` with `model: sonnet`. Prompt essence:
 
 **After the normalizer returns**, repair missing location info and
 emit the result to `external_candidates` for the join step at
-01-detection.md step 1.5. Do NOT call `--add-finding` here (§13.12 —
-ids are assigned atomically at the join, not per-phase).
+01-detection.md step 1.5. Do NOT call `--add-finding` / `--add-findings`
+here (§13.12 — ids are assigned atomically at the join, not per-phase).
 
 **Parse-with-repair front-stop.** External-tool output (Codex CLI,
 CodeRabbit CLI, PR bot comments) is the messiest boundary in the
@@ -360,9 +360,9 @@ log-tokens.sh \
   --model sonnet --tokens <N or null>
 ```
 
-(The `--add-finding` sweep moved to 01-detection.md step 1.5 per
-§13.12 — it runs once across the combined internal + external pool
-after ids are assigned. Do not `--add-finding` here.)
+(The batched `--add-findings` sweep moved to 01-detection.md step 1.5
+per §13.12 — it runs once across the combined internal + external pool
+after ids are assigned. Do not `--add-finding` / `--add-findings` here.)
 
 ### 1.5.6b. Clean up scratch_dir
 

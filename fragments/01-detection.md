@@ -975,12 +975,16 @@ agreement.
 inside a single `Bash(...)` invocation. The shell variables (`$ided`,
 `$build_result`, `$findings_array`) are large and pulling them
 through the orchestrator transcript between two Bash calls negates
-the batched-helper context win. If the orchestrator finds itself
-needing to split (e.g., to insert a tool-use between the two steps),
-use a scratch file: write `$ided` to `$scratch_dir/phase1_pool.json`
-at the end of step 3 and read it back via
-`--add-findings @$scratch_dir/phase1_pool.json` at step 4. Scratch
-files don't enter the transcript; ad-hoc command-line arguments do.
+the batched-helper context win. If the orchestrator absolutely must
+split (e.g., to insert a tool-use between sub-steps), the only safe
+split point is **after the jq builder runs, before the helper call**:
+write `$findings_array` (the jq builder's full schema-shaped output —
+NOT the pre-builder `$ided` candidate pool, which the helper would
+reject as `schema_invalid` for every entry) to
+`$scratch_dir/phase1_findings.json` at the end of the jq build, then
+read it back via `--add-findings @$scratch_dir/phase1_findings.json`
+in the next Bash call. Scratch files don't enter the transcript;
+ad-hoc command-line arguments do.
 
 ```bash
 # Single jq pass: canonicalize source_family, build full schema-shaped
@@ -1035,7 +1039,6 @@ build_result=$(printf '%s' "$ided" | jq -c --argjson trivial "$trivial_mode" '
       .[] | . as $cand |
       ((fam_canonical($cand.source_family)) // "unknown") as $f |
       $cand + {
-        source_family: $f,
         source_families: [$f],
         actionability: (if ($cand.impact_type == "correctness" or $cand.impact_type == "security") then "auto_fixable"
                        elif ($cand.impact_type == "architecture") then "report_only"
@@ -1113,6 +1116,11 @@ fi
 # stay on `2> >(tee ...)` because nothing reads trace.md immediately
 # afterward — only this site needs the synchronous form.
 stderr_capture=$(mktemp)
+# T1.trap — guarantee cleanup on any early exit between mktemp and the
+# explicit rm -f below. Without the trap, a non-zero exit from the
+# `landed_n` artifact-read.sh below (or any future addition in this
+# block) leaks the tempfile into /tmp until the OS reaper runs.
+trap 'rm -f "$stderr_capture"' EXIT
 add_rc=0
 printf '%s' "$findings_array" \
   | artifact-patch.py --path "$artifact_path" --add-findings - \
