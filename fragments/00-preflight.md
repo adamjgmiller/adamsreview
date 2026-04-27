@@ -195,6 +195,67 @@ used by step 0.11 (trivial check) AND by step 0.15 (seed's
 unconditionally — if step 0.11 is skipped by `--full`, these still need
 to exist.
 
+### 0.6a. Branch-behind-base check
+
+Phase-0 invariant covering the rotated staleness axis: has `$comparison_ref`
+moved forward since `$head_branch` was cut? Step 0.2a's `freshness-gate.sh`
+already covered local `$base_branch` vs `origin/$base_branch`; this step
+covers HEAD vs `$comparison_ref`. When the branch is behind `$comparison_ref`
+the lens diff suffers phantom deletions (two-dot semantics — files
+`$comparison_ref` added show up as branch-removed) and the lenses can't see
+relevant baseline drift (renames, API changes, dep bumps).
+
+Passive mode — `freshness-gate.sh` at 0.2a already fetched, so no second
+fetch. Helper just computes behind / overlap.
+
+```bash
+bb_json=$(printf '%s\n' "$reviewed_files_all" \
+  | branch-behind-base.sh --comparison-ref "$comparison_ref" --reviewed-files @-)
+branch_behind_count=$(echo "$bb_json" | jq -r '.behind_count')
+branch_overlap_count=$(echo "$bb_json" | jq -r '.overlap_count')
+branch_overlap_files_csv=$(echo "$bb_json" | jq -r '.overlap_files | join(", ")')
+```
+
+If `branch_behind_count == 0`, skip the rest of this step.
+
+If `branch_behind_count > 0`, append a buffered warning for the trace
+flush at 0.15:
+
+```bash
+preflight_warnings+=("branch_behind_base behind=$branch_behind_count overlap=$branch_overlap_count")
+```
+
+Then `AskUserQuestion` with three options. The prompt body adapts to
+overlap:
+
+- **`branch_overlap_count > 0`:**
+  > Branch `$head_branch` is `$branch_behind_count` commits behind
+  > `$comparison_ref`, of which `$branch_overlap_count` modified files
+  > in this PR (`$branch_overlap_files_csv`). The lens diff will include
+  > phantom deletions for code that landed on `$base_branch` after this
+  > branch was cut. Recommend merging `$base_branch` first.
+- **`branch_overlap_count == 0`:**
+  > Branch `$head_branch` is `$branch_behind_count` commits behind
+  > `$comparison_ref`. None of those commits modified files in this PR
+  > — the lens diff is unaffected. Latent risk: `$base_branch` may have
+  > shifted code your branch calls into (renames, API changes, dep
+  > bumps) that the lenses cannot detect from the diff alone. Merging
+  > `$base_branch` first is conservative; proceeding is fine for short
+  > divergences.
+
+Options:
+
+- **(a) Stop — I'll merge `$base_branch` first** (recommended). Exit 0
+  with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on
+  \`$head_branch\`, then re-run /adamsreview:review.` No `review_dir`
+  exists yet — nothing to clean up.
+- **(b) Proceed.** Append a second warning for the trace:
+  ```bash
+  preflight_warnings+=("branch_behind_base proceeded")
+  ```
+  Continue to step 0.7.
+- **(c) Abort.** Exit 0 with `Aborted.`.
+
 ### 0.7. Enumerate `claude_md_paths`
 
 Run:
@@ -499,6 +560,7 @@ At the end of Phase 0, you should have captured:
 | `mode`, `pr_number`, `pr_state`, `pr_author` | Step 0.4 |
 | `review_started_at` | Step 0.5 |
 | `reviewed_files_all`, `num_files`, `lines_changed` | Step 0.6 |
+| `branch_behind_count`, `branch_overlap_count`, `branch_overlap_files_csv` (informational; not seeded into artifact) | Step 0.6a |
 | `claude_md_paths` | Step 0.7 |
 | `stash_taken` | Step 0.8 |
 | `reviewed_sha` | Step 0.10 |

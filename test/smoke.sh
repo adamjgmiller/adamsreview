@@ -5086,6 +5086,22 @@ else
     fail "BB-9: both_rc=$bb9_both_rc neither_rc=$bb9_neither_rc" "$(cat "$bb9_err" 2>/dev/null)"
 fi
 
+# BB-10: fragments/00-preflight.md has step 0.6a wired with the helper
+# call + AskUserQuestion shape, and commands/review.md grants the helper
+# in allowed-tools.
+bb10_pre="$REPO/fragments/00-preflight.md"
+bb10_cmd="$REPO/commands/review.md"
+if grep -q '^### 0\.6a\. Branch-behind-base check' "$bb10_pre" \
+    && grep -q 'branch-behind-base.sh --comparison-ref "\$comparison_ref" --reviewed-files @-' "$bb10_pre" \
+    && grep -q 'preflight_warnings+=("branch_behind_base behind=' "$bb10_pre" \
+    && grep -q 'branch_overlap_count > 0' "$bb10_pre" \
+    && grep -q 'branch_overlap_count == 0' "$bb10_pre" \
+    && grep -q 'Bash(branch-behind-base.sh:\*)' "$bb10_cmd"; then
+    pass "BB-10-review-warning: :review 0.6a wires helper + AskUserQuestion + commands/review.md grants Bash(branch-behind-base.sh:*)"
+else
+    fail "BB-10: missing fragment wiring or allowed-tools grant" "pre=$(grep -c '0\.6a' "$bb10_pre") cmd=$(grep -c branch-behind-base "$bb10_cmd")"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
