@@ -210,22 +210,19 @@ If `$behind > 0`, `AskUserQuestion` once:
 > and `$base_branch` may have shifted shared context the fix planner
 > can't see. Recommend merging `$base_branch` first.
 
-For (a) and (c): pop the stash if step 7.5 took one (same shape as
-§7.6's unsafe-staleness exit):
-
-```bash
-if [[ "${stash_taken:-false}" == "true" ]]; then
-    git stash pop || true
-fi
-```
-
-- **(a) Stop — I'll merge first, then re-run.** Pop stash, exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:fix.`
+- **(a) Stop — I'll merge first, then re-run.** Run the stash-pop block
+  below if step 7.5 took one, then exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:fix.`
+  ```bash
+  if [[ "${stash_taken:-false}" == "true" ]]; then
+      git stash pop || true
+  fi
+  ```
 - **(b) Proceed.** Append a trace line and continue:
   ```bash
   printf '[%s] branch_behind_base proceeded behind=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" >> "$trace_log_path"
   ```
-- **(c) Abort.** Pop stash, exit 0 with `Aborted.`.
+- **(c) Abort.** Run the same stash-pop block as (a) and exit 0 with `Aborted.`.
 
 ### 7.7. PR eligibility recheck
 

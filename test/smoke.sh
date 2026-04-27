@@ -5064,10 +5064,11 @@ if grep -q '### 7.6a. Branch-behind-base advisory' "$BB_FIX" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_FIX" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_FIX" \
    && grep -qF '|| echo 0' "$BB_FIX" \
-   && grep -q 'git stash pop || true' "$BB_FIX"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + two-step rev-list + stash-pop on Stop/Abort)"
+   && grep -q 'git stash pop || true' "$BB_FIX" \
+   && grep -qF 'branch_behind_base proceeded behind=' "$BB_FIX"; then
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + two-step rev-list + stash-pop on Stop/Abort + Proceed trace)"
 else
-    fail "BB-2: §7.6a header/fetch/two-step rev-list/stash-pop missing in $BB_FIX"
+    fail "BB-2: §7.6a header/fetch/two-step rev-list/stash-pop/Proceed-trace missing in $BB_FIX"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5076,10 +5077,11 @@ if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_ADD" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_ADD" \
    && grep -qF '|| echo 0' "$BB_ADD" \
-   && grep -q 'AskUserQuestion' "$BB_ADD"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + two-step rev-list + AskUserQuestion grant)"
+   && grep -q 'AskUserQuestion' "$BB_ADD" \
+   && grep -qF 'branch_behind_base proceeded behind=' "$BB_ADD"; then
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + two-step rev-list + AskUserQuestion grant + Proceed trace)"
 else
-    fail "BB-3: §3a header/fetch/two-step rev-list/AskUserQuestion grant missing in $BB_ADD"
+    fail "BB-3: §3a header/fetch/two-step rev-list/AskUserQuestion grant/Proceed-trace missing in $BB_ADD"
 fi
 
 echo

@@ -208,10 +208,12 @@ behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null || echo 0)
 
 If `$behind > 0`, `AskUserQuestion` once:
 
-> Branch `$head_branch` is `$behind` commits behind `$base_branch`. The
-> lens diff includes phantom deletions for code that landed on
-> `$base_branch` after this branch was cut, and may have shifted code
-> your branch calls into. Recommend merging `$base_branch` first.
+> Branch `$head_branch` is `$behind` commits behind `$comparison_ref`.
+> The lens diff includes phantom deletions for code that landed on
+> `$comparison_ref` after this branch was cut, and may have shifted
+> code your branch calls into. Recommend merging `$base_branch` first.
+> (When `$comparison_ref` differs from `$base_branch`, §0.2a's
+> freshness gate selected the remote-tracking ref — see trace.)
 
 - **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
 - **(b) Proceed.** Append a buffered warning and continue:
