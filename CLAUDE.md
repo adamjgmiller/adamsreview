@@ -322,7 +322,7 @@ Enough to work without opening the archive. Each rule is a decision that was lea
 
 2. **uv shebang for Python helpers.** `#!/usr/bin/env -S uv run --script` with a `# /// script` inline dep spec. Never `pip install` directly (PEP 668 blocks it on Homebrew Python 3.12+).
 
-3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 6=expected-mismatch (--apply-decisions tuple count != --expected; recover by re-dispatch), 64=usage`. Codes 2 and 3 are context-sensitive — `parse-validator-result.py` reuses 2 for score-unrecoverable; `source-family-map.py` reuses 3 for unknown-family. Defined in `bin/_common.py`; reuse, don't invent.
+3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 6=expected-mismatch (--apply-decisions tuple count != --expected; recover by re-dispatch), 7=all-rejected (--add-findings: every input element was rejected at preflight; distinct from 1 so callers can branch), 64=usage`. Codes 2 and 3 are context-sensitive — `parse-validator-result.py` reuses 2 for score-unrecoverable; `source-family-map.py` reuses 3 for unknown-family. Defined in `bin/_common.py`; reuse, don't invent.
 
 4. **Error-as-prompt on every helper.** Non-zero exits emit `ERROR:` / `Valid input:` / `Did you mean:` / `Action:` stderr sections. No stack traces on expected errors. See `bin/_common.py:suggest()`.
 
@@ -374,7 +374,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 
 | Script | Lang | Purpose |
 |---|---|---|
-| `artifact-patch.py` | Python | Every finding-level mutation. Mutually-exclusive modes: `--init`, `--add-finding`, `--delete-finding`, `--apply-decisions`, `--apply-fix-start`, `--apply-fix-outcomes`. Finding-modify flags (pair with `--finding-id`): `--set`, `--set-json`, `--append-fix-attempt`. Global: `--dry-run`. Enforces state-transition whitelist + disposition/is_actionable invariants + error-as-prompt. |
+| `artifact-patch.py` | Python | Every finding-level mutation. Mutually-exclusive modes: `--init`, `--add-finding`, `--add-findings` (continue-on-error; single atomic write across the accepted batch; exit 7 = all-rejected, distinct from exit 1 = post-write validation failed), `--delete-finding`, `--apply-decisions`, `--apply-fix-start`, `--apply-fix-outcomes`. Finding-modify flags (pair with `--finding-id`): `--set`, `--set-json`, `--append-fix-attempt`. Global: `--dry-run`. Enforces state-transition whitelist + disposition/is_actionable invariants + error-as-prompt. |
 | `artifact-publish.sh` | Bash | PR comment POST/PATCH. `--comment-id <id>` for PATCH; no auto-discovery (callers carry intent per §13.4). Local-mode no-op. |
 | `artifact-render.py` | Python | `artifact.json` → `artifact.md`. Uses jsonschema validation; reads disposition for section selection. |
 | `artifact-validate.sh` | Bash | Thin wrapper around the Python validator. |
@@ -393,7 +393,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 | `external-scrape.sh` | Bash | Phase 1.5 PR-comment fetch + bot filter (allow/deny config). |
 | `_common.py` | Python | Shared: schema validate, `atomic_write`, `suggest()` (error-as-prompt), exit-code constants. Imported by every Python helper. |
 
-Three `artifact-patch.py` batched modes share a scaffold — see Batched-helper pattern below.
+`artifact-patch.py` has four batched modes: three (`--apply-decisions` / `--apply-fix-start` / `--apply-fix-outcomes`) share a first-fail-halt scaffold; `--add-findings` is continue-on-error. See Batched-helper pattern below.
 
 ## How to work on new changes
 
@@ -405,6 +405,8 @@ Three `artifact-patch.py` batched modes share a scaffold — see Batched-helper 
 ## Batched-helper pattern
 
 The three `artifact-patch.py` modes `--apply-decisions` / `--apply-fix-start` / `--apply-fix-outcomes` share a pattern: JSON array of tuples, per-tuple atomic writes, first-failure halt, one summary line. If you add a fourth batched mode, reuse the scaffolding (`_check_*_tuple` validator + `_load_or_fail` per tuple + `_write_and_emit(silent=True)`). Accept that mid-batch failure leaves tuples 0..N-1 persisted; callers re-invoke with the remainder.
+
+`--add-findings` is the fourth batched mode and deliberately uses a different recovery pattern: continue-on-error per finding + one atomic write across the accepted batch. The asymmetry tracks the underlying operation — mutating existing findings (apply-decisions / apply-fix-*) preserves meaningful state at every successful tuple, so first-failure-halt with re-dispatch on the remainder is the right shape; creating new findings has no equivalent "tuples 0..N-1 are still meaningful" property, so dropping a single bad candidate while committing the rest in one transaction matches the upstream lens-drift recovery story (per-finding rejections surface in `trace.md` as `add-findings-rejected:` lines for the operator to investigate). Future batched modes should pick the matching pattern: mutate → first-fail-halt + per-tuple atomic; create → continue-on-error + single atomic.
 
 ## Commits
 

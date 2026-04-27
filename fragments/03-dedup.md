@@ -22,7 +22,7 @@ artifact-read.sh \
 (No singular `source_family` field exists on stored findings — Phase 1
 already transformed lens output into the plural `source_families` array
 before writing. `evidence_snippet` is a candidate-only field that
-Phase 1 strips before `--add-finding`; dedup works from
+Phase 1 strips before `--add-findings`; dedup works from
 `claim + file + line_range`, which is sufficient for near-duplicate
 grouping.)
 
