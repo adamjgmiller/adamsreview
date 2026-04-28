@@ -209,17 +209,18 @@ behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null || echo 0)
 
 If `$behind > 0`, `AskUserQuestion` once:
 
-> Branch `$head_branch` is `$behind` commits behind `$comparison_ref`.
-> The lens diff includes phantom deletions for code that landed on
-> `$comparison_ref` after this branch was cut, and may have shifted
-> code your branch calls into. Recommend merging `$base_branch` first.
-> (When `$comparison_ref` differs from `$base_branch`, §0.2a's
-> freshness gate selected the remote-tracking ref — see trace.)
+> Branch `$head_branch` is `$behind` commits behind `$comparison_ref`
+> (the diff base for this review). The lens diff includes phantom
+> deletions for code that landed on `$comparison_ref` after this branch
+> was cut, and may have shifted code your branch calls into. Recommend
+> merging `$base_branch` into `$head_branch` first — this updates your
+> feature branch tip, distinct from any earlier choice about which ref
+> the review compares against.
 
-- **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
+- **(a) Stop — I'll merge `$base_branch` into `$head_branch` first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
 - **(b) Proceed.** Append a buffered warning and continue:
   ```bash
-  preflight_warnings+=("branch_behind_base proceeded behind=$behind")
+  preflight_warnings+=("branch_behind_base proceeded behind=$behind comparison_ref=$comparison_ref")
   ```
 - **(c) Abort.** Exit 0 with `Aborted.`.
 

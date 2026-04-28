@@ -220,17 +220,28 @@ Append a one-line `add_rejected_leftover_attempted: ids=...` entry to
 ### 3a. Branch-behind-base advisory
 
 Active fetch — the artifact's review-time freshness snapshot may have
-aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`
-(refreshed by the fetch when possible; may be a stale remote-tracking
-ref if the fetch failed), fall back to local `<base>` if `origin/<base>`
-doesn't resolve at all.
+aged since `:review` ran. Capture fetch success and route the rev-list
+accordingly: on success, prefer `origin/<base>` (with a defensive
+fallback to local `<base>` for narrow-refspec configs that don't update
+remote-tracking refs even after a clean fetch); on failure, fall back
+to local `<base>` AND surface a "fetch failed" note in the prompt so
+the user knows the count may itself be stale (a bare `origin/<base>`
+rev-list would silently resolve from cached refs and mislead).
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
-GIT_TERMINAL_PROMPT=0 git fetch origin "$base_branch" --quiet 2>/dev/null || true
-behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
-       || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
-       || echo 0)
+fetch_ok=true
+GIT_TERMINAL_PROMPT=0 git fetch origin "$base_branch" --quiet 2>/dev/null \
+    || fetch_ok=false
+if $fetch_ok; then
+    behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
+           || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
+           || echo 0)
+    fetch_note=""
+else
+    behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
+    fetch_note=" (Note: fetch of \`origin/$base_branch\` failed; behind-count is from local \`$base_branch\`, which may itself be stale.)"
+fi
 ```
 
 Fail-open on any non-zero git exit — the gate is a warning surface, not
@@ -238,11 +249,11 @@ a precondition.
 
 If `$behind > 0`, `AskUserQuestion` once:
 
-> Branch `$head_branch` is `$behind` commits behind `$base_branch`. New
-> findings will be deduped against the artifact's existing finding set
-> and validated against the diff `:review` saw — if `$base_branch` has
-> shifted, validators may reason against stale shared context (callers
-> or helpers on `$base_branch` that have changed since).
+> Branch `$head_branch` is `$behind` commits behind `$base_branch`.$fetch_note
+> New findings will be deduped against the artifact's existing finding
+> set and validated against the diff `:review` saw — if `$base_branch`
+> has shifted, validators may reason against stale shared context
+> (callers or helpers on `$base_branch` that have changed since).
 > Recommend merging `$base_branch` first.
 
 - **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`

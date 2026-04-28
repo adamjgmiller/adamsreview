@@ -5075,9 +5075,9 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_FIX_BODY"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + two-step rev-list + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + fetch-routed rev-list cascade + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
 else
-    fail "BB-2: §7.6a header/fetch/two-step rev-list/stash-pop block/Stop or Abort reference/Proceed-trace missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch/fetch-routed rev-list cascade/stash-pop block/Stop or Abort reference/Proceed-trace missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5094,9 +5094,9 @@ if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
    && grep -qF '`AskUserQuestion` once:' "$BB_ADD" \
    && grep -qF 'branch_behind_base proceeded behind=' "$BB_ADD"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + two-step rev-list + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + fetch-routed rev-list cascade + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
 else
-    fail "BB-3: §3a header/fetch/two-step rev-list/AskUserQuestion grant or §3a invocation/Proceed-trace missing in $BB_ADD"
+    fail "BB-3: §3a header/fetch/fetch-routed rev-list cascade/AskUserQuestion grant or §3a invocation/Proceed-trace missing in $BB_ADD"
 fi
 
 echo
