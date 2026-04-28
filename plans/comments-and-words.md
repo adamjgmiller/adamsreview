@@ -80,7 +80,7 @@ Out of scope (deferred):
 **Phrase markers:** *"Previously..."*, *"Originally..."*, *"Pre-Stage-X.Y..."*, *"prior draft used..."*, *"this was added in PR #..."*, *"changed on YYYY-MM-DD..."*, *"... after Stage N..."*, *"the historical bug where..."*.
 
 **Examples:**
-- `fragments/00-preflight.md:168–173` — *"Pre-Stage-2.8 this timestamp also anchored the Phase 1.5 scrape window, which is why its capture was deliberately pre-mutation; Stage 2.8 moved PR comment filtering onto a code-locality axis (§13.13) so the timing invariant is gone and this field is now metrics-only."* → delete entirely (the field still gets captured; the *why* is irrelevant to the LLM).
+- `fragments/00-preflight.md:169–173` — *"Pre-Stage-2.8 this timestamp also anchored..."* → delete entirely. **Note:** L168 (*"This is the review's start time — consumed by Phase 6 metrics..."*) is operative and PRESERVED.
 - `fragments/promote-core.md:89–107` — 19-line *"Note on the `confirmed_mechanical` + `curr_hc == null` row. Previously a blanket no-op... That was correct only when..."* → delete the entire note; the table row already states *"always proceed."*
 - `fragments/04-scoring-gate.md:62–69` — *"Why chunked, not per-finding. Per-finding fan-out (one Sonnet per candidate) was the original design but was empirically too expensive..."* → delete entirely.
 - `commands/walkthrough.md:115–127` — *"Reading them once at the top of the run avoids the historical bug where §6.5 ran before §6.2's extraction..."* → keep the bash; drop the *"avoids the historical bug"* prose.
@@ -94,9 +94,8 @@ Out of scope (deferred):
 **Phrase markers:** *"Keep in sync with..."*, *"mirrors X — must match"*, *"Edit alongside Y"*, *"the inverse of...; keep aligned"*, *"both readers exist by design"*.
 
 **Examples:**
-- `fragments/08-fix-loader.md:18–23` — *"The `/adamsreview:walkthrough` scope filter (§28, step 3 in `commands/walkthrough.md`) is the **inverse** of this selector... Keep the inverse piece in sync — any edit to the eligibility logic below must mirror into the walkthrough's scope jq."* → delete entire block.
-- `fragments/09-fix-execution.md:13–23` — same pattern as above (mirror direction). Delete.
-- `commands/walkthrough.md:148–149` — *"**Keep the Phase-8-inverse shape in sync with `09-fix-execution.md`; the pre-existing exclusion and score floor are specific to the walkthrough.**"* → delete.
+- `fragments/09-fix-execution.md:17–23` — *"The `/adamsreview:walkthrough` scope filter (§28, step 3 in `commands/walkthrough.md`) is the **inverse** of this selector... Keep the inverse piece in sync — any edit to the eligibility logic below must mirror into the walkthrough's scope jq."* → delete the keep-in-sync block (L17-23 only). PRESERVE L13-15 (operative human_confirmation bypass invariant — current-state documentation tied to the Phase 8 fix-gate).
+- `commands/walkthrough.md:148–149` — *"**Keep the Phase-8-inverse shape in sync with `09-fix-execution.md`...**"* → **PRESERVE** as the canonical sync marker between walkthrough's scope jq and `09-fix-execution.md`'s eligibility jq (cross-LLM-orchestrated invariant — see Pattern D's "Preserve when" rule above and Stage 2.5's spec). The mirrors at `08-fix-loader.md` and `09-fix-execution.md` are still removed in Stage 3.4.
 
 **Preserve when:** the warning protects an invariant between two LLM-orchestrated components that will be edited by future LLM-driven changes (e.g., parallel jq selectors in different fragments where one is the inverse of the other). In that case, preserve a single canonical reminder at the lower-volume site; remove the mirrors at higher-volume sites.
 
@@ -279,7 +278,6 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
 - Apply Pattern B removals: L999–1012 (T9 execution note), L1027 (T8 jq comment), L1099 (Discussion item 2), L1129–1142 (T1, T1.trap historical), L1167 ((R2) tag — keep comment if it explains decision), L1197 (T1 reference in another comment).
 - Apply Pattern G removal: L1234–1241 (`grep -c` idiom tutorial).
 - Apply Pattern A removals: L1190–1206 (forward-references to other fragments using `§13.12`, `commands/add.md` cite, etc.) — the operative rules stand; cross-refs go.
-- Apply Pattern C removal: L1208–1215 (`pending_validation` schema explanation — the jq builder above already sets the value).
 - Apply Pattern A removal: L1261–1264 (joint-dispatch overlap rationale referencing §13.12).
 
 **Hard constraint:** the actual jq builder code, the bash logic, and any `# operative comment that steers a decision` stay. Drop tags and trailing rationale; keep working code.
@@ -322,12 +320,14 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
 - Apply Pattern D removal: L880–887 (defensive maintainer rationale — keep operative *"re-extract per iteration"*; drop the *"if §6.5 runs after the §5 walk loop, $f_file otherwise carries..."* explanation).
 - L148–149 — **PRESERVE** as the single canonical sync marker between walkthrough's scope jq and `09-fix-execution.md`'s eligibility jq (provably-inverse predicates). Future LLM-driven edits to either jq need this marker to know they must mirror. Mirrors at `08-fix-loader.md` L18-23 and `09-fix-execution.md` L13-23 are still removed in Stage 3.4 (walkthrough is canonical because it's the lower-volume invocation).
 - Apply Pattern G removals:
-  - L1014-1032 — **Surgical, not whole-block:**
-    - PRESERVE the bash code itself (the actual `gh issue create` invocation around L1019-1024).
-    - REPLACE the bash comments at L1014-1018 (the multi-line *"Capture gh's full stdout..."* explanation) with one operative comment: `# Capture gh_rc directly; piping gh through awk would swallow gh's exit (pipefail is off here).`
+  - L1013-1032 — **Surgical, not whole-block:**
+    - PRESERVE L1017-1024 (the actual `gh issue create` bash invocation).
+    - REPLACE the four-line bash comments at L1013-1016 with one operative comment: `# Capture gh_rc directly; piping gh through awk would swallow gh's exit (pipefail is off here).`
     - DELETE the standalone prose paragraph at L1026-1032 (post-bash tutorial about awk URL extraction, `tail` vs `awk`, `mktemp` vs PID-based tempfiles).
   - L1167–1172 (`gh api` owner/repo substitution explanation).
-- Apply Pattern F removals: L8–21 (opening intro re-stating description), L1054–1062 (durable-side-effects note), L1314–1325 (Appendix — restates what step 5.5 already says).
+- Apply Pattern F removals:
+  - L8-21 — **Surgical, not whole-block:** PRESERVE sentences that define walkthrough scope, threshold semantics, promote-core semantics with `--defer-publish`, and end-of-run side effects (per Pattern F's preserve list). DELETE only any duplicate-of-frontmatter sentences.
+  - L1054–1062 (durable-side-effects note), L1314–1325 (Appendix — restates what step 5.5 already says).
 - L1298-1313 — **Surgical:** PRESERVE the resumption-state bullet (*"No resumption state file. If you quit mid-walkthrough, the promotions you already made stand. Re-invoking the walkthrough skips them naturally..."*) — operative state-machine claim. DELETE only the three pure-contrast bullets (no fix-run, no disproven handling, no cross-branch).
 
 **Hard constraints:**
@@ -347,8 +347,8 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
   - L206–215 (*"Why chunked, unlike the deep lane"*).
   - L283–288 (`Stage 2.5.B clarification` historical).
   - L326–336 (*"have been observed"* prose → keep operative *"Pipe through `parse-validator-result.py`"*; drop the rationale).
-  - L496–502 (*"Phase 0's dirty-tree gate clears..."* invariant justification).
-  - L559–578 (Wave 2 drop-recovery analysis — keep the operative *"re-dispatch the scoring chunk for any missing ids"* sentence; drop ~16 lines of surrounding analysis).
+  - L496-502 — Apply this exact replacement: *"**Invariant:** Phase 0's dirty-tree gate clears the tree before Phase 1, and Phases 1–5 are tree-read-only. Any uncommitted change discovered post-validation is therefore validator-sourced and safely revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the incident for post-mortem."*
+  - L559-578 — Apply this exact replacement: *"**Drop-recovery for missing scores.** If a chunk-agent drops a finding from its returned array, the missing finding's `score_phase3` would normally default to null. In Wave 2 this is a silent confirmation loss: every Wave 2 candidate is structurally seeded with a single source family, so a null-scored Wave 2 candidate cannot auto-graduate, and the hard 2-wave cap means it will never be retried. Mitigation: when the returned chunk count is shy of the dispatched count, re-dispatch the scoring chunk for any missing ids before applying decisions. The `--apply-decisions --expected $N` guard alone cannot catch this — it sees the chunked-batch step, not the per-id-presence step."*
 - Apply Pattern B removal: L64–66 (*"noted here for symmetry"*).
 - Apply Pattern G removal: L304–312 (validator-helper internals).
 - Apply Pattern A removals: L399–414 (cross-file line citation to `commands/add.md §7.6 lines 551–556` — drop the line ref; keep the awk caveat), L418–422 (mirror reference to add.md guard).
@@ -399,7 +399,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L495–498 — Pattern C (Wave 2 absence justification — keep *"no Wave 2"*; drop the *"the user is adding a bounded set..."* rationale).
 - L507–509 — Pattern A (cross-fragment design-decision cite to §3.8).
 - L558–575 — Pattern A + B (cross-ref to `05-validation.md §4.2` + meta-commentary about why the prompt is inlined; keep the operative rule *"One Opus per candidate"*).
-- L686–697 — Pattern C (multi-paragraph rationale for sweep conditional; keep the conditional bash).
+- L686-697 — Apply this exact replacement: *"When `pre_validator_clean == false`, skip the sweep — without a clean baseline we can't distinguish user state from validator writes, and a blind revert would clobber user work. `/adamsreview:add` has no Phase-0 dirty-tree gate, so this conditional is the only safeguard against that data-loss class."* (Preserves the "only safeguard" claim that documents the data-loss prevention.)
 - L730–740 — Pattern F (*"The contract is the output, not the technique"* explanatory paragraph; replace with one operative sentence).
 - L980–994 — Pattern E (*"What this command does NOT do"*).
 - L996–1000 — Pattern B (*"Defined in this file (rather than as separate fragments)..."* prompt-organization rationale).
@@ -416,7 +416,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 **Group:** `00-preflight.md`, `02-ensemble-adapter.md`, `03-dedup.md`, `04-scoring-gate.md`. Each has a few HIGH-confidence findings; grouping into one stage is appropriate because each individual file would have only 3–9 small edits.
 
 **Spec — `00-preflight.md` (avoid overlap with Phase 1.1 archive sweep):**
-- L3–7 — Pattern F (preamble).
+- L3-7 — **Surgical, not whole-block:** PRESERVE the sentence *"This phase is mostly deterministic shell — the only LLM call is the Sonnet user-facing-change classifier (step 0.9), and that's skipped in trivial mode."* (phase-scope invariant per Pattern F's preserve list). DELETE only any duplicate-of-frontmatter sentences — typically the opening line that re-states what the fragment does.
 - L49–51 — Pattern A + B (cross-reference rationale for code reorg).
 - L88–90 — Pattern B (justifies why code lives here).
 - L99–101 — Pattern C (comparison_ref vs base_branch rationale; confirm operative directive remains).
@@ -441,8 +441,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L242–246 — Pattern A (`§13.7` cross-ref).
 
 **Spec — `04-scoring-gate.md`:**
-- L62–69 — Pattern C (*"Why chunked, not per-finding"* historical paragraph) — already in Pattern C primary example list.
-- L194–200 — Pattern B (schema note explanation).
+- L62-69 — Apply this exact replacement: *"Chunk into batches of at most 25 candidates per Sonnet sub-agent. Unbounded batches collapse score resolution onto the rubric anchors (every score landing on 0/25/50/75/100) and stop using parallelism on large reviews — the 25-cap restores both."*
 - L228–249 — Pattern B + A (cross-references plan #24, restates what code does).
 
 **Hard constraints:**
@@ -472,7 +471,6 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 
 **Spec — `08-fix-loader.md`:**
 - L1–11 — Pattern F (long preamble).
-- L18–23 — Pattern D (*"Keep the inverse piece in sync"* — already in Pattern D primary list).
 - L222–223 — Pattern A (DESIGN §6 schema cite).
 - L236–239 — Pattern B (schema design factoid).
 
@@ -481,13 +479,13 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 
 **Spec — `09-fix-execution.md`:**
 - L1–8 — Pattern F (sectional preamble).
-- L13–23 — Pattern D (*"Keep the inverse piece in sync"* — same as 08).
+- L17-23 — Pattern D removal (the keep-in-sync block only). PRESERVE L13-15 (operative human_confirmation bypass invariant — current-state documentation tied to the Phase 8 fix-gate).
 - L124–126 — Pattern B (multi-clause parenthetical about hard-abort; keep *"surface the error and abort"*).
 - L133–136 — Pattern B (state-machine narrative).
 
 **Hard constraints:**
 - The fix-group editor agent prompt blockquote (~§8.5) is preserved untouched.
-- The fenced fix-group editor agent prompt body in §8.5 (opens at L148, runs through ~L290) is preserved in its entirety. Any line range falling inside this fence is out of scope for Stage 3.4.
+- The fenced fix-group editor agent prompt body in §8.5 (opens at L146, closes at L266) is preserved in its entirety. Any line range falling inside this fence is out of scope for Stage 3.4.
 - The Pattern D mirrors at `08-fix-loader.md` L18–23 and `09-fix-execution.md` L13–23 are removed here, but the canonical sync marker at `walkthrough.md` L148–149 is preserved (per Stage 2.5 / Fix 13). If Fix 13 is reverted later, restore at minimum one of these mirrors.
 
 **Verify:** smoke + spot-read the fix-loader's eligibility-filter logic and the fix-execution's group-dispatch logic.
@@ -497,7 +495,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 #### Stage 4.1: Full diff review + smoke + sanity
 
 **Spec:**
-1. `git diff main...HEAD --stat` → confirm scope (only `commands/*.md` + `fragments/*.md` modified; no helper / no schema / no test / no CLAUDE.md changes).
+1. `git diff <execution-start-sha>..HEAD --stat` (using the SHA captured at the start of cleanup execution, not `main`) → only `commands/*.md`, `fragments/*.md`, and `plans/comments-and-words-execution.md` modified. The plan file itself (`plans/comments-and-words.md`) is part of the branch baseline and is expected to be already-committed before execution begins.
 2. `test/smoke.sh` → PASS (exact assertion count vs `main` baseline; should be unchanged).
 3. Full diff hand-read pass: every removal traces to one of Patterns A–G. Anything that doesn't is reverted.
 4. Cross-fragment consistency check:
@@ -599,7 +597,7 @@ The audit identified MEDIUM-confidence verbosity items that this plan does NOT t
 - **`03-dedup.md` L99-130 (C1/C2 reconciliation rationale)** — the prose encodes (a) C1's same-origin-lowest rule, (b) C2's cross-origin cap rule, (c) an order-independence proof, and (d) the F038 rename-follow trade-off. The jq at L184-204 encodes (a)+(b) but not (c)+(d). Compression requires explicit-replacement-text drafted in advance, not heuristic trim. Defer to a follow-up plan.
 - Compressing rationale-into-one-liners in:
   - `05-validation.md` light-lane prompt opening (L217–232).
-  - `09-fix-execution.md` "What to do" rationale tails (L213–244).
+  - ~~`09-fix-execution.md` "What to do" rationale tails (L213-244)~~ — REMOVED from deferred work: this content is inside the §8.5 preserved fix-group editor agent prompt body. Any future compression of dispatched prompt bodies is a separate redesign exercise, not a comments-and-words sweep target.
 - Restructuring `commands/walkthrough.md` *"What it does"* TOC (L38–58) — borderline-operative; treat in a follow-up.
 - The lens-ux-reference.md *"Diagnostic message quality"* section (L31–50) — examples genuinely shape judgment but are heavier than the rest of the file.
 - General markdown re-flow / tightening of bullet-list grammar.
