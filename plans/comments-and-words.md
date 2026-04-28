@@ -181,7 +181,7 @@ THEN preserve those bullets and delete only the pure-contrast ones around them.
 
 ## Stages
 
-### Phase 0 — Pre-execution safety sweep + fixture build (must complete before Phase 1)
+### Phase 0 — Pre-execution safety sweep (must complete before Phase 1)
 
 #### Stage 0.0: Capture execution-start SHA
 
@@ -209,14 +209,6 @@ Cross-check every Phase 2 / Phase 3 stage's cited line range against this list. 
 This sweep is structural insurance against the most-impactful failure mode (editing dispatched prompt-body content). Costs ~30 seconds; would have caught Fix 1's CRITICAL issue preventively.
 
 **Verify:** the annotated list shows every fenced block; every Phase 2/3 stage's cited ranges have been cross-checked and fall outside sub-agent prompt blockquotes.
-
-#### Stage 0.2: Behavioral fixture build (out of scope but blocking)
-
-Stage 4.1's behavioral fixture diff (Fix 2) requires a pinned target + expected `artifact.json` snapshot under `test/fixtures/`. Building that fixture is OUT OF SCOPE for this cleanup plan, but it is BLOCKING for Stage 4.1's verify gate. If the fixture does not yet exist, either:
-- (a) build it as a separate task before kicking off `/orchestrate`, or
-- (b) execute Phases 1-3 with Stage 4.1's behavioral test downgraded to "best-effort hand verification of artifact shape on a real PR" — accepting the structural verify-gate gap.
-
-The user should be asked to choose (a) or (b) before Phase 1 begins.
 
 ### Phase 1 — Mechanical sweeps (sequential, lock the tree)
 
@@ -521,8 +513,9 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
    - `grep -nE '\b(T1|T8|T9|R2)\b' fragments/01-detection.md` → zero or operative-only.
    - `grep -nE '^### Working-set delta' fragments/*.md` → zero.
 5. Run `claude --plugin-dir "$(pwd)" /adamsreview:review --help` (or equivalent dev-run) to confirm the orchestrator can still load the prompt without parse errors.
-6. **Behavioral fixture diff (BLOCKING).** Run `/adamsreview:review` against a pinned target (a tagged commit committed under `test/fixtures/` for this purpose; see Phase 0 below). Diff the resulting `artifact.json` against an expected snapshot for: `findings[].id` set, `disposition` per id, `score_phase4` ± 5 tolerance per id, `actionability` per id. Material drift in any of these = revert the offending stage and re-spec.
-7. Optional sanity: a real `/adamsreview:review` against a small test PR or fixture, if a target is available. **Don't gate on this — it's confirmation, not blocking.**
+6. Optional sanity: a real `/adamsreview:review` against a small test PR or fixture, if a target is handy. **Don't gate on this — it's confirmation, not blocking.**
+
+**Final validation is the user's, post-execution.** These verify gates are best-effort to make the cleanup most likely to land cleanly; the actual quality check is the user's manual evaluation against real repos after `/orchestrate` finishes. If that evaluation surfaces drift in finding sets / dispositions / scores, the user reverts the offending stage(s) and re-specs.
 
 #### Stage 4.2: Plugin version bump
 
@@ -530,7 +523,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 
 **Decision:** these are prompt-content changes, not behavioral. Per CLAUDE.md: *"Skip for docs-only / test-only / pure-refactor changes."* Argue this falls under "pure refactor of prompts" — the LLM should produce identical outputs. **Default: skip the version bump.**
 
-But — token cost is user-observable (cumulative spend lines in the published comment will be lower; the statusline `ctx:` badge will move). Treat that as user-visible if any baseline measurements change materially. **Decision rule:** tied to Stage 4.1's behavioral fixture test (Fix 2). If the artifact diff shows ANY drift in `findings[]` set / `disposition` per id / `score_phase4` band — that is a behavioral change. Either revert the offending stage, or, if drift is acceptable per human review, bump patch (`0.2.5 → 0.2.6`). If no drift, skip the bump even if line count dropped substantially. Token-cost reduction alone is not a user-visible behavior change.
+**Decision rule:** default skip. Token-cost reduction alone is not a user-visible behavior change. If the user's post-execution manual evaluation against real repos surfaces drift in finding sets / dispositions / score bands, bump patch (`0.2.5 → 0.2.6`) at that point — but only after deciding whether to revert the drift-causing stage instead.
 
 #### Stage 4.3: CLAUDE.md drift check
 
