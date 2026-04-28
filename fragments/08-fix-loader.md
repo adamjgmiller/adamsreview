@@ -244,10 +244,15 @@ If `$behind > 0`, `AskUserQuestion` once:
       git stash pop || true
   fi
   ```
-- **(b) Proceed.** Append a trace line and continue:
+- **(b) Proceed.** Append a trace line and continue. Logs `merge_ref`
+  and `fetch_ok` alongside the count so an operator reading `trace.md`
+  later can tell which ref the count was measured against and whether
+  the active fetch succeeded — parity with `:review` §0.6a's
+  `comparison_ref=` audit signpost.
   ```bash
-  printf '[%s] branch_behind_base proceeded behind=%s\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" >> "$trace_log_path"
+  printf '[%s] branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
+      >> "$trace_log_path"
   ```
 - **(c) Abort.** Run the same stash-pop block as (a) and exit 0 with `Aborted.`.
 

@@ -5096,7 +5096,7 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -q 'git stash pop || true' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
-   && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_FIX_BODY"; then
+   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_FIX_BODY"; then
     pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
 else
     fail "BB-2: §7.6a header/fetch/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop block/Stop AND Abort references/Proceed-trace missing in $BB_FIX (§7.6a slice)"
@@ -5124,7 +5124,7 @@ if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
    && grep -qF 'fetch_note=' <<<"$BB_ADD_BODY" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
    && grep -qF '`AskUserQuestion` once:' <<<"$BB_ADD_BODY" \
-   && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_ADD_BODY"; then
+   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY"; then
     pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
 else
     fail "BB-3: §3a header/fetch/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace missing in $BB_ADD (§3a slice)"
