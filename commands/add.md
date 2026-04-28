@@ -61,22 +61,24 @@ sequencing matters:
 2. **Hard abort if any finding is `current_state == attempted`.**
    Mirrors `/adamsreview:fix` Phase 7's leftover-attempted gate. Adding
    findings while the artifact is mid-mutation is a footgun.
-3. Build candidate findings — either via the structured one-shot, the
+3. **Branch-behind-base advisory.** Active fetch + behind-count vs
+   `$base_branch`; if behind, `AskUserQuestion` (Stop / Proceed / Abort).
+4. Build candidate findings — either via the structured one-shot, the
    paste normalizer, or both (mixed mode = paste + `--impact` override).
-4. Dedup against existing findings (one Sonnet call) unless
+5. Dedup against existing findings (one Sonnet call) unless
    `--no-dedup` is set. Matched candidates merge `sources[]` into the
    existing finding; unmatched proceed to validation.
-5. Assign new IDs continuing past the highest existing F-id (via
+6. Assign new IDs continuing past the highest existing F-id (via
    `assign-finding-ids.sh --start-from`).
-6. `--add-finding` loop to land the new candidates into `artifact.json`.
-7. Phase 4 validation, lane-aware (Opus deep / Sonnet light), no Wave 2
+7. `--add-finding` loop to land the new candidates into `artifact.json`.
+8. Phase 4 validation, lane-aware (Opus deep / Sonnet light), no Wave 2
    chain retry. `--apply-decisions` batched call writes the §13.1
    dispositions.
-8. Re-render `artifact.md` and re-publish to the existing `comment_id`.
-9. Append a `## add (<ts>)` block to `trace.md` and print a user-visible
-   summary.
+9. Re-render `artifact.md` and re-publish to the existing `comment_id`.
+10. Append a `## add (<ts>)` block to `trace.md` and print a user-visible
+    summary.
 
-**Build a TaskList that mirrors steps 1–9 below.** Mark each
+**Build a TaskList that mirrors the steps above** (1–10). Mark each
 `in_progress` when starting, `completed` when done.
 
 ## Sub-agent dispatch pattern
@@ -218,8 +220,10 @@ Append a one-line `add_rejected_leftover_attempted: ids=...` entry to
 ### 3a. Branch-behind-base advisory
 
 Active fetch — the artifact's review-time freshness snapshot may have
-aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`,
-fall back to local on fetch failure or no-remote.
+aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`
+(refreshed by the fetch when possible; may be a stale remote-tracking
+ref if the fetch failed), fall back to local `<base>` if `origin/<base>`
+doesn't resolve at all.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
@@ -235,9 +239,11 @@ a precondition.
 If `$behind > 0`, `AskUserQuestion` once:
 
 > Branch `$head_branch` is `$behind` commits behind `$base_branch`. New
-> findings will be validated against the diff `:review` saw, and
-> `$base_branch` may have shifted shared context since. Recommend
-> merging `$base_branch` first.
+> findings will be deduped against the artifact's existing finding set
+> and validated against the diff `:review` saw — if `$base_branch` has
+> shifted, validators may reason against stale shared context (callers
+> or helpers on `$base_branch` that have changed since).
+> Recommend merging `$base_branch` first.
 
 - **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`
 - **(b) Proceed.** Append a trace line and continue:

@@ -189,8 +189,10 @@ Capture `latest_known_sha`, `staleness_verdict`.
 ### 7.6a. Branch-behind-base advisory
 
 Active fetch — the artifact's review-time freshness snapshot may have
-aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`,
-fall back to local on fetch failure or no-remote.
+aged since `:review` ran. Two-step rev-list: prefer `origin/<base>`
+(refreshed by the fetch when possible; may be a stale remote-tracking
+ref if the fetch failed), fall back to local `<base>` if `origin/<base>`
+doesn't resolve at all.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")

@@ -5059,16 +5059,25 @@ else
 fi
 
 BB_FIX="$REPO/fragments/08-fix-loader.md"
-if grep -q '### 7.6a. Branch-behind-base advisory' "$BB_FIX" \
-   && grep -qF 'git fetch origin "$base_branch" --quiet' "$BB_FIX" \
-   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_FIX" \
-   && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_FIX" \
-   && grep -qF '|| echo 0' "$BB_FIX" \
-   && grep -q 'git stash pop || true' "$BB_FIX" \
-   && grep -qF 'branch_behind_base proceeded behind=' "$BB_FIX"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + two-step rev-list + stash-pop on Stop/Abort + Proceed trace)"
+# Section-extract §7.6a body so assertions can't be satisfied by content
+# from §7.6 or earlier — `git stash pop || true` also appears in §7.6's
+# staleness-abort block, so a file-scoped grep would pass even if §7.6a's
+# stash-pop bash were deleted. (a) Stop and (c) Abort each reference the
+# §7.6a stash-pop block via a distinct prose anchor; pin both so a future
+# edit that drops the Abort path (while keeping Stop's) fails BB-2.
+BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX")
+if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git fetch origin "$base_branch" --quiet' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_FIX_BODY" \
+   && grep -qF '|| echo 0' <<<"$BB_FIX_BODY" \
+   && grep -q 'git stash pop || true' <<<"$BB_FIX_BODY" \
+   && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
+   && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_FIX_BODY"; then
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + two-step rev-list + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
 else
-    fail "BB-2: §7.6a header/fetch/two-step rev-list/stash-pop/Proceed-trace missing in $BB_FIX"
+    fail "BB-2: §7.6a header/fetch/two-step rev-list/stash-pop block/Stop or Abort reference/Proceed-trace missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"

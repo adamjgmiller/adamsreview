@@ -197,10 +197,11 @@ to exist.
 
 ### 0.6a. Branch-behind-base advisory
 
-Step 0.2a already fetched, so this is passive — `$comparison_ref` is the
-freshest base ref available. When HEAD is behind it, the lens diff
-includes phantom deletions for code that landed on the base after this
-branch was cut.
+Step 0.2a already attempted a fetch, so this is passive — `$comparison_ref`
+is whatever ref freshness-gate.sh produced (which may still be local on
+`no_remote` / `no_fetch`). When HEAD is behind it, the lens diff includes
+phantom deletions for code that landed on the base after this branch was
+cut.
 
 ```bash
 behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null || echo 0)
