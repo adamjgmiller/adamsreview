@@ -42,7 +42,7 @@ Otherwise, capture the list as `xc_input_json` and proceed.
 Launch one `Agent` tool-use with `model: opus`. No tool access needed;
 input is the serialized findings in the prompt.
 
-Prompt essence (per §19.7):
+Prompt essence:
 
 > You are reviewing a set of confirmed, actionable deep-lane findings
 > to identify cross-cutting concerns — findings whose fixes must happen
@@ -155,10 +155,3 @@ log-phase.sh \
     --argjson groups "$group_count" \
     '{name:"cross-cutting", elapsed_sec:$elapsed, counts_by_state:{}, counts_by_disposition:{}, cross_cutting_groups:$groups, delta:"\($groups) groups emitted"}')"
 ```
-
-### Working-set delta after Phase 5
-
-- `artifact.cross_cutting_groups` populated (possibly `[]`).
-- `tokens.jsonl` + one entry for the cross-cutting sub-agent.
-- `phases.jsonl` + one Phase 5 record (with a skip note if no
-  deep-lane actionable findings existed).

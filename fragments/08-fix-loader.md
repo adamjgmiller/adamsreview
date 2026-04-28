@@ -1,14 +1,5 @@
 ## Phase 7 — Load artifact + gates (fix command)
 
-Phase 7 sets up every downstream fix-run variable from the artifact on
-disk, applies the four gates (leftover-`attempted` hard abort, clean
-tree, staleness, PR eligibility), and generates the run identity.
-Mostly deterministic shell — no LLM calls.
-
-Work through the steps below in order. Capture each named variable
-into your working context — later phases will reference them by name
-("the `run_id` captured in Phase 7").
-
 ### 7.1. Resolve argument flags
 
 Parse `$ARGUMENTS` (whitespace-split):
@@ -16,7 +7,7 @@ Parse `$ARGUMENTS` (whitespace-split):
 - `--granular-commits` → `granular_commits=true` (else `false`).
 - Any other token → stop and ask the user to clarify.
 
-If no integer was provided, `threshold=60` (DESIGN §13.2). Record both
+If no integer was provided, `threshold=60`. Record both
 in your working context.
 
 ### 7.2. Locate the artifact via `latest.txt`
@@ -28,7 +19,7 @@ repo_root=$(git rev-parse --show-toplevel)
 ```
 
 Derive `repo_slug` via the shared helper — identical call to Phase 0
-step 0.3 so the two phases resolve the same directory (DESIGN §9.2):
+step 0.3 so the two phases resolve the same directory:
 
 ```bash
 repo_slug=$(repo-slug.sh --repo-root "$repo_root")
@@ -67,7 +58,7 @@ artifact-validate.sh --path "$artifact_path"
 ```
 
 On non-zero: log the validator stderr to `trace.md`, dump a copy to
-`/tmp/adams-review-invalid-$(date -u +%Y%m%dT%H%M%SZ).json` per §24.3,
+`/tmp/adams-review-invalid-$(date -u +%Y%m%dT%H%M%SZ).json`,
 and abort. A schema-invalid artifact means something upstream broke
 the invariant; do NOT try to "fix" by patching — surface to the user.
 
@@ -121,7 +112,7 @@ Dispatch `AskUserQuestion` once with two options:
 - **Stash my changes, run fix, restore** (recommended). Run
   `git stash push --include-untracked -m "pre-adams-review-fix-stash"`
   immediately. Capture `stash_taken=true`. If the stash command fails
-  (lock contention, invalid state): log stderr, abort per §24.2 —
+  (lock contention, invalid state): log stderr, abort —
   user resolves.
 - **Stop so I can handle them first** — exit 0 with a one-line
   message; do NOT mutate state.
@@ -169,7 +160,7 @@ else
         staleness_verdict="warn"   # stdout starts with "warn:"
         printf 'staleness: %s\n' "$staleness_stdout" >> "$trace_log_path"
     else
-        # unsafe: abort per §4 Phase 7 step 6.
+        # unsafe: abort.
         printf 'staleness: %s\n' "$staleness_stdout" >> "$trace_log_path"
         echo "Reviewed files have changed since the last known-good SHA." >&2
         echo "$staleness_stdout" >&2
@@ -306,13 +297,10 @@ If `$behind > 0`, `AskUserQuestion` once:
       >> "$trace_log_path"
   ```
 - **(b) Proceed.** Append a trace line and continue. Logs `merge_ref`
-  and `fetch_ok` alongside the count so an operator reading `trace.md`
-  later can tell which ref the count was measured against and whether
-  the active fetch succeeded — mirrors `:review` §0.6a's
-  Proceed-on-warning pattern; the active variants additionally log
-  `merge_ref` and `fetch_ok` because the fetch may have failed and the
-  gate may have measured against a different ref than the user is told
-  to merge.
+  and `fetch_ok` because the active fetch may have failed and the gate
+  may have measured against a different ref than the user is told to
+  merge — `:review` §0.6a's passive variant skips them since
+  `$comparison_ref` is the only ref in play.
   ```bash
   printf '[%s] branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
@@ -362,7 +350,7 @@ pr_is_draft=$(jq -r '.isDraft' <<<"$pr_json")
   the abort surfaces).
 - `state == "OPEN"` → proceed. Capture `pr_state="draft"` if
   `isDraft` else `"open"`.
-- Any `gh` error (auth, network) → surface stderr per §24.2. Pop
+- Any `gh` error (auth, network) → surface stderr. Pop
   stash if taken, then abort. The abort should NOT try to re-run
   `gh pr view` — it already failed; don't compound the error.
 
@@ -371,9 +359,8 @@ fixes still run (they just don't publish to a PR comment in 9e).
 
 ### 7.8. Generate `run_id` and capture `input_sha`
 
-Per DESIGN §6 schema, `fix_attempts[].run_id` must match
-`^fixrun_[A-Za-z0-9]+$`. Prefer ULID; fall back to timestamp + random
-tail (same pattern as Phase 0 step 0.15):
+`fix_attempts[].run_id` must match `^fixrun_[A-Za-z0-9]+$`. Prefer
+ULID; fall back to timestamp + random tail:
 
 ```bash
 if ulid=$(uv run --with ulid-py python3 -c 'import ulid; print(ulid.new())' 2>/dev/null); then
@@ -386,9 +373,7 @@ fi
 input_sha=$(git rev-parse HEAD)
 ```
 
-Capture `run_id`, `input_sha`. The pair `(run_id, fix_group_id)`
-uniquely identifies a specific group across the lifetime of the
-project (§24.4); `fix_group_id` alone only scopes within `run_id`.
+Capture `run_id`, `input_sha`.
 
 Append a working-set record to `trace.md`:
 
@@ -397,24 +382,3 @@ printf 'phase_7_ready run_id=%s input_sha=%s threshold=%s granular=%s staleness=
     "$run_id" "$input_sha" "$threshold" "$granular_commits" "$staleness_verdict" "${stash_taken:-false}" \
     >> "$trace_log_path"
 ```
-
-### Working-set delta after Phase 7
-
-- **Loaded from artifact** (§25.1): `review_id`, `review_dir`,
-  `artifact_path`, `base_branch`, `head_branch`, `reviewed_sha`,
-  `reviewed_files_all`, `claude_md_paths`, `mode`, `pr_number`,
-  `pr_state`, `comment_id`, `trivial_mode`, `reviewer_sources`, all
-  log paths.
-- **Fix-run-specific** (§25.2): `threshold`, `granular_commits`,
-  `run_id`, `input_sha`, `latest_known_sha`, `staleness_verdict`,
-  `stash_taken`.
-- **Gates passed**: leftover-attempted clear, tree clean (or stashed),
-  staleness safe or warn, PR open (or local mode).
-- **Helper paths** (convenience for later phases — every path is
-  absolute so no cwd assumption leaks in):
-  - `log-phase.sh`, `artifact-patch.py`, `artifact-read.sh`,
-    `artifact-validate.sh`, `artifact-render.py`,
-    `artifact-publish.sh`, `group-fixes.py`, `staleness.sh`,
-    `log-tokens.sh`.
-
-Phase 8 reads these by name.

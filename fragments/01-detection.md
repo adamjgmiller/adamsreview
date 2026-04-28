@@ -156,8 +156,8 @@ and continue to step 1.3.
 
 **When `ensemble_mode == true`:**
 
-Create the scratch directory for CLI outputs (DESIGN §9.3 keeps
-`$review_dir` free of transient noise):
+Create the scratch directory for CLI outputs (keeps `$review_dir`
+free of transient noise):
 
 ```bash
 scratch_dir="/tmp/adams-review-$review_id"
@@ -731,11 +731,10 @@ freely):
 
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 
-Per DESIGN §13.12, the dispatch turn also launches the external
-reviewers and PR scrape when `ensemble_mode=true`. These run as
-tool-use blocks in the same orchestrator turn as the lens `Agent`
-dispatches above — waiting a turn between them serializes what's
-meant to be parallel and negates the whole point of §13.12.
+When `ensemble_mode=true`, the dispatch turn also launches the
+external reviewers and PR scrape. These run as tool-use blocks in the
+same orchestrator turn as the lens `Agent` dispatches above — waiting
+a turn between them serializes what's meant to be parallel.
 
 Total tool-use blocks in the dispatch turn:
 
@@ -801,7 +800,7 @@ For each sub-agent result, in the order it returns:
    `lens_7_holistic`. The paired per-finding `sources[]` entry — used in
    the jq builder at step 1.5 — is the shorter lens tag: `L1-diff-local`,
    `L2-structural`, `L3-claude-md`, `L4-comments`, `L5-ux`, `L6-security`,
-   `L7-holistic` (DESIGN §6).
+   `L7-holistic`.
 
 2. **Light JSON repair** if the output isn't a parseable array — strip code
    fences, extract the JSON block. If still unparseable, retry once with
@@ -876,7 +875,7 @@ For each sub-agent result, in the order it returns:
    Tag each corrected candidate with `sources: [<lens-tag>]` so the
    join step's helper (`assign-finding-ids.sh`) can sort by source
    priority. The lens-tag is the same short tag used in the token log
-   above (`L1-diff-local`, `L2-structural`, etc., per DESIGN §6):
+   above (`L1-diff-local`, `L2-structural`, etc.):
 
    ```bash
    tagged=$(echo "$corrected_candidates" \
@@ -981,7 +980,7 @@ on stdin.
 
 The jq builder canonicalizes `source_family` inline (function
 `fam_canonical`, co-located with its callers), shapes each candidate
-to the full DESIGN §6 finding schema, and emits a
+to the full finding schema, and emits a
 `{findings, drift}` object: `findings` is the array we send to the
 helper; `drift` is the unknown-family audit lines we append to
 `trace.md` so the next mapping-table update surfaces from inspection
@@ -996,20 +995,7 @@ is the alternate canonical reader for ad-hoc debugging; this is the
 hot-path Phase 1 reader). `test/smoke.sh` AF-DRIFT enforces the
 agreement.
 
-**Execution note (T9).** Steps 3 and 4 in this section MUST run
-inside a single `Bash(...)` invocation. The shell variables (`$ided`,
-`$build_result`, `$findings_array`) are large and pulling them
-through the orchestrator transcript between two Bash calls negates
-the batched-helper context win. If the orchestrator absolutely must
-split (e.g., to insert a tool-use between sub-steps), the only safe
-split point is **after the jq builder runs, before the helper call**:
-write `$findings_array` (the jq builder's full schema-shaped output —
-NOT the pre-builder `$ided` candidate pool, which the helper would
-reject as `schema_invalid` for every entry) to
-`$scratch_dir/phase1_findings.json` at the end of the jq build, then
-read it back via `--add-findings @$scratch_dir/phase1_findings.json`
-in the next Bash call. Scratch files don't enter the transcript;
-ad-hoc command-line arguments do.
+Run steps 3 and 4 in a single `Bash(...)` invocation. If a split is unavoidable, split only after the jq builder runs — write the schema-shaped `$findings_array` (not the pre-builder `$ided`, which the helper rejects as `schema_invalid`) to `$scratch_dir/phase1_findings.json`, then read it back via `--add-findings @<file>` in the next Bash call.
 
 ```bash
 # Single jq pass: canonicalize source_family, build full schema-shaped
@@ -1024,7 +1010,7 @@ build_result=$(printf '%s' "$ided" | jq -c --argjson trivial "$trivial_mode" '
   # while map_family() returns None for empty/non-string after the
   # strip+lookup).
   #
-  # T8 — type-guard against non-string $raw. map_family() returns
+  # Type-guard against non-string $raw. map_family() returns
   # None for non-strings (`if not isinstance(raw, str): return None`).
   # A naive `($raw // "")` here handles null, but if a malformed lens
   # emits source_family as a number / boolean / array / object, the
@@ -1096,7 +1082,7 @@ build_result=$(printf '%s' "$ided" | jq -c --argjson trivial "$trivial_mode" '
 
 findings_array=$(printf '%s' "$build_result" | jq -c '.findings')
 
-# Phase-1 sanity check (Discussion item 2 resolution): the jq builder
+# Phase-1 sanity check: the jq builder
 # above should produce one element per input candidate. If the count
 # drops here, jq dropped candidates via select() / del / null-handling
 # — that's a structural bug in the jq builder, distinct from
@@ -1123,25 +1109,14 @@ fi
 # command body still holds it as a shell variable, but never crosses
 # the process boundary as text. Continue-on-error: rejected findings
 # emit `add-findings-rejected:` lines on stderr; we drain them
-# synchronously into trace.md (T1 — see below) and the orchestrator
+# synchronously into trace.md and the orchestrator
 # transcript; accepted findings commit in one atomic write.
-#
-# T1 — synchronous stderr capture instead of process substitution.
-# Earlier draft used `2> >(tee -a "$trace_log_path" >&2)` (background
-# subshell, async). That was safe for Phase 1.6's later grep (the
-# pipeline drains by then) but RACED with the immediate
-# `phase_1_add_findings_total_failure:` grep in this same block —
-# `tee` could still be flushing while we read the count, producing
-# misleading `rejected=0` tags when 50 rejections actually happened.
-#
-# The synchronous tempfile pattern below preserves the dual-emission
-# property of the old `tee` (stderr lines visible to BOTH trace.md
-# AND the orchestrator transcript) while making the post-helper grep
-# deterministic. The lens-dispatch sites earlier in this fragment can
-# stay on `2> >(tee ...)` because nothing reads trace.md immediately
-# afterward — only this site needs the synchronous form.
+# Synchronous capture (not `2> >(tee ...)`) because the next line
+# reads trace.md and an async pipe could still be flushing — the
+# lens-dispatch sites earlier in this fragment can stay on `tee`
+# because nothing reads trace.md until later.
 stderr_capture=$(mktemp)
-# T1.trap — guarantee cleanup on any early exit between mktemp and the
+# Guarantee cleanup on any early exit between mktemp and the
 # explicit rm -f below. Without the trap, a non-zero exit from the
 # `landed_n` artifact-read.sh below (or any future addition in this
 # block) leaks the tempfile into /tmp until the OS reaper runs.
@@ -1164,7 +1139,7 @@ if [[ "$add_rc" != "0" ]]; then
         --filter '.findings | length')
     printf 'phase_1_add_findings_failed: rc=%s landed=%s see trace.md for per-rejection detail\n' \
         "$add_rc" "$landed_n" >> "$trace_log_path"
-    # Distinct loud-failure surface (R2) for the catastrophic case
+    # Distinct loud-failure surface for the catastrophic case
     # (every candidate dropped). Phase 2 dedup's empty-pool guard
     # would also catch this, but a discrete tag in trace.md /
     # phases.jsonl makes "Phase 1 silently lost the entire pool"
@@ -1189,21 +1164,18 @@ rm -f "$stderr_capture"
 
 For trivial-mode runs (`trivial_mode=true`), the jq builder above
 forces `validation_lane="light"` for every candidate — Phase 4b
-handles the whole pool per §19.6. The `$trivial` argjson binding
+handles the whole pool. The `$trivial` argjson binding
 drives that branch so the stored lane is honest.
 
 Continue-on-error per finding: `--add-findings` rejects bad
 candidates by emitting one `add-findings-rejected:` line per drop on
-stderr (drained synchronously into `trace.md` per T1) and still
+stderr (drained synchronously into `trace.md`) and still
 commits the rest of the batch in a single atomic write. The
 orchestrator does NOT retry per-candidate — Phase 1.6's summary
 surfaces a non-zero `add_findings_rejected` count when drops happen,
 and `add_findings_total_failures` (catastrophic case: zero findings
 landed despite a non-empty pool) is a distinct loud-failure tag.
-`--add-finding` (singular) remains supported and is still the form
-used by Wave 2 (`fragments/05-validation.md` step 4.5) and
-`/adamsreview:add` (`commands/add.md` step 6) — only the Phase 1 join
-site migrates here.
+`--add-finding` (singular) remains supported.
 
 **`pending_validation` is the Phase-1 parking disposition.** Schema
 requires `disposition` non-null, so we can't leave it unset.
@@ -1233,12 +1205,6 @@ total_candidates=$(artifact-read.sh \
 # Surface Phase 1's loud-failure audit tags so the operator sees a non-
 # zero count in the trace + phases.jsonl summary rather than having to
 # grep trace.md themselves. Both zero on a healthy run.
-#
-# `grep -c … || true` matches 00-preflight.md's idiom. `grep -c` outputs
-# "0" to stdout on zero matches but exits 1 — `|| true` swallows the
-# non-zero so the assignment cleanly captures "0". Do NOT use `|| echo
-# 0` here: grep already prints "0" on no-match, so the fallback would
-# concatenate another "0" and the variable becomes "0\n0".
 lens_drops=$(grep -c '^lens_dropped_unparseable:' "$trace_log_path" 2>/dev/null || true)
 oc_skipped=$(grep -c '^origin_crosscheck_skipped:' "$trace_log_path" 2>/dev/null || true)
 add_findings_rejected=$(grep -c '^add-findings-rejected:' "$trace_log_path" 2>/dev/null || true)
@@ -1258,17 +1224,5 @@ log-phase.sh \
     '{name:$name, elapsed_sec:$elapsed, counts_by_state:{open:$total}, counts_by_disposition:{pending_validation:$total}, delta:"+\($total) open"}')"
 ```
 
-Under joint dispatch (§13.12), `phase_1_elapsed` and the Phase 1.5
-elapsed logged by `02-ensemble-adapter.md` step 1.5.7 will overlap
-because both phases share a dispatch-turn start boundary. That overlap
-is the intended observability signal.
+Under `--ensemble`, `phase_1_elapsed` and Phase 1.5's elapsed will overlap — both phases share a dispatch-turn start boundary; the overlap is the intended observability signal.
 
-### Working-set delta after Phase 1
-
-- `internal_candidates` (orchestrator-context pool) was built during
-  1.4 and consumed at 1.5.
-- `artifact.findings[]` populated with IDed candidates at 1.5.
-- `tokens.jsonl` grew one entry per lens sub-agent.
-- `phases.jsonl` grew a Phase 1 record (ts overlaps Phase 1.5's under
-  `--ensemble` per §13.12).
-- `trace.md` grew a Phase 1 section.

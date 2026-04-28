@@ -1,11 +1,7 @@
 ## Promote core — precondition, patch, trace
 
 Shared fragment used by both `/adamsreview:promote` and
-`/adamsreview:walkthrough` (§28). Implements the middle steps of the
-promote flow — reading the finding, enforcing preconditions, resolving
-the `fix_hint` (with the doc/comment-vs-code heuristic), building the
-`human_confirmation` object, applying the atomic patch, and appending
-the trace entry. See DESIGN §27.
+`/adamsreview:walkthrough`.
 
 ### Contract
 
@@ -86,25 +82,17 @@ For each exit-1 case, print a clear user message AND emit a one-line
 `## promote (<ts>) — rejected` block to `trace.md` so rejections are
 auditable.
 
-**Note on the `confirmed_mechanical` + `curr_hc == null` row.** Previously a
-blanket no-op ("already confirmed_mechanical by validator"). That was correct
-only when the finding would also pass the §13.1 eligibility gate at
-the threshold the user plans to fix at — which promote can't know.
-Examples where the old no-op silently broke promote:
+Cases where `confirmed_mechanical` + `curr_hc == null` still needs
+`human_confirmation` to bypass downstream gates:
 
 - Light-lane `confirmed_mechanical` (impact_type ∈ ux/policy/architecture) —
   fails the Phase 8 impact_type filter; needs `human_confirmation` to
-  bypass (§27.6). This is the case `/adamsreview:walkthrough`
+  bypass. This is the case `/adamsreview:walkthrough`
   exists to address.
 - Deep-lane `confirmed_mechanical` below the user's planned threshold — the
   user may run `/adamsreview:fix 70` on a finding scored 55, which
   fails the score gate; needs `human_confirmation` to bypass the
   score gate.
-
-The current "always proceed" is correct in both cases and harmlessly
-redundant for deep-lane above-threshold findings (adds provenance
-metadata confirming the human OK'd a fix that was already going to
-happen — useful audit, not a functional change).
 
 ### Step 4.5. Auto-prompt for `fix_hint` when needed
 
@@ -220,8 +208,3 @@ unchanged, so the rendered md on disk is already correct.
     printf '\n'
 } >> "$trace_log_path"
 ```
-
-Step numbering (3, 4, 4.5, 5, 6, 9) matches the original
-`/adamsreview:promote` step numbers for continuity with DESIGN §27
-and existing trace.md entries. The top-level command owns steps 1, 2,
-7, 8, 10.

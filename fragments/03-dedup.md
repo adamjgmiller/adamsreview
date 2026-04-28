@@ -19,13 +19,6 @@ artifact-read.sh \
   --filter '[.findings[] | {id, file, line_range, claim, source_families, sources}]'
 ```
 
-(No singular `source_family` field exists on stored findings — Phase 1
-already transformed lens output into the plural `source_families` array
-before writing. `evidence_snippet` is a candidate-only field that
-Phase 1 strips before `--add-findings`; dedup works from
-`claim + file + line_range`, which is sufficient for near-duplicate
-grouping.)
-
 Capture as `candidate_list_json`.
 
 If `candidate_list_json` is `[]` (no candidates from Phase 1 + 1.5), skip
@@ -164,31 +157,18 @@ Concretely, for each group `[K, D1, D2, ...]` (K = keeper, Di = dupes):
    and `sort_by ... | last` picks the highest-ranked value deterministically:
 
     ```bash
-    # Read the keeper's current origin — needed to gate the
-    # origin_confidence reconciliation below. Substitute the actual
-    # keeper id for "K".
+    # Read the keeper's current origin (substitute actual keeper id for "K").
     keeper_origin=$(jq -r --arg kid "K" \
       '.[] | select(.id==$kid) | .origin' <<<"$group_json")
 
-    # origin_confidence reconciliation (order-independent, two-stage
-    # for pre_existing keepers):
-    #   introduced_by_pr keeper: take HIGHEST across group (corroboration raises).
-    #   pre_existing keeper:
-    #     C1 — same-origin lowest: lowest across pre_existing-origin members
-    #          (any corrective-medium in the group binds the whole group).
-    #     C2 — cross-origin cap:   if C1's result is still high AND the
-    #          group has any non-pre_existing member, cap to medium
-    #          (cross-origin disagreement is itself uncertainty signal).
-    # See the prose rule above for the rationale and the rename-follow
-    # trade-off.
+    # origin_confidence reconciliation — see prose rule above.
     if [ "$keeper_origin" = "pre_existing" ]; then
-        # C1 stage
+        # C1: lowest across pre_existing members
         max_conf=$(jq -r '
           [.[] | select(.origin == "pre_existing") | .origin_confidence]
           | sort_by({"low":1, "medium":2, "high":3}[.]) | first
         ' <<<"$group_json")
-        # C2 stage — only fires when C1 left max_conf at high AND the
-        # group has cross-origin disagreement.
+        # C2: cap to medium on cross-origin disagreement.
         if [ "$max_conf" = "high" ]; then
             has_cross_origin=$(jq -r \
               'any(.[].origin; . != "pre_existing")' <<<"$group_json")
@@ -240,10 +220,6 @@ Concretely, for each group `[K, D1, D2, ...]` (K = keeper, Di = dupes):
 
     (Substitute the actual group-id array for `["K","D1","D2"]`.)
 
-Each `artifact-patch.py` call re-validates the full artifact (§13.7). A
-merge that produces an invalid state fails loudly rather than silently
-corrupting.
-
 ### 2.4. Log Phase 2 summary
 
 ```bash
@@ -269,12 +245,3 @@ log-phase.sh \
 
 Capture `phase_2_start_epoch` and `pre_dedup_count` at the top of Phase 2
 (the latter via `artifact-read.sh --filter '.findings | length'`).
-
-### Working-set delta after Phase 2
-
-- `artifact.findings[]` shrunk by the merged duplicate count.
-- Survivors have unioned `sources` and `source_families` (enables
-  Phase 3 source-family auto-graduation for multi-family overlaps).
-- `tokens.jsonl` + 1 (the dedup sub-agent).
-- `phases.jsonl` + 1 (Phase 2 record).
-- `trace.md` + 1 section.

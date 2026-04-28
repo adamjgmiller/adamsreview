@@ -44,17 +44,7 @@ For each deep-lane candidate, launch ONE `Agent` tool-use with
 `model: opus`, `subagent_type: general-purpose`. Dispatch all in one
 orchestrator turn for concurrency.
 
-**One Opus per candidate — never collapse multiple deep-lane candidates
-into a single batched Opus call.** Each candidate needs its own
-independent blast-radius trace, evidence walk, and fix-proposal
-synthesis; that investigation does not share context across candidates
-the way Phase 3's rubric scoring does, and batching collapses
-per-candidate depth. The §4.4 `--apply-decisions --expected $N` guard
-catches one class of violation: if fewer tuples arrive than dispatched
-candidates, the helper rejects the batch with a recovery action (see
-§4.4). It does not detect collapse-then-correct-unwrap, where the
-orchestrator batches multiple candidates into one Opus call but emits
-the right count by unwrapping the response itself.
+**Never batch deep-lane candidates into one Opus call.** Each candidate needs independent blast-radius and fix-proposal work. The `--apply-decisions --expected $N` guard catches under-count violations but cannot catch the collapse-then-correct-unwrap failure mode (batching N candidates into one Opus call, then unwrapping the response into N tuples to satisfy the guard). The discipline is yours.
 
 Each sub-agent receives:
 - The full stored finding JSON. `evidence_snippet` is not among the
@@ -63,9 +53,9 @@ Each sub-agent receives:
 - `$claude_md_paths` (absolute paths).
 - If this is a retry-mode run (Stage 3 context): the finding's prior
   `fix_attempts` for context. In Stage 2 `/adamsreview:review`, `fix_attempts`
-  is always empty — noted here for symmetry with Stage 3's retry path.
+  is always empty.
 
-Prompt essence (per §19.5):
+Prompt essence:
 
 > You are a deep validator. Confirm or disprove this candidate, trace
 > its blast radius, and — if real — produce a concrete fix proposal.
@@ -204,17 +194,9 @@ balanced as evenly as feasible. For each chunk, launch ONE `Agent`
 tool-use with `model: sonnet`. Dispatch all chunk-agents in one
 orchestrator turn for concurrency.
 
-**Why chunked, unlike the deep lane.** Light-lane work is rubric-
-checking against CLAUDE.md, not per-candidate blast-radius
-investigation, so it batches well — same justification as Phase 3
-scoring (§3.3). Sonnet is cheap, but unbounded batches collapse score
-resolution onto the rubric anchors and stop using parallelism on large
-reviews. The 25-cap restores both. The §4.4 `--apply-decisions
---expected $N` guard counts every dispatched candidate (deep + light),
-so a chunk-agent that drops a finding from its returned array trips
-the same structural check as a collapsed deep-lane Opus.
+Light-lane batches well — rubric-checking against CLAUDE.md, not per-candidate blast-radius investigation. Cap chunks at 25: unbounded batches collapse score resolution onto the rubric anchors and stop using parallelism on large reviews. The §4.4 `--apply-decisions --expected $N` guard catches a chunk-agent dropping a finding the same way it catches collapsed deep-lane Opus calls.
 
-Prompt essence (per §19.6):
+Prompt essence:
 
 > You are a light confirmation validator. You will return one entry
 > per candidate.
@@ -281,8 +263,7 @@ log-tokens.sh \
 Then collect every Wave 1 sub-agent response into a single JSON array
 and hand it to `artifact-patch.py --apply-decisions` in one call. The
 helper derives `disposition`, `is_actionable`, `confirmed_strength`,
-and default `reason` per §13.1 internally (Stage 2.5.B clarification,
-DESIGN §21.2). This collapses what was previously a per-finding loop
+and default `reason` internally. This collapses what was previously a per-finding loop
 of `--set … --set-json validation_result=@…` invocations into one
 helper invocation per wave, so the orchestrator's working context
 sees a single summary line instead of N per-finding prose blocks.
@@ -301,15 +282,9 @@ sees a single summary line instead of N per-finding prose blocks.
 | `75+` AND `actionability=manual` | | `confirmed_manual` | false | confirmed_strength: strong |
 | `75+` AND `actionability=report_only` | | `confirmed_report` | false | confirmed_strength: strong |
 
-The helper applies `score_phase4` takes-precedence-over-`decision`
-automatically: derivation runs off `score_phase4 + actionability`, so
-a validator returning `decision: "confirmed", score_phase4: 40` routes
-to `disproven` via the score row; `decision: "disproven",
-score_phase4: 70, actionability: "auto_fixable"` routes to
-`confirmed_mechanical`. Validators shouldn't emit such mismatches, but when
-they do the structured fields win. Include the raw `decision` field
-in each tuple for audit-trail legibility — it's accepted by the helper
-but not authoritative.
+Include the raw `decision` field in each tuple for audit-trail
+legibility — it's accepted by the helper but not authoritative; when
+`decision` and `score_phase4` disagree the structured fields win.
 
 **Building the batch.** For each Wave-1 validator response, compose
 one tuple. `validation_result` in the tuple comes from the sub-agent's
@@ -321,19 +296,15 @@ The helper writes `validation_result` only when the derived
 disposition lands in the confirmed band; pass it for every deep-lane
 tuple — uncertain / disproven tuples have it silently ignored.
 
-**Normalize validator output before tuple compose.** Sub-agent score
-shape is not deterministic across model versions / prompt drifts —
-validators have been observed emitting `{score: {correctness: 72}}`,
-`{overall_numeric: 3.5}`, `{severity: "high"}`, and `{score: 6}` instead
-of the `score_phase4` integer the §20 rubric asks for. Pipe each raw
+**Normalize validator output before tuple compose.** Pipe each raw
 validator response through `parse-validator-result.py --lane
 deep|light` before composing the tuple; the helper returns a canonical
 shape (`score_phase4`, `actionability`, `confirmed_strength`,
 `decision`, `validation_result`, `notes`) with `scale_inferred:` audit
 notes when it had to guess. Exit 2 from the helper means the score was
 unrecoverable — emit `score_phase4: null` in the tuple so
-`--apply-decisions` routes to `uncertain` per §13.1 Phase-4 row 1, and
-stash the stderr in `trace.md` so the audit trail records the drift.
+`--apply-decisions` routes to `uncertain`, and stash the stderr in
+`trace.md` so the audit trail records the drift.
 
 ```bash
 # For each validator response `$raw` (captured from Agent tool output):
@@ -344,7 +315,7 @@ canon=$(printf '%s' "$raw" \
 # `$canon` is now canonical JSON — merge it with {id: $finding_id} and
 # the sub-agent's raw `reason` (if any) to form the tuple. For the
 # light lane, `$raw` is one ENTRY of the chunk-agent's array (the
-# chunk-agent returns `[{id,...}, {id,...}, ...]` per §4.3): iterate
+# chunk-agent returns `[{id,...}, {id,...}, ...]`): iterate
 # the array first, then pipe each entry through `--lane light`
 # individually. Piping the whole array through the helper exits 2
 # (parse-validator-result.py rejects non-object inputs), which would
@@ -403,9 +374,8 @@ mkdir -p "$scratch"
 # The orchestrator already has the lane-partitioned id lists in
 # context from §4.1 — surface them as comma-separated bash strings
 # (e.g. `deep_ids="F003,F007,F012"`, `light_ids="F004,F005"`) and
-# count via awk on NF, mirroring commands/add.md §7.6 lines 551-556.
-# The empty-string guard is required because `awk -F, '{print NF}'`
-# returns 1 (not 0) on an empty input line.
+# count via awk on NF. The empty-string guard is required because
+# `awk -F, '{print NF}'` returns 1 (not 0) on an empty input line.
 deep_ids="<comma-separated ids dispatched in §4.2>"
 light_ids="<comma-separated ids dispatched in §4.3>"
 N_deep_dispatched=0
@@ -417,8 +387,7 @@ total_dispatched_w1=$(( N_deep_dispatched + N_light_dispatched ))
 # Empty-wave skip: when both lanes dispatched zero candidates (e.g.,
 # every survivor was Phase-3-gated out, or trivial_mode forced every
 # candidate into the light lane and there happened to be none), there's
-# nothing to apply — skip the helper invocation. Mirrors
-# commands/add.md's `[[ -z "$new_ids" ]]` guard. The §4.4.5 sweep below
+# nothing to apply — skip the helper invocation. The §4.4.5 sweep below
 # still runs unconditionally.
 if (( total_dispatched_w1 > 0 )); then
     out=$(artifact-patch.py \
@@ -494,12 +463,7 @@ if [[ -n "$dirty" ]]; then
 fi
 ```
 
-Invariant: Phase 0's dirty-tree gate clears the tree before Phase 1,
-and Phases 1–5 are tree-read-only (artifact writes happen in
-`$review_dir`, not in `$repo_root`). Anything `status --porcelain`
-surfaces here is therefore validator-sourced and safely revertable.
-The trace tag `phase_4_tree_dirty_reverted:` surfaces the incident
-for post-mortem.
+**Invariant:** Phase 0's dirty-tree gate clears the tree before Phase 1, and Phases 1–5 are tree-read-only (artifact writes go to `$review_dir`, not the working tree). Any uncommitted change discovered post-validation is therefore validator-sourced and safely revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the incident for post-mortem.
 
 ### 4.5. Wave 2 (chain retry — optional)
 
@@ -558,24 +522,7 @@ If the resulting list is non-empty AND we haven't already done Wave 2:
    applies if the related-candidate sweep produced an unusually large
    set).
 
-   **Drop-recovery (§3.3 step 3 + Wave 2 cap interaction).** If the
-   chunk-agent drops a finding from its returned array, §3.3 step 3
-   normally sets `score_phase3=null` and notes it in `trace.md`; the
-   gate then treats null-score findings as below-gate unless they
-   auto-graduate via ≥2 source families. **In Wave 2 this is a silent
-   confirmation loss**: every Wave 2 candidate is structurally seeded
-   with a single source family (`["structural-family"]` per the
-   `wave2_finding` shape in step 1), so a null-scored Wave 2 candidate
-   cannot auto-graduate, and the hard 2-wave cap means it will never
-   be retried in a Wave 3. Before continuing to step 3, re-dispatch
-   the scoring chunk for any missing ids — mirrors §4.4's chunk-agent
-   drop language. Re-dispatching the *scoring* chunk is intra-Wave-2,
-   not a Wave 3, so the hard cap is preserved.
-
-   Note that the §4.5 step 4 `--expected` guard cannot catch step-2
-   drops on its own — gate-out candidates are excluded from step-3
-   dispatch, so a silently-null-scored finding is invisible to the
-   downstream `--apply-decisions` count check.
+   **Drop-recovery for missing scores.** If a chunk-agent drops a finding from its returned array, the missing finding's `score_phase3` would normally default to null. In Wave 2 this is a silent confirmation loss: every Wave 2 candidate is structurally seeded with a single source family, so a null-scored Wave 2 candidate cannot auto-graduate, and the hard 2-wave cap means it will never be retried. Mitigation: when the returned chunk count is shy of the dispatched count, re-dispatch the scoring chunk for any missing ids before applying decisions. The `--apply-decisions --expected $N` guard alone cannot catch this — it sees the chunked-batch step, not the per-id-presence step. This scoring re-dispatch is still inside Wave 2, not a Wave 3, so the hard cap is preserved.
 3. Dispatch Wave 2 deep-lane validators on any that pass the Phase-3
    gate, same prompt as Wave 1 BUT add: "This is Wave 2 — do NOT emit
    further `related_candidates_to_investigate` entries." (Hard-cap
@@ -665,18 +612,3 @@ log-phase.sh \
     --argjson total_open "$(artifact-read.sh --path "$artifact_path" --filter '[.findings[] | select(.current_state == "open")] | length')" \
     '{name:"validation", elapsed_sec:$elapsed, counts_by_state:{open:$total_open}, counts_by_disposition:$by_disp, delta:"<summarize e.g. +9 confirmed_mechanical, -5 disproven>"}')"
 ```
-
-### Working-set delta after Phase 4
-
-- Every non-pre-existing, non-below-gate finding has `score_phase4` set
-  and a final `disposition` from the §13.1 Phase-4 table.
-- Deep-lane confirmed findings have `validation_result` populated
-  (evidence, blast_radius, fix_proposal, verification_context).
-- Light-lane confirmed findings have `actionability` (rarely
-  `auto_fixable`; mostly `manual`/`report_only`, and never
-  `auto_fixable` under trivial_mode).
-- Pre-existing high-confidence findings are re-asserted to
-  `pre_existing_report` regardless of Phase 4 verdict.
-- `tokens.jsonl` + one entry per Wave-1 + Wave-2 sub-agent.
-- `phases.jsonl` + Phase 4 record with the first deeply-populated
-  `counts_by_disposition`.
