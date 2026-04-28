@@ -201,10 +201,19 @@ Step 0.2a already attempted a fetch, so this is passive — `$comparison_ref`
 is whatever ref freshness-gate.sh produced (which may still be local on
 `no_remote` / `no_fetch`). When HEAD is behind it, the lens diff includes
 phantom deletions for code that landed on the base after this branch was
-cut.
+cut. When `$comparison_ref` doesn't resolve to a count at all, append a
+`branch_behind_base unresolvable` entry to `preflight_warnings[]` (flushed
+at §0.15 into the artifact) so an operator inspecting the artifact later
+can distinguish a genuinely-up-to-date branch (`behind=0`) from a
+silently-degraded gate (also `behind=0`).
 
 ```bash
-behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null || echo 0)
+if behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null); then
+    :  # behind already populated
+else
+    behind=0
+    preflight_warnings+=("branch_behind_base unresolvable comparison_ref=$comparison_ref")
+fi
 ```
 
 If `$behind > 0`, `AskUserQuestion` once:

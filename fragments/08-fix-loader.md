@@ -205,7 +205,11 @@ local `<base>` when the count was against `origin/<base>` would be a
 no-op against a still-stale local ref. The fetch is bounded by a 30s
 soft timeout (GNU `timeout` when available, background+watchdog
 fallback otherwise), mirroring `freshness-gate.sh`'s §0.2a pattern so
-a hung remote can't block the fix run indefinitely.
+a hung remote can't block the fix run indefinitely. When neither
+`origin/$base_branch` nor local `$base_branch` resolves to a count,
+emit a `branch_behind_base unresolvable` trace line so an operator
+inspecting `trace.md` later can distinguish a genuinely-up-to-date
+branch (`behind=0`) from a silently-degraded gate (also `behind=0`).
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
@@ -231,13 +235,27 @@ if $fetch_ok; then
         merge_ref="origin/$base_branch"
     else
         # origin/<base> didn't resolve — narrow-refspec edge — fall back to local
-        behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
-        merge_ref="$base_branch"
+        if behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null); then
+            merge_ref="$base_branch"
+        else
+            behind=0
+            merge_ref="$base_branch"
+            printf '[%s] branch_behind_base unresolvable fetch_ok=true local_resolve=false base_branch=%s\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base_branch" \
+                >> "$trace_log_path"
+        fi
     fi
     fetch_note=""
 else
-    behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
-    merge_ref="$base_branch"
+    if behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null); then
+        merge_ref="$base_branch"
+    else
+        behind=0
+        merge_ref="$base_branch"
+        printf '[%s] branch_behind_base unresolvable fetch_ok=false local_resolve=false base_branch=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base_branch" \
+            >> "$trace_log_path"
+    fi
     fetch_note=" (Note: fetch of \`origin/$base_branch\` failed; behind-count is from local \`$base_branch\`, which may itself be stale.)"
 fi
 ```

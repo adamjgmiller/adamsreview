@@ -3395,10 +3395,11 @@ fi
 # subset of binaries this command literally invokes; common shell
 # builtins (echo, paste) are deliberately omitted to match the
 # established pattern of relying on the user's global allowlist for
-# those (see promote/walkthrough).
+# those (see promote/walkthrough). timeout/sleep/kill are pinned for
+# §3a's bounded fetch (GNU-timeout branch + background+watchdog fallback).
 front=$(awk '/^---$/{c++; next} c==1{print}' "$ADD_MD")
 missing=()
-for tool in mktemp jq git awk grep mkdir rm tr cat printf date; do
+for tool in mktemp jq git awk grep mkdir rm tr cat printf date timeout sleep kill; do
     if ! echo "$front" | grep -qF "Bash($tool:"; then
         missing+=("$tool")
     fi
@@ -3449,6 +3450,24 @@ if grep -qF 'existing_ids_csv=' "$ADD_MD" \
     pass "RA-13: step 5 dedup has hallucinated-match_id guard"
 else
     fail "RA-13: step 5 dedup hallucination guard missing from $ADD_MD"
+fi
+
+# RA-14: fix.md grants the three Bash binaries §7.6a's active-fetch
+# block invokes inline (timeout, sleep, kill). Mirrors RA-10's
+# permissions-vs-usage discipline; tighter scope because fix.md is a
+# larger command and full-coverage enumeration is out-of-scope here.
+FIX_MD="$REPO/commands/fix.md"
+front_fix=$(awk '/^---$/{c++; next} c==1{print}' "$FIX_MD")
+missing_fix=()
+for tool in timeout sleep kill; do
+    if ! echo "$front_fix" | grep -qF "Bash($tool:"; then
+        missing_fix+=("$tool")
+    fi
+done
+if [[ ${#missing_fix[@]} -eq 0 ]]; then
+    pass "RA-14: commands/fix.md grants §7.6a fetch-block binaries (timeout, sleep, kill)"
+else
+    fail "RA-14: commands/fix.md missing Bash grants for: ${missing_fix[*]}"
 fi
 
 # ------------------------------------------------------------------ Stage 2.9
@@ -5059,12 +5078,12 @@ BB_PRE="$REPO/fragments/00-preflight.md"
 BB_PRE_BODY=$(awk '/^### 0\.6a\. /{flag=1} /^### 0\.7\. /{flag=0} flag' "$BB_PRE")
 if grep -q '### 0.6a. Branch-behind-base advisory' <<<"$BB_PRE_BODY" \
    && grep -qF 'git rev-list --count "HEAD..$comparison_ref"' <<<"$BB_PRE_BODY" \
-   && grep -qF '|| echo 0' <<<"$BB_PRE_BODY" \
    && grep -qF 'git merge $comparison_ref' <<<"$BB_PRE_BODY" \
-   && grep -q 'preflight_warnings+=("branch_behind_base proceeded' <<<"$BB_PRE_BODY"; then
-    pass "BB-1: /adamsreview:review §0.6a branch-behind-base gate present (passive count vs comparison_ref + Stop guidance merges comparison_ref + preflight_warnings buffer)"
+   && grep -q 'preflight_warnings+=("branch_behind_base proceeded' <<<"$BB_PRE_BODY" \
+   && grep -qF 'branch_behind_base unresolvable comparison_ref=' <<<"$BB_PRE_BODY"; then
+    pass "BB-1: /adamsreview:review §0.6a branch-behind-base gate present (passive count vs comparison_ref + Stop guidance merges comparison_ref + preflight_warnings buffer + unresolvable-path warning)"
 else
-    fail "BB-1: §0.6a header/rev-list/fail-open/Stop-merge-comparison_ref/preflight_warnings missing in $BB_PRE (§0.6a slice)"
+    fail "BB-1: §0.6a header/rev-list/Stop-merge-comparison_ref/preflight_warnings/unresolvable-path warning missing in $BB_PRE (§0.6a slice)"
 fi
 
 BB_FIX="$REPO/fragments/08-fix-loader.md"
@@ -5100,7 +5119,6 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'if $fetch_ok; then' <<<"$BB_FIX_BODY" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_FIX_BODY" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_FIX_BODY" \
-   && grep -qF '|| echo 0' <<<"$BB_FIX_BODY" \
    && grep -qF 'merge_ref=' <<<"$BB_FIX_BODY" \
    && grep -qF 'git merge $merge_ref' <<<"$BB_FIX_BODY" \
    && grep -qF 'fetch_note=' <<<"$BB_FIX_BODY" \
@@ -5108,10 +5126,12 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'git stash pop 2>>"$trace_log_path"' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
-   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_FIX_BODY"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed trace)"
+   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_FIX_BODY"; then
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed trace + unresolvable-path warning both fetch_ok branches)"
 else
-    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed-trace missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed-trace/unresolvable-path warning missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5131,16 +5151,17 @@ if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
    && grep -qF 'if $fetch_ok; then' <<<"$BB_ADD_BODY" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_ADD_BODY" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_ADD_BODY" \
-   && grep -qF '|| echo 0' <<<"$BB_ADD_BODY" \
    && grep -qF 'merge_ref=' <<<"$BB_ADD_BODY" \
    && grep -qF 'git merge $merge_ref' <<<"$BB_ADD_BODY" \
    && grep -qF 'fetch_note=' <<<"$BB_ADD_BODY" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
    && grep -qF '`AskUserQuestion` once:' <<<"$BB_ADD_BODY" \
-   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
+   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_ADD_BODY"; then
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace + unresolvable-path warning both fetch_ok branches)"
 else
-    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace missing in $BB_ADD (§3a slice)"
+    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace/unresolvable-path warning missing in $BB_ADD (§3a slice)"
 fi
 
 echo

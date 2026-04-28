@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent, AskUserQuestion
+allowed-tools: Bash(artifact-read.sh:*), Bash(artifact-patch.py:*), Bash(artifact-validate.sh:*), Bash(artifact-render.py:*), Bash(artifact-publish.sh:*), Bash(assign-finding-ids.sh:*), Bash(log-phase.sh:*), Bash(log-tokens.sh:*), Bash(tally-subagent-tokens.sh:*), Bash(orchestrator-tokens.sh:*), Bash(repo-slug.sh:*), Bash(git:*), Bash(jq:*), Bash(date:*), Bash(timeout:*), Bash(sleep:*), Bash(kill:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(cat:*), Bash(printf:*), Bash(tr:*), Bash(awk:*), Bash(grep:*), Bash(mktemp:*), Read, Agent, AskUserQuestion
 argument-hint: "[<paste...>] [--file path --line N --claim \"...\"] [--impact <type>] [--no-dedup]"
 description: Inject externally-sourced findings (cloud /ultrareview, manual finds, etc.) into the most recent /adamsreview:review artifact for this branch. Validates via Phase 4, re-renders, re-publishes.
 disable-model-invocation: false
@@ -236,7 +236,11 @@ local `<base>` when the count was against `origin/<base>` would be a
 no-op against a still-stale local ref. The fetch is bounded by a 30s
 soft timeout (GNU `timeout` when available, background+watchdog
 fallback otherwise), mirroring `freshness-gate.sh`'s §0.2a pattern so
-a hung remote can't block the add run indefinitely.
+a hung remote can't block the add run indefinitely. When neither
+`origin/$base_branch` nor local `$base_branch` resolves to a count,
+emit a `branch_behind_base unresolvable` trace line so an operator
+inspecting `trace.md` later can distinguish a genuinely-up-to-date
+branch (`behind=0`) from a silently-degraded gate (also `behind=0`).
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
@@ -262,13 +266,27 @@ if $fetch_ok; then
         merge_ref="origin/$base_branch"
     else
         # origin/<base> didn't resolve — narrow-refspec edge — fall back to local
-        behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
-        merge_ref="$base_branch"
+        if behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null); then
+            merge_ref="$base_branch"
+        else
+            behind=0
+            merge_ref="$base_branch"
+            printf '[%s] branch_behind_base unresolvable fetch_ok=true local_resolve=false base_branch=%s\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base_branch" \
+                >> "$trace_log_path"
+        fi
     fi
     fetch_note=""
 else
-    behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
-    merge_ref="$base_branch"
+    if behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null); then
+        merge_ref="$base_branch"
+    else
+        behind=0
+        merge_ref="$base_branch"
+        printf '[%s] branch_behind_base unresolvable fetch_ok=false local_resolve=false base_branch=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base_branch" \
+            >> "$trace_log_path"
+    fi
     fetch_note=" (Note: fetch of \`origin/$base_branch\` failed; behind-count is from local \`$base_branch\`, which may itself be stale.)"
 fi
 ```
