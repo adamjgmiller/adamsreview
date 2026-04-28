@@ -5109,6 +5109,17 @@ BB_FIX="$REPO/fragments/08-fix-loader.md"
 # would also match the conditional prose hint, and we need to lock in the
 # conflict-aware bash itself, not just the recovery suffix.
 BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX")
+# Per-bullet slice for §7.6a (c) Abort, so the Abort bullet's bash is
+# asserted to perform the action its prose names — not just appear
+# somewhere in the enclosing §7.6a section. The (a) Stop bullet contains
+# the same `git stash pop`/`stash_pop_conflict=true` literals inline;
+# without per-bullet slicing a regression that drops (c)'s stash-pop
+# bash (as round-3 of the dual-review loop nearly did) would still pass
+# BB-2 by matching against (a)'s copies. The awk:
+#   - starts capturing on `- **(c) Abort` line
+#   - stops on the next bulleted `- **(` item (any letter)
+#   - stops on the next `### ` header (defensive)
+BB_FIX_ABORT_BODY=$(awk '/^- \*\*\(c\) Abort/{flag=1; print; next} /^- \*\*\(/{flag=0} /^### /{flag=0} flag' <<<"$BB_FIX_BODY")
 # Routing structure assertions (`fetch_ok=true`, `|| fetch_ok=false`,
 # `if $fetch_ok; then`, `merge_ref=`) prove the fetch-conditional shape
 # itself — without them, a future regression to the old unconditional
@@ -5138,10 +5149,14 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_FIX_BODY" \
-   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_FIX_BODY"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches)"
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base degraded fetch_ok=false local_resolve=true behind=0' <<<"$BB_FIX_BODY" \
+   && grep -qF 'stash_pop_conflict=false' <<<"$BB_FIX_ABORT_BODY" \
+   && grep -qF 'git stash pop 2>>"$trace_log_path"' <<<"$BB_FIX_ABORT_BODY" \
+   && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_ABORT_BODY"; then
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches + degraded-path warning + Abort-bullet stash-pop literals pinned)"
 else
-    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed/Stop/Abort traces/unresolvable-path warning missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed/Stop/Abort traces/unresolvable-path warning/degraded-path warning/Abort-bullet stash-pop literals missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5170,10 +5185,11 @@ if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_ADD_BODY" \
-   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_ADD_BODY"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches)"
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base degraded fetch_ok=false local_resolve=true behind=0' <<<"$BB_ADD_BODY"; then
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches + degraded-path warning)"
 else
-    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed/Stop/Abort traces/unresolvable-path warning missing in $BB_ADD (§3a slice)"
+    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed/Stop/Abort traces/unresolvable-path warning/degraded-path warning missing in $BB_ADD (§3a slice)"
 fi
 
 echo

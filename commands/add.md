@@ -241,6 +241,11 @@ a hung remote can't block the add run indefinitely. When neither
 emit a `branch_behind_base unresolvable` trace line so an operator
 inspecting `trace.md` later can distinguish a genuinely-up-to-date
 branch (`behind=0`) from a silently-degraded gate (also `behind=0`).
+When the fetch fails AND the local fallback resolves to `behind=0`,
+emit a `branch_behind_base degraded` trace line — the gate decides
+not to fire (no `AskUserQuestion` since `behind == 0`), but the
+operator still needs a trail showing the count came from a possibly
+stale local ref.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
@@ -280,6 +285,16 @@ if $fetch_ok; then
 else
     if behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null); then
         merge_ref="$base_branch"
+        if [[ "$behind" == "0" ]]; then
+            # Degraded fail-silent path: fetch failed, local rev-list
+            # resolved to 0. The AskUserQuestion below won't fire (gated
+            # on `behind > 0`), so without this trace line `trace.md`
+            # has no signal distinguishing "branch genuinely fresh" from
+            # "fetch failed, local says 0 but local may be stale."
+            printf '[%s] branch_behind_base degraded fetch_ok=false local_resolve=true behind=0 base_branch=%s\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base_branch" \
+                >> "$trace_log_path"
+        fi
     else
         behind=0
         merge_ref="$base_branch"

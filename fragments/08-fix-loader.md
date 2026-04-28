@@ -210,6 +210,11 @@ a hung remote can't block the fix run indefinitely. When neither
 emit a `branch_behind_base unresolvable` trace line so an operator
 inspecting `trace.md` later can distinguish a genuinely-up-to-date
 branch (`behind=0`) from a silently-degraded gate (also `behind=0`).
+When the fetch fails AND the local fallback resolves to `behind=0`,
+emit a `branch_behind_base degraded` trace line — the gate decides
+not to fire (no `AskUserQuestion` since `behind == 0`), but the
+operator still needs a trail showing the count came from a possibly
+stale local ref.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
@@ -249,6 +254,16 @@ if $fetch_ok; then
 else
     if behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null); then
         merge_ref="$base_branch"
+        if [[ "$behind" == "0" ]]; then
+            # Degraded fail-silent path: fetch failed, local rev-list
+            # resolved to 0. The AskUserQuestion below won't fire (gated
+            # on `behind > 0`), so without this trace line `trace.md`
+            # has no signal distinguishing "branch genuinely fresh" from
+            # "fetch failed, local says 0 but local may be stale."
+            printf '[%s] branch_behind_base degraded fetch_ok=false local_resolve=true behind=0 base_branch=%s\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base_branch" \
+                >> "$trace_log_path"
+        fi
     else
         behind=0
         merge_ref="$base_branch"
@@ -303,11 +318,21 @@ If `$behind > 0`, `AskUserQuestion` once:
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
       >> "$trace_log_path"
   ```
-- **(c) Abort.** Run the same stash-pop block as (a) and emit a
+- **(c) Abort.** Run the same stash-pop block as (a) (inlined here for
+  execution clarity — the duplication is intentional so an orchestrator
+  following (c)'s bash recipe verbatim still pops the stash and
+  initializes `$stash_pop_conflict` before the abort trace) and emit a
   `branch_behind_base aborted` trace line (same field shape as Stop's),
   then exit 0 with `Aborted.`. If `stash_pop_conflict=true`, append:
   `Stashed changes preserved — \`git stash list\` / \`git stash apply\` once tree is in desired state.`
   ```bash
+  stash_pop_conflict=false
+  if [[ "${stash_taken:-false}" == "true" ]]; then
+      if ! git stash pop 2>>"$trace_log_path"; then
+          stash_pop_conflict=true
+          printf 'stash_pop_conflict\n' >> "$trace_log_path"
+      fi
+  fi
   printf '[%s] branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" "$stash_pop_conflict" \
       >> "$trace_log_path"
