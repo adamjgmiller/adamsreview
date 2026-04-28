@@ -8,6 +8,8 @@ A non-null `human_confirmation` (set by `/adamsreview:promote`, §27)
 bypasses both the impact_type lane filter AND the score threshold —
 the human has overridden the validator's conservative defaults.
 
+The `/adamsreview:walkthrough` scope filter is the inverse of this selector; keep the two in sync (see `commands/walkthrough.md` §3).
+
 ```bash
 eligible_finding_ids=$(jq -r --argjson thr "$threshold" '
     [.findings[]

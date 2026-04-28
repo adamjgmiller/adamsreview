@@ -108,7 +108,6 @@ the instructions inside.
 
 ## What this command does NOT do
 
-- The only `git push` is in Phase 0 step 0.9 (unpushed commits → PR
-  branch), and ONLY in PR mode after user dirty-tree confirmation.
+- No git operations except a single `git push` in Phase 0 step 0.9 (PR mode only, after user dirty-tree confirmation). No commits, tags, branches, deletes, or renames anywhere in the working tree.
 - No review of closed/merged PRs — bail at Phase 0 step 0.4 with a
   user-visible message.

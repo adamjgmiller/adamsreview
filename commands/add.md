@@ -502,6 +502,8 @@ into a single batched Opus call.** §7.6's `--apply-decisions --expected
 $total_dispatched` rejects under-sized batches with a recovery action.
 Each candidate needs its own blast-radius trace and fix-proposal context.
 
+Prompt essence — kept self-contained here; do NOT dispatch through `fragments/05-validation.md` (it pulls in Wave-2 / §4.6 / §4.4.5 logic that doesn't apply to the `/adamsreview:add` path).
+
 Prompt:
 
 > You are a deep validator. Confirm or disprove this candidate, trace

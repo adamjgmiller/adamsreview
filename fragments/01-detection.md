@@ -995,7 +995,7 @@ is the alternate canonical reader for ad-hoc debugging; this is the
 hot-path Phase 1 reader). `test/smoke.sh` AF-DRIFT enforces the
 agreement.
 
-Run steps 3 and 4 in a single `Bash(...)` invocation.
+Run steps 3 and 4 in a single `Bash(...)` invocation. If a split is unavoidable, split only after the jq builder runs — write the schema-shaped `$findings_array` (not the pre-builder `$ided`, which the helper rejects as `schema_invalid`) to `$scratch_dir/phase1_findings.json`, then read it back via `--add-findings @<file>` in the next Bash call.
 
 ```bash
 # Single jq pass: canonicalize source_family, build full schema-shaped
@@ -1111,6 +1111,10 @@ fi
 # emit `add-findings-rejected:` lines on stderr; we drain them
 # synchronously into trace.md and the orchestrator
 # transcript; accepted findings commit in one atomic write.
+# Synchronous capture (not `2> >(tee ...)`) because the next line
+# reads trace.md and an async pipe could still be flushing — the
+# lens-dispatch sites earlier in this fragment can stay on `tee`
+# because nothing reads trace.md until later.
 stderr_capture=$(mktemp)
 # Guarantee cleanup on any early exit between mktemp and the
 # explicit rm -f below. Without the trap, a non-zero exit from the
@@ -1219,4 +1223,6 @@ log-phase.sh \
     --argjson total "$total_candidates" \
     '{name:$name, elapsed_sec:$elapsed, counts_by_state:{open:$total}, counts_by_disposition:{pending_validation:$total}, delta:"+\($total) open"}')"
 ```
+
+Under `--ensemble`, `phase_1_elapsed` and Phase 1.5's elapsed will overlap — both phases share a dispatch-turn start boundary; the overlap is the intended observability signal.
 
