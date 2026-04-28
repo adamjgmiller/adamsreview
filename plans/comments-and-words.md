@@ -48,6 +48,8 @@ Out of scope (deferred):
 
 ## Patterns to TARGET (7)
 
+**Note:** Pattern example lists illustrate the *shape* of each pattern; the per-stage spec under `## Stages` is the binding instruction when ranges, treatment, or preserve-vs-delete decisions differ. Sub-agents executing a stage should follow the stage spec, not the Patterns example list.
+
 ### Pattern A: Archive cross-references
 
 **Regex (case-sensitive):** `(?:per |see |from )?(?:DESIGN |archive |frozen )?§\s*\d+(\.\d+)*`, plus prose forms `see DESIGN §X`, `(DESIGN §X)`, `(see plans/<name>.md)`, `(per §X.Y)`.
@@ -243,6 +245,8 @@ These touch many files and must complete before per-file targeted work to avoid 
 
 **Spec:** Apply Pattern E removals.
 
+**Non-overlap:** Phase 1.2 deletes ONLY the `### Working-set delta after Phase N` trailers in `fragments/*.md`. The `## What this command does NOT do` sections in `commands/*.md` are surgically handled per-bullet in Phase 2.5 / 3.1 / 3.2 — leave them alone in this phase.
+
 **Method:** for each file in Pattern E's table, delete the named heading and its content up to the next heading boundary. For the `## What this command does NOT do` sections in commands, apply the decision rule (delete pure-prose sections, preserve sections containing user-actionable code recipes; trim around the recipes).
 
 **Hard constraints:**
@@ -360,7 +364,7 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
   - L206-215 — Apply this exact replacement: *"Light-lane batches well — rubric-checking against CLAUDE.md, not per-candidate blast-radius investigation. Cap chunks at 25: unbounded batches collapse score resolution onto the rubric anchors and stop using parallelism on large reviews. The §4.4 `--apply-decisions --expected $N` guard catches a chunk-agent dropping a finding the same way it catches collapsed deep-lane Opus calls."* (Mirrors Fix-10's treatment of the structurally-identical block in `04-scoring-gate.md`.)
   - L283-288 — **Surgical:** Strip only the *"(Stage 2.5.B clarification, DESIGN §21.2)"* parenthetical citation (Pattern A — archive cross-ref). PRESERVE the rest, particularly the operative claim that the helper *"collapses what was previously a per-finding loop... into one helper invocation per wave, so the orchestrator's working context sees a single summary line instead of N per-finding prose blocks."* (Current-state rationale — Pattern C plan L90 trigger word "so".)
   - L326–336 (*"have been observed"* prose → keep operative *"Pipe through `parse-validator-result.py`"*; drop the rationale).
-  - L496-502 — Apply this exact replacement: *"**Invariant:** Phase 0's dirty-tree gate clears the tree before Phase 1, and Phases 1–5 are tree-read-only. Any uncommitted change discovered post-validation is therefore validator-sourced and safely revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the incident for post-mortem."*
+  - L496-502 — Apply this exact replacement: *"**Invariant:** Phase 0's dirty-tree gate clears the tree before Phase 1, and Phases 1–5 are tree-read-only (artifact writes go to `$review_dir`, not the working tree). Any uncommitted change discovered post-validation is therefore validator-sourced and safely revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the incident for post-mortem."*
   - L559-578 — Apply this exact replacement: *"**Drop-recovery for missing scores.** If a chunk-agent drops a finding from its returned array, the missing finding's `score_phase3` would normally default to null. In Wave 2 this is a silent confirmation loss: every Wave 2 candidate is structurally seeded with a single source family, so a null-scored Wave 2 candidate cannot auto-graduate, and the hard 2-wave cap means it will never be retried. Mitigation: when the returned chunk count is shy of the dispatched count, re-dispatch the scoring chunk for any missing ids before applying decisions. The `--apply-decisions --expected $N` guard alone cannot catch this — it sees the chunked-batch step, not the per-id-presence step. This scoring re-dispatch is still inside Wave 2, not a Wave 3, so the hard cap is preserved."* (Trailing sentence preserves the intra-Wave-2 framing — without it a future sub-agent reading this alongside §4's hard-cap rule may treat the scoring re-dispatch as forbidden.)
 - Apply Pattern B removal: L64–66 (*"noted here for symmetry"*).
 - Apply Pattern G removal: L304–312 (validator-helper internals).
@@ -392,7 +396,8 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L108–114 — Pattern F (effort paragraph).
 - L116–140 — Pattern F (Working-set variables).
 - L181–185 — Pattern B (TODO/futures: *"a future `--resume-interrupted` flag could automate..."*).
-- L171–189 — **Surgical, not whole-block:** PRESERVE the deletes/renames-v1 bullet (*"No deletes, renames, or moves in the working tree (v1). Fix groups edit via `Edit`/`Write` only; the revert model in Phase 9b only handles modifications and creations."* — operative state-machine claim per Pattern E preserve rule). PRESERVE the leftover-`attempted` bullet (*"No automated recovery from leftover-`attempted` state. Phase 7 step 4 aborts with a deterministic recovery message; the user decides what to keep."* — operative error semantics; the *"A future `--resume-interrupted` flag..."* sentence is removed separately by the Pattern B bullet at L181-185). PRESERVE the light-lane bullet (*"No light-lane auto-fix. Phase 8 eligibility is restricted to `impact_type ∈ {correctness, security}`."* — operative gate claim). PRESERVE the closed/merged bullet (*"No review of closed/merged PRs — Phase 7 step 7.7 aborts."* — operative error semantics). PRESERVE the no-git-in-fix-group-sub-agents bullet (*"No git operations inside fix-group sub-agents. All staging, commits, and push happen in the orchestrator's Phase 9c / 9e."* — operative state-machine claim). DELETE only the pure-contrast bullet (*"No new review (that's `/adamsreview:review`)."*).
+- L184–185 — Pattern B (TODO/futures: strip the trailing *"; a future `--include-light-fixes` flag could relax this."* clause from the light-lane bullet; preserve the operative gate claim that precedes it).
+- L171–189 — **Surgical, not whole-block:** PRESERVE the deletes/renames-v1 bullet (*"No deletes, renames, or moves in the working tree (v1). Fix groups edit via `Edit`/`Write` only; the revert model in Phase 9b only handles modifications and creations."* — operative state-machine claim per Pattern E preserve rule). PRESERVE the leftover-`attempted` bullet (*"No automated recovery from leftover-`attempted` state. Phase 7 step 4 aborts with a deterministic recovery message; the user decides what to keep."* — operative error semantics; the *"A future `--resume-interrupted` flag..."* sentence is removed separately by the Pattern B bullet at L181-185). PRESERVE the light-lane bullet (*"No light-lane auto-fix. Phase 8 eligibility is restricted to `impact_type ∈ {correctness, security}`."* — operative gate claim; the *"; a future `--include-light-fixes` flag could relax this."* trailing clause is removed separately by the Pattern B bullet at L184-185). PRESERVE the closed/merged bullet (*"No review of closed/merged PRs — Phase 7 step 7.7 aborts."* — operative error semantics). PRESERVE the no-git-in-fix-group-sub-agents bullet (*"No git operations inside fix-group sub-agents. All staging, commits, and push happen in the orchestrator's Phase 9c / 9e."* — operative state-machine claim). DELETE only the pure-contrast bullet (*"No new review (that's `/adamsreview:review`)."*).
 
 **Spec — `promote.md`:**
 - L8–12 — Pattern A (DESIGN §27, §5.2.1 cross-ref).
@@ -508,7 +513,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 #### Stage 4.1: Full diff review + smoke + sanity
 
 **Spec:**
-1. `git diff <execution-start-sha>..HEAD --stat` (using the SHA captured at the start of cleanup execution, not `main`) → only `commands/*.md`, `fragments/*.md`, and `plans/comments-and-words-execution.md` modified. The plan file itself (`plans/comments-and-words.md`) is part of the branch baseline and is expected to be already-committed before execution begins.
+1. `git diff <execution_start_sha>..HEAD --stat` (using the SHA captured at the start of cleanup execution, not `main`) → only `commands/*.md`, `fragments/*.md`, and `plans/comments-and-words-execution.md` modified. The plan file itself (`plans/comments-and-words.md`) is part of the branch baseline and is expected to be already-committed before execution begins.
 2. `test/smoke.sh` → PASS (exact assertion count vs `main` baseline; should be unchanged).
 3. Full diff hand-read pass: every removal traces to one of Patterns A–G. Anything that doesn't is reverted.
 4. Cross-fragment consistency check:
