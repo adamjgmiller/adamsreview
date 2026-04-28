@@ -1,9 +1,7 @@
 # Shared prelude — applies to every `/adamsreview:*` command
 
 These rules apply across every phase of every adamsreview command that
-dispatches sub-agents or invokes helper scripts. Read once at
-command-start; individual phase fragments assume you know these and
-do not re-state them.
+dispatches sub-agents or invokes helper scripts.
 
 ## 1. After every sub-agent returns
 
