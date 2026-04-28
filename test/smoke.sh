@@ -5069,11 +5069,18 @@ fi
 
 BB_FIX="$REPO/fragments/08-fix-loader.md"
 # Section-extract §7.6a body so assertions can't be satisfied by content
-# from §7.6 or earlier — `git stash pop || true` also appears in §7.6's
-# staleness-abort block, so a file-scoped grep would pass even if §7.6a's
-# stash-pop bash were deleted. (a) Stop and (c) Abort each reference the
-# §7.6a stash-pop block via a distinct prose anchor; pin both so a future
-# edit that drops the Abort path (while keeping Stop's) fails BB-2.
+# from §7.6 or earlier — the legacy `git stash pop || true` line also
+# appears in §7.6's staleness-abort block (out of scope), so a file-scoped
+# grep would silently pass even if §7.6a's stash-pop bash regressed.
+# (a) Stop and (c) Abort each reference the §7.6a stash-pop block via a
+# distinct prose anchor; pin both so a future edit that drops the Abort
+# path (while keeping Stop's) fails BB-2. The conflict-aware shape
+# (`stash_pop_conflict=true` + `git stash pop 2>>"$trace_log_path"`) is
+# pinned explicitly so a regression that reverts §7.6a back to bare
+# `git stash pop || true` (or deletes the block entirely) fails BB-2 —
+# both literals are required because the bare flag string `stash_pop_conflict`
+# would also match the conditional prose hint, and we need to lock in the
+# conflict-aware bash itself, not just the recovery suffix.
 BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX")
 # Routing structure assertions (`fetch_ok=true`, `|| fetch_ok=false`,
 # `if $fetch_ok; then`, `merge_ref=`) prove the fetch-conditional shape
@@ -5081,8 +5088,12 @@ BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX
 # `||`-chain (`git fetch ... || true; behind=origin || local || 0`)
 # would still satisfy the rev-list-string greps and silently revert the
 # narrow-refspec stale-origin guard + Stop-guidance-uses-fresh-ref fixup.
+# `timeout 30 git fetch` pins the GNU-timeout branch of the 30s soft
+# timeout (the watchdog branch is fallback-only); a regression to bare
+# `git fetch` would now fail BB-2.
 if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'git fetch origin' <<<"$BB_FIX_BODY" \
+   && grep -qF 'timeout 30 git fetch' <<<"$BB_FIX_BODY" \
    && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' <<<"$BB_FIX_BODY" \
    && grep -qF 'fetch_ok=true' <<<"$BB_FIX_BODY" \
    && grep -qF '|| fetch_ok=false' <<<"$BB_FIX_BODY" \
@@ -5093,13 +5104,14 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'merge_ref=' <<<"$BB_FIX_BODY" \
    && grep -qF 'git merge $merge_ref' <<<"$BB_FIX_BODY" \
    && grep -qF 'fetch_note=' <<<"$BB_FIX_BODY" \
-   && grep -q 'git stash pop || true' <<<"$BB_FIX_BODY" \
+   && grep -qF 'stash_pop_conflict=true' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git stash pop 2>>"$trace_log_path"' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_FIX_BODY"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed trace)"
 else
-    fail "BB-2: §7.6a header/fetch/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop block/Stop AND Abort references/Proceed-trace missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed-trace missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5112,6 +5124,7 @@ BB_ADD="$REPO/commands/add.md"
 BB_ADD_BODY=$(awk '/^### 3a\. /{flag=1} /^### 4\. /{flag=0} flag' "$BB_ADD")
 if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
    && grep -qF 'git fetch origin' <<<"$BB_ADD_BODY" \
+   && grep -qF 'timeout 30 git fetch' <<<"$BB_ADD_BODY" \
    && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' <<<"$BB_ADD_BODY" \
    && grep -qF 'fetch_ok=true' <<<"$BB_ADD_BODY" \
    && grep -qF '|| fetch_ok=false' <<<"$BB_ADD_BODY" \
@@ -5125,9 +5138,9 @@ if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
    && grep -qF '`AskUserQuestion` once:' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
 else
-    fail "BB-3: §3a header/fetch/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace missing in $BB_ADD (§3a slice)"
+    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace missing in $BB_ADD (§3a slice)"
 fi
 
 echo

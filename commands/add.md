@@ -233,15 +233,30 @@ would silently resolve from cached refs and mislead). Track
 `$merge_ref` alongside the count so the Stop guidance points at the
 same ref the count was actually against — telling the user to merge
 local `<base>` when the count was against `origin/<base>` would be a
-no-op against a still-stale local ref.
+no-op against a still-stale local ref. The fetch is bounded by a 30s
+soft timeout (GNU `timeout` when available, background+watchdog
+fallback otherwise), mirroring `freshness-gate.sh`'s §0.2a pattern so
+a hung remote can't block the add run indefinitely.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
 fetch_ok=true
-GIT_TERMINAL_PROMPT=0 git fetch origin \
-    "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
-    --quiet 2>/dev/null \
-    || fetch_ok=false
+if command -v timeout >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 timeout 30 git fetch origin \
+        "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
+        --quiet 2>/dev/null \
+        || fetch_ok=false
+else
+    ( GIT_TERMINAL_PROMPT=0 git fetch origin \
+        "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
+        --quiet 2>/dev/null ) &
+    fetch_pid=$!
+    ( sleep 30 && kill -TERM "$fetch_pid" 2>/dev/null ) &
+    watchdog_pid=$!
+    wait "$fetch_pid" 2>/dev/null || fetch_ok=false
+    kill -TERM "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+fi
 if $fetch_ok; then
     if behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null); then
         merge_ref="origin/$base_branch"

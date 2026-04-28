@@ -202,15 +202,30 @@ would silently resolve from cached refs and mislead). Track
 `$merge_ref` alongside the count so the Stop guidance points at the
 same ref the count was actually against — telling the user to merge
 local `<base>` when the count was against `origin/<base>` would be a
-no-op against a still-stale local ref.
+no-op against a still-stale local ref. The fetch is bounded by a 30s
+soft timeout (GNU `timeout` when available, background+watchdog
+fallback otherwise), mirroring `freshness-gate.sh`'s §0.2a pattern so
+a hung remote can't block the fix run indefinitely.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
 fetch_ok=true
-GIT_TERMINAL_PROMPT=0 git fetch origin \
-    "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
-    --quiet 2>/dev/null \
-    || fetch_ok=false
+if command -v timeout >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 timeout 30 git fetch origin \
+        "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
+        --quiet 2>/dev/null \
+        || fetch_ok=false
+else
+    ( GIT_TERMINAL_PROMPT=0 git fetch origin \
+        "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
+        --quiet 2>/dev/null ) &
+    fetch_pid=$!
+    ( sleep 30 && kill -TERM "$fetch_pid" 2>/dev/null ) &
+    watchdog_pid=$!
+    wait "$fetch_pid" 2>/dev/null || fetch_ok=false
+    kill -TERM "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+fi
 if $fetch_ok; then
     if behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null); then
         merge_ref="origin/$base_branch"
@@ -239,9 +254,14 @@ If `$behind > 0`, `AskUserQuestion` once:
 
 - **(a) Stop — I'll merge `$merge_ref` into `$head_branch` first, then re-run.** Run the stash-pop block
   below if step 7.5 took one, then exit 0 with: `Stopping. Run \`git merge $merge_ref\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:fix.`
+  If `stash_pop_conflict=true`, append: `Stashed changes preserved — \`git stash list\` / \`git stash apply\` once tree is in desired state.`
   ```bash
+  stash_pop_conflict=false
   if [[ "${stash_taken:-false}" == "true" ]]; then
-      git stash pop || true
+      if ! git stash pop 2>>"$trace_log_path"; then
+          stash_pop_conflict=true
+          printf 'stash_pop_conflict\n' >> "$trace_log_path"
+      fi
   fi
   ```
 - **(b) Proceed.** Append a trace line and continue. Logs `merge_ref`
@@ -254,7 +274,7 @@ If `$behind > 0`, `AskUserQuestion` once:
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
       >> "$trace_log_path"
   ```
-- **(c) Abort.** Run the same stash-pop block as (a) and exit 0 with `Aborted.`.
+- **(c) Abort.** Run the same stash-pop block as (a) and exit 0 with `Aborted.`. If `stash_pop_conflict=true`, append: `Stashed changes preserved — \`git stash list\` / \`git stash apply\` once tree is in desired state.`
 
 ### 7.7. PR eligibility recheck
 
