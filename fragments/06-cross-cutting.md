@@ -42,7 +42,7 @@ Otherwise, capture the list as `xc_input_json` and proceed.
 Launch one `Agent` tool-use with `model: opus`. No tool access needed;
 input is the serialized findings in the prompt.
 
-Prompt essence (per §19.7):
+Prompt essence:
 
 > You are reviewing a set of confirmed, actionable deep-lane findings
 > to identify cross-cutting concerns — findings whose fixes must happen

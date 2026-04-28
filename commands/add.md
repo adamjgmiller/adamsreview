@@ -409,8 +409,8 @@ ids_assigned=$(echo "$new_candidates" \
 ```
 
 Read `trivial_mode` from the artifact so the `validation_lane`
-derivation below matches Phase 1's builder (`01-detection.md` §1.10,
-per DESIGN §13.9 / §19.6). Under `trivial_mode`, every candidate lands
+derivation below matches Phase 1's builder (`01-detection.md` §1.10).
+Under `trivial_mode`, every candidate lands
 in the light lane regardless of `impact_type` — Phase 4b handles the
 whole pool and light-lane-under-trivial refuses `auto_fixable`. If we
 skipped this branch here, new findings would ship with

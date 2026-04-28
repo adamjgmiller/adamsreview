@@ -136,7 +136,7 @@ For each chunk-agent's result:
       --model sonnet --tokens <N or null>
     ```
 
-2. **Parse** the JSON array (retry once on parse failure per §24.1).
+2. **Parse** the JSON array (retry once on parse failure).
    On second failure, set `score_phase3=null` for every finding in
    this chunk and append a chunk-level note to `trace.md` — the gate
    in step 3.4 will treat null-score findings as below-gate unless

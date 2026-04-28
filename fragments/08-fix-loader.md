@@ -16,7 +16,7 @@ Parse `$ARGUMENTS` (whitespace-split):
 - `--granular-commits` → `granular_commits=true` (else `false`).
 - Any other token → stop and ask the user to clarify.
 
-If no integer was provided, `threshold=60` (DESIGN §13.2). Record both
+If no integer was provided, `threshold=60`. Record both
 in your working context.
 
 ### 7.2. Locate the artifact via `latest.txt`
@@ -28,7 +28,7 @@ repo_root=$(git rev-parse --show-toplevel)
 ```
 
 Derive `repo_slug` via the shared helper — identical call to Phase 0
-step 0.3 so the two phases resolve the same directory (DESIGN §9.2):
+step 0.3 so the two phases resolve the same directory:
 
 ```bash
 repo_slug=$(repo-slug.sh --repo-root "$repo_root")
@@ -67,7 +67,7 @@ artifact-validate.sh --path "$artifact_path"
 ```
 
 On non-zero: log the validator stderr to `trace.md`, dump a copy to
-`/tmp/adams-review-invalid-$(date -u +%Y%m%dT%H%M%SZ).json` per §24.3,
+`/tmp/adams-review-invalid-$(date -u +%Y%m%dT%H%M%SZ).json`,
 and abort. A schema-invalid artifact means something upstream broke
 the invariant; do NOT try to "fix" by patching — surface to the user.
 
@@ -121,7 +121,7 @@ Dispatch `AskUserQuestion` once with two options:
 - **Stash my changes, run fix, restore** (recommended). Run
   `git stash push --include-untracked -m "pre-adams-review-fix-stash"`
   immediately. Capture `stash_taken=true`. If the stash command fails
-  (lock contention, invalid state): log stderr, abort per §24.2 —
+  (lock contention, invalid state): log stderr, abort —
   user resolves.
 - **Stop so I can handle them first** — exit 0 with a one-line
   message; do NOT mutate state.
@@ -169,7 +169,7 @@ else
         staleness_verdict="warn"   # stdout starts with "warn:"
         printf 'staleness: %s\n' "$staleness_stdout" >> "$trace_log_path"
     else
-        # unsafe: abort per §4 Phase 7 step 6.
+        # unsafe: abort.
         printf 'staleness: %s\n' "$staleness_stdout" >> "$trace_log_path"
         echo "Reviewed files have changed since the last known-good SHA." >&2
         echo "$staleness_stdout" >&2
@@ -210,7 +210,7 @@ pr_is_draft=$(jq -r '.isDraft' <<<"$pr_json")
   the abort surfaces).
 - `state == "OPEN"` → proceed. Capture `pr_state="draft"` if
   `isDraft` else `"open"`.
-- Any `gh` error (auth, network) → surface stderr per §24.2. Pop
+- Any `gh` error (auth, network) → surface stderr. Pop
   stash if taken, then abort. The abort should NOT try to re-run
   `gh pr view` — it already failed; don't compound the error.
 
@@ -219,7 +219,7 @@ fixes still run (they just don't publish to a PR comment in 9e).
 
 ### 7.8. Generate `run_id` and capture `input_sha`
 
-Per DESIGN §6 schema, `fix_attempts[].run_id` must match
+Per the schema, `fix_attempts[].run_id` must match
 `^fixrun_[A-Za-z0-9]+$`. Prefer ULID; fall back to timestamp + random
 tail (same pattern as Phase 0 step 0.15):
 

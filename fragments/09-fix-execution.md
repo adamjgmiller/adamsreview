@@ -93,7 +93,7 @@ fix_groups=$(group-fixes.py \
     --eligible-finding-ids "$eligible_finding_ids")
 ```
 
-On non-zero: parse stderr per §8.6 (error-as-prompt), adjust inputs
+On non-zero: parse stderr (error-as-prompt), adjust inputs
 (usually the eligibility filter), retry once. On second failure:
 escalate to the user, pop stash, abort.
 

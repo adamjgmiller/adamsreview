@@ -5,7 +5,7 @@ description: Apply auto-fixable code review findings. Dispatches fix-group agent
 disable-model-invocation: false
 ---
 
-Run the per-finding fix loop per DESIGN §4 Phases 7–9. Reads the
+Run the per-finding fix loop across Phases 7–9. Reads the
 artifact produced by the most recent `/adamsreview:review` on this branch,
 dispatches fix-group agents, post-fix-reviews the working tree, and
 either commits a coherent set of surviving fixes (with per-group
@@ -30,7 +30,7 @@ helper-script error-as-prompt).**
 
 ## Execution overview — read this first
 
-This command orchestrates DESIGN §4 Phases 7–9 in order. Each phase is
+This command orchestrates Phases 7–9 in order. Each phase is
 defined in a fragment under `fragments/NN-<name>.md`. At each phase
 boundary below, read the named fragment with the `Read` tool and
 execute the instructions inside before proceeding to the next phase.
@@ -81,7 +81,7 @@ with what actually happened on disk.
 
 Every Agent tool-use specifies:
 - `subagent_type: general-purpose`.
-- `model:` explicitly — per DESIGN §10:
+- `model:` explicitly:
   - Phase 8 fix-group agents → `opus`.
   - Phase 9a post-fix reviewer → `opus`.
 
@@ -98,7 +98,7 @@ sub-agent returns and on every non-zero helper exit.
 ## Fix-group agent tool grants
 
 Fix-group sub-agents inherit the parent session's tool grants. They are
-expected (per DESIGN §19.8) to use `Edit` and `Write` only — NEVER git
+expected to use `Edit` and `Write` only — NEVER git
 commands, rm, git mv, or any filesystem-mutating Bash. The prompt
 reinforces this; Phase 9.pre sanity-checks `git status --porcelain` for
 any `D <path>` entries and aborts with an orchestrator-error prefix if
@@ -146,7 +146,7 @@ Parse `$ARGUMENTS` (whitespace-split):
 - `--granular-commits` → `granular_commits=true` (else `false`).
 - Any other token → stop and ask the user to clarify.
 
-If no integer was provided, `threshold=60` (DESIGN §13.2 default).
+If no integer was provided, `threshold=60` (default).
 
 Capture both in your working context before executing Phase 7.
 
@@ -181,7 +181,7 @@ inside.
   decides what to keep. A future `--resume-interrupted` flag could
   automate some of this.
 - **No light-lane auto-fix.** Phase 8 eligibility is restricted to
-  `impact_type ∈ {correctness, security}` per §13.2; a future
+  `impact_type ∈ {correctness, security}`; a future
   `--include-light-fixes` flag could relax this.
 - **No review of closed/merged PRs** — Phase 7 step 7.7 aborts with a
   user-visible message.

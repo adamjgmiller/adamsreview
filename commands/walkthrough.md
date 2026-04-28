@@ -17,9 +17,6 @@ the shared `promote-core.md` fragment with `--defer-publish`
 semantics) or a skip. At the end, render + publish the updated review
 once, then POST a separate decisions-log comment to the PR for audit.
 
-See DESIGN §28 for the full contract and `plans/walkthrough-mode.md`
-for the design rationale.
-
 **Read `fragments/_prelude-shared.md` before proceeding — it lists
 rules that apply to every step below (sub-agent return handling,
 helper-script error-as-prompt).**
@@ -456,7 +453,7 @@ f_claim=$(jq -r '.claim' <<<"$finding_json")
 #### 5.2. Dispatch the briefing sub-agent
 
 One `Agent` tool-use per finding. Model: `sonnet`. Budget: ~3-5k
-tokens. Prompt (see DESIGN §28.4):
+tokens. Prompt:
 
 > You are a code-review triage briefer. The reviewer is walking
 > through one finding and needs:
@@ -532,7 +529,7 @@ and fall through to a degraded UX: present the raw finding JSON with
 options `Skip (briefing failed)` / `Promote anyway (no fix-hint)` /
 `Stop the walkthrough`.
 
-Log the agent's token count to `tokens.jsonl` per §11 / §24.4.
+Log the agent's token count to `tokens.jsonl`.
 Extract the agent id and token count from the Agent tool result's
 `<usage>` block. When the block is missing or unparseable, pass the
 literal `null` for tokens (same fallback pattern as §8.6 / Phase 8
@@ -1090,7 +1087,7 @@ array.
 
 Walking the **$scope_tier_title** scope: of **$scope_count** non-auto-eligible finding(s), **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
 
-Promoted findings will be picked up by the next `/adamsreview:fix` run via the `human_confirmation` bypass (DESIGN §27.6), regardless of its score threshold.
+Promoted findings will be picked up by the next `/adamsreview:fix` run via the `human_confirmation` bypass, regardless of its score threshold.
 
 ---
 

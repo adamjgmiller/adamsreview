@@ -65,7 +65,7 @@ Each sub-agent receives:
   `fix_attempts` for context. In Stage 2 `/adamsreview:review`, `fix_attempts`
   is always empty — noted here for symmetry with Stage 3's retry path.
 
-Prompt essence (per §19.5):
+Prompt essence:
 
 > You are a deep validator. Confirm or disprove this candidate, trace
 > its blast radius, and — if real — produce a concrete fix proposal.
@@ -214,7 +214,7 @@ reviews. The 25-cap restores both. The §4.4 `--apply-decisions
 so a chunk-agent that drops a finding from its returned array trips
 the same structural check as a collapsed deep-lane Opus.
 
-Prompt essence (per §19.6):
+Prompt essence:
 
 > You are a light confirmation validator. You will return one entry
 > per candidate.
@@ -281,8 +281,7 @@ log-tokens.sh \
 Then collect every Wave 1 sub-agent response into a single JSON array
 and hand it to `artifact-patch.py --apply-decisions` in one call. The
 helper derives `disposition`, `is_actionable`, `confirmed_strength`,
-and default `reason` per §13.1 internally (Stage 2.5.B clarification,
-DESIGN §21.2). This collapses what was previously a per-finding loop
+and default `reason` internally. This collapses what was previously a per-finding loop
 of `--set … --set-json validation_result=@…` invocations into one
 helper invocation per wave, so the orchestrator's working context
 sees a single summary line instead of N per-finding prose blocks.
@@ -332,7 +331,7 @@ shape (`score_phase4`, `actionability`, `confirmed_strength`,
 `decision`, `validation_result`, `notes`) with `scale_inferred:` audit
 notes when it had to guess. Exit 2 from the helper means the score was
 unrecoverable — emit `score_phase4: null` in the tuple so
-`--apply-decisions` routes to `uncertain` per §13.1 Phase-4 row 1, and
+`--apply-decisions` routes to `uncertain`, and
 stash the stderr in `trace.md` so the audit trail records the drift.
 
 ```bash
@@ -344,7 +343,7 @@ canon=$(printf '%s' "$raw" \
 # `$canon` is now canonical JSON — merge it with {id: $finding_id} and
 # the sub-agent's raw `reason` (if any) to form the tuple. For the
 # light lane, `$raw` is one ENTRY of the chunk-agent's array (the
-# chunk-agent returns `[{id,...}, {id,...}, ...]` per §4.3): iterate
+# chunk-agent returns `[{id,...}, {id,...}, ...]`): iterate
 # the array first, then pipe each entry through `--lane light`
 # individually. Piping the whole array through the helper exits 2
 # (parse-validator-result.py rejects non-object inputs), which would

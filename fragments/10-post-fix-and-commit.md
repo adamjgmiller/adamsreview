@@ -404,7 +404,7 @@ Reached from `abort`, delete-leak short-circuit, or reconcile fallback.
 
 3. Build `--apply-fix-outcomes` tuples for every attempted finding (every
    eligible from 8.1 — all `attempted` on disk from 8.4). Tuple shape
-   (required keys per §21.2):
+   (required keys):
 
    ```json
    {
@@ -767,8 +767,8 @@ done <<<"$surviving_files"
 ```
 
 **Build the commit message.** Carries per-group Phase 9 truth for the
-whole run (committed + reverted) per §4 Phase 9c template. Heredoc file,
-not `-m "$(...)"`, so `$`/backticks/quotes in claims don't need escaping:
+whole run (committed + reverted). Heredoc file, not `-m "$(...)"`, so
+`$`/backticks/quotes in claims don't need escaping:
 
 ```bash
 msg_file="/tmp/adams-fix-msg-$run_id.txt"
@@ -815,7 +815,7 @@ reconciled_flag=$(echo "$fix_groups" | jq -r '.[0].id == "FG-RECON"')
 } > "$msg_file"
 ```
 
-**Commit strategy** (per §13.6):
+**Commit strategy:**
 
 - Default: one combined commit.
   ```bash

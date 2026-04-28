@@ -8,8 +8,7 @@ disable-model-invocation: false
 Promote a single finding from the most recent `/adamsreview:review` on this
 branch to `disposition=confirmed_mechanical`, recording full provenance in
 `human_confirmation` so `/adamsreview:fix` will pick it up on its next
-run. See DESIGN §27 for the contract and §5.2.1 for how the Phase 8
-eligibility bypass works.
+run.
 
 **Read `fragments/_prelude-shared.md` before proceeding — it lists
 rules that apply to every step below (sub-agent return handling,

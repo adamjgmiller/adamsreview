@@ -5,7 +5,7 @@ description: Deep code review producing artifact.json, artifact.md, and (PR mode
 disable-model-invocation: false
 ---
 
-Run an end-to-end code review per DESIGN §4 Phases 0–6. The result is a
+Run an end-to-end code review across Phases 0–6. The result is a
 validated `artifact.json`, a rendered `artifact.md`, and — in PR mode — a
 posted-or-edited PR comment. Local mode skips the publish step but still
 writes the artifact and mirrors the report to chat.
@@ -23,7 +23,7 @@ helper-script error-as-prompt).**
 
 ## Execution overview — read this first
 
-This command orchestrates DESIGN §4 Phases 0–6 in order. Each phase is
+This command orchestrates Phases 0–6 in order. Each phase is
 defined in a fragment under `fragments/NN-<name>.md`. At each phase
 boundary below, read the named fragment with the `Read` tool and
 execute the instructions inside before proceeding to the next phase.
@@ -45,7 +45,7 @@ This matters because:
   Opus validators all dispatch in single-turn parallel batches.
   Re-running a phase because you lost your place costs real
   tokens. Under `--ensemble`, Phase 1 and Phase 1.5 also dispatch as a
-  joint fan-out in one orchestrator turn (DESIGN §13.12). The TaskList
+  joint fan-out in one orchestrator turn. The TaskList
   can still carry two tasks — mark both `in_progress` when you fire the
   dispatch turn, and both `completed` after the join step at
   01-detection.md 1.5 commits the pooled findings.
@@ -54,8 +54,7 @@ This matters because:
   state in shell variables that aren't also written to the artifact.
 - **Fail loud, continue the pipeline.** Sub-agent failures (non-zero,
   unparseable output, timeouts) get logged to `trace.md` and drop that
-  candidate from the run — they don't abort the whole command. See
-  DESIGN §24 for per-failure responses.
+  candidate from the run — they don't abort the whole command.
 
 If a phase genuinely cannot run, mark the task `completed` with a
 one-line `trace.md` note and move on. Phase 6 (finalize) runs
@@ -69,7 +68,7 @@ Every Agent tool-use specifies:
   the only exceptions in this command are `codex:codex-rescue` and
   `coderabbit:code-reviewer`, wrapped by the ensemble fragment).
 - `model:` explicitly — `haiku`, `sonnet`, or `opus` per the fragment's
-  instructions and DESIGN §10's allocation table.
+  instructions.
 
 **Parallel fan-outs** happen by firing multiple Agent tool-use blocks
 in a single orchestrator turn. Waiting a turn between each dispatch

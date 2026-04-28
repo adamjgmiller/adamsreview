@@ -16,7 +16,7 @@ artifact-validate.sh --path "$artifact_path"
 On non-zero exit: log the validator stderr verbatim to `trace.md`;
 surface to the user as "Final artifact fails schema validation — see
 trace.md." Dump a copy to `/tmp/adams-review-invalid-$(date -u +%Y%m%dT%H%M%SZ).json`
-for debugging per §24.3. Do NOT proceed to publish — a broken artifact
+for debugging. Do NOT proceed to publish — a broken artifact
 should not shadow the PR comment.
 
 ### 6.2. Tally `subagent_tokens` from `tokens.jsonl`
@@ -89,9 +89,8 @@ helper header for the full list.
 
 ### 6.3a. Recompute `reviewer_sources` from actual findings
 
-DESIGN §6 defines top-level `reviewer_sources` as the union of
-providers that produced at least one candidate. Compute it from
-`findings[].sources[]`:
+Top-level `reviewer_sources` is the union of providers that produced
+at least one candidate. Compute it from `findings[].sources[]`:
 
 - `internal` — present when any lens produced a candidate (any
   `sources[]` entry matches `L[0-9]+-.*` — L1–L7 today, forward-compat for future lenses).
@@ -202,8 +201,8 @@ mv "$tmp" "$reviews_root/$repo_slug/$head_branch/latest.txt"
 
 ### 6.7. Publish (PR mode only)
 
-Call `artifact-publish.sh` unconditionally — per §21.6 it's designed to
-be called in every mode, with local mode as a no-op.
+Call `artifact-publish.sh` unconditionally — it's designed to be
+called in every mode, with local mode as a no-op.
 
 **PR mode:**
 
@@ -238,7 +237,7 @@ publish_args=(
 # "replace prior" recovery). Fall back to existing_comment_id directly
 # for defense-in-depth if the seed missed it for any reason.
 # Omitting --comment-id on a fresh /adamsreview:review is intentional: the
-# publisher will POST a new comment. See DESIGN §13.4.
+# publisher will POST a new comment.
 if [[ -n "$comment_id_from_artifact" ]]; then
     publish_args+=(--comment-id "$comment_id_from_artifact")
 elif [[ -n "$existing_comment_id" ]]; then
@@ -254,7 +253,7 @@ Note the unquoted tilde — Bash expands `~/` only when it's not inside
 quotes. The helper script path must be unquoted (or use `$HOME/...`).
 
 On stdout emission `{"comment_id": N}` (post + first-time-located),
-persist to artifact per §13.4:
+persist to artifact:
 
 ```bash
 new_id=$(echo "$stdout" | jq -r '.comment_id // empty')
@@ -264,7 +263,7 @@ if [[ -n "$new_id" ]]; then
 fi
 ```
 
-On non-zero exit: per §24.2, log stderr to `trace.md` with tag
+On non-zero exit: log stderr to `trace.md` with tag
 `publish_failed`. Surface the failure to the user AFTER the
 mirror-to-chat step (so the user still sees the review in chat
 even though the PR didn't get it).

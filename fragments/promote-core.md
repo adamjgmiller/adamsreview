@@ -5,7 +5,7 @@ Shared fragment used by both `/adamsreview:promote` and
 promote flow — reading the finding, enforcing preconditions, resolving
 the `fix_hint` (with the doc/comment-vs-code heuristic), building the
 `human_confirmation` object, applying the atomic patch, and appending
-the trace entry. See DESIGN §27.
+the trace entry.
 
 ### Contract
 
@@ -222,6 +222,5 @@ unchanged, so the rendered md on disk is already correct.
 ```
 
 Step numbering (3, 4, 4.5, 5, 6, 9) matches the original
-`/adamsreview:promote` step numbers for continuity with DESIGN §27
-and existing trace.md entries. The top-level command owns steps 1, 2,
-7, 8, 10.
+`/adamsreview:promote` step numbers for continuity with existing
+trace.md entries. The top-level command owns steps 1, 2, 7, 8, 10.

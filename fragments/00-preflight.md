@@ -102,8 +102,8 @@ commits vs `origin/main` still reviews correctly under option (b).
 
 ### 0.3. Derive repo slug
 
-Delegate to the canonical helper (DESIGN §9.2 — single source of truth
-shared with Phase 7's fix-loader so the two paths cannot drift):
+Delegate to the canonical helper (single source of truth shared with
+Phase 7's fix-loader so the two paths cannot drift):
 
 ```bash
 repo_slug=$(repo-slug.sh --repo-root "$repo_root")
@@ -160,7 +160,7 @@ Run `gh pr view --json number,state,isDraft,url,author,headRefName,baseRefName`
   sentinels matching the `pr_state=""` branch above; the `${var:-}` expansions
   at step 0.15's `artifact-seed.sh` call turn `""` into JSON null. Do NOT use
   the literal string `null` — the helper rejects it at argument validation).
-- Any other `gh` error (auth, network): stop and surface stderr per §24.2.
+- Any other `gh` error (auth, network): stop and surface stderr.
 
 ### 0.5. Capture `review_started_at`
 
@@ -255,7 +255,7 @@ trivial_reason=$(printf '%s' "$tc_json" | jq -r '.reason')
 ### 0.12. User-facing-change classifier (Sonnet — skipped in trivial mode)
 
 If `trivial_mode == true`, set `user_facing=false` and skip this step
-(L5 is already off in trivial mode per §13.9; Phase 1's L5 gating will also
+(L5 is already off in trivial mode; Phase 1's L5 gating will also
 re-check `trivial_mode`).
 
 Otherwise, launch a Sonnet sub-agent with this input:
@@ -290,7 +290,7 @@ log-tokens.sh \
 
 Where `$classifier_agent_id` is the id in the Agent tool result and
 `$classifier_tokens_or_null` is either the parsed token count or the literal
-word `null` on parse failure (per §11 fallback).
+word `null` on parse failure.
 
 If JSON parsing of the classifier result fails after one retry, default
 `user_facing=true` (fail-safe — better to run L5 unnecessarily than skip
@@ -304,7 +304,7 @@ Resolve the reviews root: `$ADAMS_REVIEW_REVIEWS_ROOT` if set, else
 
 If the file exists and is non-empty, read its contents as
 `prior_review_id`. Read `<reviews_root>/<repo_slug>/<head_branch>/<prior_review_id>/artifact.json`
-and determine the prior state (per §4 Phase 0 step 11):
+and determine the prior state:
 
 | Condition | AskUserQuestion prompt |
 |---|---|
@@ -315,7 +315,7 @@ and determine the prior state (per §4 Phase 0 step 11):
 
 A "fresh review" supersedes the prior local artifact (new `review_id`,
 new `review_dir`, `latest.txt` re-pointed). In PR mode it also posts a
-new PR comment — the prior comment is **not** overwritten (per §13.4).
+new PR comment — the prior comment is **not** overwritten.
 If you want the prior comment gone, delete it on GitHub first.
 
 If `latest.txt` is missing: skip this step.
@@ -402,7 +402,7 @@ null cases clean), then hand the rest of the seed shape to
 `artifact-seed.sh`, which emits schema-shaped JSON for `artifact-patch.py
 --init -` to persist. `reviewer_sources: ["internal"]` seeds as Phase
 6.3a's pre-image; Phase 6.3a recomputes the authoritative list from
-`findings[].sources[]` union per DESIGN §6.
+`findings[].sources[]` union.
 
 ```bash
 base_context_json=$(jq -n \

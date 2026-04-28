@@ -156,8 +156,8 @@ and continue to step 1.3.
 
 **When `ensemble_mode == true`:**
 
-Create the scratch directory for CLI outputs (DESIGN §9.3 keeps
-`$review_dir` free of transient noise):
+Create the scratch directory for CLI outputs (keeps `$review_dir`
+free of transient noise):
 
 ```bash
 scratch_dir="/tmp/adams-review-$review_id"
@@ -731,11 +731,10 @@ freely):
 
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 
-Per DESIGN §13.12, the dispatch turn also launches the external
-reviewers and PR scrape when `ensemble_mode=true`. These run as
-tool-use blocks in the same orchestrator turn as the lens `Agent`
-dispatches above — waiting a turn between them serializes what's
-meant to be parallel and negates the whole point of §13.12.
+When `ensemble_mode=true`, the dispatch turn also launches the
+external reviewers and PR scrape. These run as tool-use blocks in the
+same orchestrator turn as the lens `Agent` dispatches above — waiting
+a turn between them serializes what's meant to be parallel.
 
 Total tool-use blocks in the dispatch turn:
 
@@ -801,7 +800,7 @@ For each sub-agent result, in the order it returns:
    `lens_7_holistic`. The paired per-finding `sources[]` entry — used in
    the jq builder at step 1.5 — is the shorter lens tag: `L1-diff-local`,
    `L2-structural`, `L3-claude-md`, `L4-comments`, `L5-ux`, `L6-security`,
-   `L7-holistic` (DESIGN §6).
+   `L7-holistic`.
 
 2. **Light JSON repair** if the output isn't a parseable array — strip code
    fences, extract the JSON block. If still unparseable, retry once with
@@ -876,7 +875,7 @@ For each sub-agent result, in the order it returns:
    Tag each corrected candidate with `sources: [<lens-tag>]` so the
    join step's helper (`assign-finding-ids.sh`) can sort by source
    priority. The lens-tag is the same short tag used in the token log
-   above (`L1-diff-local`, `L2-structural`, etc., per DESIGN §6):
+   above (`L1-diff-local`, `L2-structural`, etc.):
 
    ```bash
    tagged=$(echo "$corrected_candidates" \
@@ -981,7 +980,7 @@ on stdin.
 
 The jq builder canonicalizes `source_family` inline (function
 `fam_canonical`, co-located with its callers), shapes each candidate
-to the full DESIGN §6 finding schema, and emits a
+to the full finding schema, and emits a
 `{findings, drift}` object: `findings` is the array we send to the
 helper; `drift` is the unknown-family audit lines we append to
 `trace.md` so the next mapping-table update surfaces from inspection
@@ -1189,7 +1188,7 @@ rm -f "$stderr_capture"
 
 For trivial-mode runs (`trivial_mode=true`), the jq builder above
 forces `validation_lane="light"` for every candidate — Phase 4b
-handles the whole pool per §19.6. The `$trivial` argjson binding
+handles the whole pool. The `$trivial` argjson binding
 drives that branch so the stored lane is honest.
 
 Continue-on-error per finding: `--add-findings` rejects bad
@@ -1270,5 +1269,5 @@ is the intended observability signal.
 - `artifact.findings[]` populated with IDed candidates at 1.5.
 - `tokens.jsonl` grew one entry per lens sub-agent.
 - `phases.jsonl` grew a Phase 1 record (ts overlaps Phase 1.5's under
-  `--ensemble` per §13.12).
+  `--ensemble`).
 - `trace.md` grew a Phase 1 section.

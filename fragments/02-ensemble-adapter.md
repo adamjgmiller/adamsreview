@@ -36,9 +36,8 @@ with `source_family: "external-deep-family"` and
 
 **Token accounting.** The CodeRabbit and Codex CLIs are EXTERNAL processes —
 their token spend is billed separately by their respective providers and is
-NOT logged to `tokens.jsonl` (clarification vs DESIGN §11's "wrapper
-orchestration tokens tracked" language — with CLI dispatch there is no
-Claude wrapper sub-agent to track). Only the Sonnet normalizer is logged,
+NOT logged to `tokens.jsonl` (with CLI dispatch there is no Claude
+wrapper sub-agent to track). Only the Sonnet normalizer is logged,
 under `phase_1_5`.
 
 ### 1.5.1. Readiness — already done in the Phase 1 fragment (§13.12)
@@ -124,7 +123,7 @@ filter (`comment-freshness.sh` §21.10) drops records whose referenced
 code has changed between when the comment was posted and HEAD. Guard
 the exit-code captures with `||` so `set -e` orchestrator context
 doesn't abort on non-zero — we deliberately want to read the code and
-continue per §24.2:
+continue:
 
 ```bash
 if [[ "$mode" == "pr" ]]; then
@@ -159,7 +158,7 @@ if [[ "$mode" == "pr" ]]; then
     else
         # Scrape failed — write an empty array so downstream consumers
         # don't trip on a missing file. The scrape-failed tag is logged
-        # below per §24.2.
+        # below.
         echo "[]" > "$scratch_dir/pr-scrape.json"
     fi
 else
@@ -168,8 +167,8 @@ else
 fi
 ```
 
-On scrape non-zero exit (rate limit, auth, network) per §24.2: log
-stderr to `trace.md` with tag `phase_1_5_scrape_failed`; continue with
+On scrape non-zero exit (rate limit, auth, network): log stderr to
+`trace.md` with tag `phase_1_5_scrape_failed`; continue with
 the CLI reviewer outputs only. Do not abort. The freshness-filter
 failure path (inner `if`) is separately logged because it can fire
 independently of the scrape succeeding.
@@ -361,8 +360,8 @@ log-tokens.sh \
 ```
 
 (The batched `--add-findings` sweep moved to 01-detection.md step 1.5
-per §13.12 — it runs once across the combined internal + external pool
-after ids are assigned. Do not `--add-finding` / `--add-findings` here.)
+— it runs once across the combined internal + external pool after ids
+are assigned. Do not `--add-finding` / `--add-findings` here.)
 
 ### 1.5.6b. Clean up scratch_dir
 
