@@ -5079,7 +5079,8 @@ BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX
 # would still satisfy the rev-list-string greps and silently revert the
 # narrow-refspec stale-origin guard + Stop-guidance-uses-fresh-ref fixup.
 if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
-   && grep -qF 'git fetch origin "$base_branch" --quiet' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git fetch origin' <<<"$BB_FIX_BODY" \
+   && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' <<<"$BB_FIX_BODY" \
    && grep -qF 'fetch_ok=true' <<<"$BB_FIX_BODY" \
    && grep -qF '|| fetch_ok=false' <<<"$BB_FIX_BODY" \
    && grep -qF 'if $fetch_ok; then' <<<"$BB_FIX_BODY" \
@@ -5105,7 +5106,8 @@ BB_ADD="$REPO/commands/add.md"
 # fails BB-3 — the bare `grep -q 'AskUserQuestion'` would pass on the
 # frontmatter alone even if the §3a invocation prose was deleted.
 if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
-   && grep -qF 'git fetch origin "$base_branch" --quiet' "$BB_ADD" \
+   && grep -qF 'git fetch origin' "$BB_ADD" \
+   && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' "$BB_ADD" \
    && grep -qF 'fetch_ok=true' "$BB_ADD" \
    && grep -qF '|| fetch_ok=false' "$BB_ADD" \
    && grep -qF 'if $fetch_ok; then' "$BB_ADD" \

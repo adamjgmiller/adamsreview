@@ -189,13 +189,16 @@ Capture `latest_known_sha`, `staleness_verdict`.
 ### 7.6a. Branch-behind-base advisory
 
 Active fetch — the artifact's review-time freshness snapshot may have
-aged since `:review` ran. Capture fetch success and route the rev-list
-accordingly: on success, prefer `origin/<base>` (with a defensive
-fallback to local `<base>` for narrow-refspec configs that don't update
-remote-tracking refs even after a clean fetch); on failure, fall back
-to local `<base>` AND surface a "fetch failed" note in the prompt so
-the user knows the count may itself be stale (a bare `origin/<base>`
-rev-list would silently resolve from cached refs and mislead). Track
+aged since `:review` ran. Use an explicit refspec
+(`refs/heads/<base>:refs/remotes/origin/<base>`) so the fetch updates
+`refs/remotes/origin/<base>` even under narrow `remote.origin.fetch`
+configs that would otherwise update only `FETCH_HEAD` and leave a
+stale `origin/<base>` in place. Route the rev-list by fetch success:
+on success, prefer `origin/<base>` (with a defensive fallback to
+local `<base>` if it somehow still doesn't resolve); on failure, fall
+back to local `<base>` AND surface a "fetch failed" note so the user
+knows the count may itself be stale (a bare `origin/<base>` rev-list
+would silently resolve from cached refs and mislead). Track
 `$merge_ref` alongside the count so the Stop guidance points at the
 same ref the count was actually against — telling the user to merge
 local `<base>` when the count was against `origin/<base>` would be a
@@ -204,7 +207,9 @@ no-op against a still-stale local ref.
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
 fetch_ok=true
-GIT_TERMINAL_PROMPT=0 git fetch origin "$base_branch" --quiet 2>/dev/null \
+GIT_TERMINAL_PROMPT=0 git fetch origin \
+    "refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
+    --quiet 2>/dev/null \
     || fetch_ok=false
 if $fetch_ok; then
     if behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null); then
