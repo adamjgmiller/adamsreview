@@ -5063,10 +5063,18 @@ else
     fail "AF-DRIFT-EDGE: $af_drift_edge_fail"
 fi
 
-# BB-1..3: branch-behind-base advisory gate is wired into all three
-# lifecycle commands. Template-integrity check (the gate is inline
-# bash + AskUserQuestion prose, no helper script). Asserts: header at
-# the right step, behind-count rev-list, fail-open `|| echo 0`.
+# BB-* assertions cover the three branch-behind-base advisory sites
+# (§0.6a passive in :review, §7.6a active in :fix, §3a active in :add).
+# Each block-scoped slice (awk-extracted) is checked for: section
+# header, behind-count rev-list (passive) or fetch routing structure
+# (active: fetch_ok flag + narrow refspec + 30s GNU-timeout branch),
+# merge_ref / comparison_ref assignment AND consumer-side
+# Stop-guidance consumption, conflict-aware stash-pop block (:fix
+# only), AskUserQuestion grant + invocation prose (:add), Proceed /
+# Stop / Abort trace fields (active) or Proceed-only
+# preflight_warnings entry (passive — Stop/Abort audit lines deferred
+# pending §0.15 trace-dir bring-up), and unresolvable-path warnings on
+# degraded paths.
 BB_PRE="$REPO/fragments/00-preflight.md"
 # Section-extract §0.6a body so the consumer-side `git merge $comparison_ref`
 # assertion can't be satisfied by drift elsewhere in the file (mirrors BB-2's
@@ -5127,11 +5135,13 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_FIX_BODY"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed trace + unresolvable-path warning both fetch_ok branches)"
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches)"
 else
-    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed-trace/unresolvable-path warning missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed/Stop/Abort traces/unresolvable-path warning missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5157,11 +5167,13 @@ if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
    && grep -qF '`AskUserQuestion` once:' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_ADD_BODY" \
    && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_ADD_BODY"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace + unresolvable-path warning both fetch_ok branches)"
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches)"
 else
-    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace/unresolvable-path warning missing in $BB_ADD (§3a slice)"
+    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed/Stop/Abort traces/unresolvable-path warning missing in $BB_ADD (§3a slice)"
 fi
 
 echo

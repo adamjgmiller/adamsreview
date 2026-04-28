@@ -294,6 +294,10 @@ fi
 Fail-open on any non-zero git exit — the gate is a warning surface, not
 a precondition.
 
+All three branches (Proceed / Stop / Abort) write a distinct
+`branch_behind_base <verdict>` audit line to `trace.md` so an operator
+reading the trace later can tell which path the user took.
+
 If `$behind > 0`, `AskUserQuestion` once:
 
 > Branch `$head_branch` is `$behind` commits behind `$base_branch`.$fetch_note
@@ -303,18 +307,31 @@ If `$behind > 0`, `AskUserQuestion` once:
 > (callers or helpers on `$base_branch` that have changed since).
 > Recommend merging `$merge_ref` into `$head_branch` first.
 
-- **(a) Stop — I'll merge `$merge_ref` into `$head_branch` first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $merge_ref\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`
+- **(a) Stop — I'll merge `$merge_ref` into `$head_branch` first, then re-run.** Emit a `branch_behind_base stopped` trace line, then exit 0 with: `Stopping. Run \`git merge $merge_ref\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`
+  ```bash
+  printf '[%s] branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
+      >> "$trace_log_path"
+  ```
 - **(b) Proceed.** Append a trace line and continue. Logs `merge_ref`
   and `fetch_ok` alongside the count so an operator reading `trace.md`
   later can tell which ref the count was measured against and whether
-  the active fetch succeeded — parity with `:review` §0.6a's
-  `comparison_ref=` audit signpost.
+  the active fetch succeeded — mirrors `:review` §0.6a's
+  Proceed-on-warning pattern; the active variants additionally log
+  `merge_ref` and `fetch_ok` because the fetch may have failed and the
+  gate may have measured against a different ref than the user is told
+  to merge.
   ```bash
   printf '[%s] branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
       >> "$trace_log_path"
   ```
-- **(c) Abort.** Exit 0 with `Aborted.`.
+- **(c) Abort.** Emit a `branch_behind_base aborted` trace line, then exit 0 with `Aborted.`.
+  ```bash
+  printf '[%s] branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
+      >> "$trace_log_path"
+  ```
 
 ### 4. Build candidate array
 
