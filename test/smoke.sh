@@ -3395,10 +3395,11 @@ fi
 # subset of binaries this command literally invokes; common shell
 # builtins (echo, paste) are deliberately omitted to match the
 # established pattern of relying on the user's global allowlist for
-# those (see promote/walkthrough).
+# those (see promote/walkthrough). timeout/sleep/kill are pinned for
+# §3a's bounded fetch (GNU-timeout branch + background+watchdog fallback).
 front=$(awk '/^---$/{c++; next} c==1{print}' "$ADD_MD")
 missing=()
-for tool in mktemp jq git awk grep mkdir rm tr cat printf date; do
+for tool in mktemp jq git awk grep mkdir rm tr cat printf date timeout sleep kill; do
     if ! echo "$front" | grep -qF "Bash($tool:"; then
         missing+=("$tool")
     fi
@@ -3449,6 +3450,24 @@ if grep -qF 'existing_ids_csv=' "$ADD_MD" \
     pass "RA-13: step 5 dedup has hallucinated-match_id guard"
 else
     fail "RA-13: step 5 dedup hallucination guard missing from $ADD_MD"
+fi
+
+# RA-14: fix.md grants the three Bash binaries §7.6a's active-fetch
+# block invokes inline (timeout, sleep, kill). Mirrors RA-10's
+# permissions-vs-usage discipline; tighter scope because fix.md is a
+# larger command and full-coverage enumeration is out-of-scope here.
+FIX_MD="$REPO/commands/fix.md"
+front_fix=$(awk '/^---$/{c++; next} c==1{print}' "$FIX_MD")
+missing_fix=()
+for tool in timeout sleep kill; do
+    if ! echo "$front_fix" | grep -qF "Bash($tool:"; then
+        missing_fix+=("$tool")
+    fi
+done
+if [[ ${#missing_fix[@]} -eq 0 ]]; then
+    pass "RA-14: commands/fix.md grants §7.6a fetch-block binaries (timeout, sleep, kill)"
+else
+    fail "RA-14: commands/fix.md missing Bash grants for: ${missing_fix[*]}"
 fi
 
 # ------------------------------------------------------------------ Stage 2.9
@@ -5042,6 +5061,135 @@ if [[ -z "$af_drift_edge_fail" ]] && [[ "$af_drift_edge_count" -gt 0 ]]; then
     pass "AF-DRIFT-EDGE: whitespace/case/empty/unknown normalization parity ($af_drift_edge_count cases agree across Python + in-jq readers)"
 else
     fail "AF-DRIFT-EDGE: $af_drift_edge_fail"
+fi
+
+# BB-* assertions cover the three branch-behind-base advisory sites
+# (§0.6a passive in :review, §7.6a active in :fix, §3a active in :add).
+# Each block-scoped slice (awk-extracted) is checked for: section
+# header, behind-count rev-list (passive) or fetch routing structure
+# (active: fetch_ok flag + narrow refspec + 30s GNU-timeout branch),
+# merge_ref / comparison_ref assignment AND consumer-side
+# Stop-guidance consumption, conflict-aware stash-pop block (:fix
+# only), AskUserQuestion grant + invocation prose (:add), Proceed /
+# Stop / Abort trace fields (active) or Proceed-only
+# preflight_warnings entry (passive — Stop/Abort audit lines deferred
+# pending §0.15 trace-dir bring-up), and unresolvable-path warnings on
+# degraded paths.
+BB_PRE="$REPO/fragments/00-preflight.md"
+# Section-extract §0.6a body so the consumer-side `git merge $comparison_ref`
+# assertion can't be satisfied by drift elsewhere in the file (mirrors BB-2's
+# §7.6a-scoping). The consumer assertion pins the Stop-guidance fix from
+# round 1: a future regression to `git merge $base_branch` would leave the
+# assignment-side greps satisfied while silently restoring the no-op-after-
+# freshness-gate-option-(b) bug. Same idea drives the `git merge $merge_ref`
+# greps in BB-2/BB-3.
+BB_PRE_BODY=$(awk '/^### 0\.6a\. /{flag=1} /^### 0\.7\. /{flag=0} flag' "$BB_PRE")
+if grep -q '### 0.6a. Branch-behind-base advisory' <<<"$BB_PRE_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..$comparison_ref"' <<<"$BB_PRE_BODY" \
+   && grep -qF 'git merge $comparison_ref' <<<"$BB_PRE_BODY" \
+   && grep -q 'preflight_warnings+=("branch_behind_base proceeded' <<<"$BB_PRE_BODY" \
+   && grep -qF 'branch_behind_base unresolvable comparison_ref=' <<<"$BB_PRE_BODY"; then
+    pass "BB-1: /adamsreview:review §0.6a branch-behind-base gate present (passive count vs comparison_ref + Stop guidance merges comparison_ref + preflight_warnings buffer + unresolvable-path warning)"
+else
+    fail "BB-1: §0.6a header/rev-list/Stop-merge-comparison_ref/preflight_warnings/unresolvable-path warning missing in $BB_PRE (§0.6a slice)"
+fi
+
+BB_FIX="$REPO/fragments/08-fix-loader.md"
+# Section-extract §7.6a body so assertions can't be satisfied by content
+# from §7.6 or earlier — the legacy `git stash pop || true` line also
+# appears in §7.6's staleness-abort block (out of scope), so a file-scoped
+# grep would silently pass even if §7.6a's stash-pop bash regressed.
+# (a) Stop and (c) Abort each reference the §7.6a stash-pop block via a
+# distinct prose anchor; pin both so a future edit that drops the Abort
+# path (while keeping Stop's) fails BB-2. The conflict-aware shape
+# (`stash_pop_conflict=true` + `git stash pop 2>>"$trace_log_path"`) is
+# pinned explicitly so a regression that reverts §7.6a back to bare
+# `git stash pop || true` (or deletes the block entirely) fails BB-2 —
+# both literals are required because the bare flag string `stash_pop_conflict`
+# would also match the conditional prose hint, and we need to lock in the
+# conflict-aware bash itself, not just the recovery suffix.
+BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX")
+# Per-bullet slice for §7.6a (c) Abort, so the Abort bullet's bash is
+# asserted to perform the action its prose names — not just appear
+# somewhere in the enclosing §7.6a section. The (a) Stop bullet contains
+# the same `git stash pop`/`stash_pop_conflict=true` literals inline;
+# without per-bullet slicing a regression that drops (c)'s stash-pop
+# bash (as round-3 of the dual-review loop nearly did) would still pass
+# BB-2 by matching against (a)'s copies. The awk:
+#   - starts capturing on `- **(c) Abort` line
+#   - stops on the next bulleted `- **(` item (any letter)
+#   - stops on the next `### ` header (defensive)
+BB_FIX_ABORT_BODY=$(awk '/^- \*\*\(c\) Abort/{flag=1; print; next} /^- \*\*\(/{flag=0} /^### /{flag=0} flag' <<<"$BB_FIX_BODY")
+# Routing structure assertions (`fetch_ok=true`, `|| fetch_ok=false`,
+# `if $fetch_ok; then`, `merge_ref=`) prove the fetch-conditional shape
+# itself — without them, a future regression to the old unconditional
+# `||`-chain (`git fetch ... || true; behind=origin || local || 0`)
+# would still satisfy the rev-list-string greps and silently revert the
+# narrow-refspec stale-origin guard + Stop-guidance-uses-fresh-ref fixup.
+# `timeout 30 git fetch` pins the GNU-timeout branch of the 30s soft
+# timeout (the watchdog branch is fallback-only); a regression to bare
+# `git fetch` would now fail BB-2.
+if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git fetch origin' <<<"$BB_FIX_BODY" \
+   && grep -qF 'timeout 30 git fetch' <<<"$BB_FIX_BODY" \
+   && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' <<<"$BB_FIX_BODY" \
+   && grep -qF 'fetch_ok=true' <<<"$BB_FIX_BODY" \
+   && grep -qF '|| fetch_ok=false' <<<"$BB_FIX_BODY" \
+   && grep -qF 'if $fetch_ok; then' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_FIX_BODY" \
+   && grep -qF 'merge_ref=' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git merge $merge_ref' <<<"$BB_FIX_BODY" \
+   && grep -qF 'fetch_note=' <<<"$BB_FIX_BODY" \
+   && grep -qF 'stash_pop_conflict=true' <<<"$BB_FIX_BODY" \
+   && grep -qF 'git stash pop 2>>"$trace_log_path"' <<<"$BB_FIX_BODY" \
+   && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
+   && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_FIX_BODY" \
+   && grep -qF 'branch_behind_base degraded fetch_ok=false local_resolve=true behind=0' <<<"$BB_FIX_BODY" \
+   && grep -qF 'stash_pop_conflict=false' <<<"$BB_FIX_ABORT_BODY" \
+   && grep -qF 'git stash pop 2>>"$trace_log_path"' <<<"$BB_FIX_ABORT_BODY" \
+   && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s stash_pop_conflict=%s' <<<"$BB_FIX_ABORT_BODY"; then
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + stash-pop conflict-aware block + Stop AND Abort references + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches + degraded-path warning + Abort-bullet stash-pop literals pinned)"
+else
+    fail "BB-2: §7.6a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop conflict-aware block/Stop AND Abort references/Proceed/Stop/Abort traces/unresolvable-path warning/degraded-path warning/Abort-bullet stash-pop literals missing in $BB_FIX (§7.6a slice)"
+fi
+
+BB_ADD="$REPO/commands/add.md"
+# Section-extract §3a body so §3a-internal greps can't be satisfied by
+# drift elsewhere in the file (mirrors BB-2's §7.6a-scoping). Frontmatter
+# `AskUserQuestion` grant stays file-scoped against `$BB_ADD` (line 1 isn't
+# in the §3a slice); the in-prose `AskUserQuestion` invocation grep stays
+# slice-scoped so a regression that drops §3a's prompt while keeping the
+# frontmatter grant still fails BB-3.
+BB_ADD_BODY=$(awk '/^### 3a\. /{flag=1} /^### 4\. /{flag=0} flag' "$BB_ADD")
+if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git fetch origin' <<<"$BB_ADD_BODY" \
+   && grep -qF 'timeout 30 git fetch' <<<"$BB_ADD_BODY" \
+   && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' <<<"$BB_ADD_BODY" \
+   && grep -qF 'fetch_ok=true' <<<"$BB_ADD_BODY" \
+   && grep -qF '|| fetch_ok=false' <<<"$BB_ADD_BODY" \
+   && grep -qF 'if $fetch_ok; then' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_ADD_BODY" \
+   && grep -qF 'merge_ref=' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git merge $merge_ref' <<<"$BB_ADD_BODY" \
+   && grep -qF 'fetch_note=' <<<"$BB_ADD_BODY" \
+   && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
+   && grep -qF '`AskUserQuestion` once:' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base stopped behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base aborted behind=%s merge_ref=%s fetch_ok=%s' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=true local_resolve=false' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base unresolvable fetch_ok=false local_resolve=false' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base degraded fetch_ok=false local_resolve=true behind=0' <<<"$BB_ADD_BODY"; then
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch with 30s timeout + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed/Stop/Abort traces + unresolvable-path warning both fetch_ok branches + degraded-path warning)"
+else
+    fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed/Stop/Abort traces/unresolvable-path warning/degraded-path warning missing in $BB_ADD (§3a slice)"
 fi
 
 echo

@@ -22,8 +22,9 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
 
 ```
 /adamsreview:review [--ensemble]
-├── Phase 0 — Pre-flight (branch/PR detect, base-branch freshness, dirty-tree,
-│              push, prior-artifact prompt, record review_started_at,
+├── Phase 0 — Pre-flight (branch/PR detect, base-branch freshness,
+│              branch-behind-base advisory at 0.6a, dirty-tree, push,
+│              prior-artifact prompt, record review_started_at,
 │              trivial-diff detection, CLAUDE.md path lister)
 ├── Phase 1    ─┐ Detection (6 parallel lens agents, 7 under --ensemble — L7
 │               │   is a holistic Opus safety net; origin cross-check corrects
@@ -48,7 +49,7 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
                render, PR comment POST)
 
 /adamsreview:fix [threshold] [--granular-commits]
-├── Phase 7 — Load artifact; leftover-attempted abort; clean-tree gate; staleness check
+├── Phase 7 — Load artifact; leftover-attempted abort; clean-tree gate; staleness check; branch-behind-base advisory at 7.6a
 ├── Phase 8 — Per-fix-group agents edit working tree (no git ops);
 │              each group reports files_modified + files_created
 └── Phase 9 — Post-fix Opus review pre-commit; aggregate outcomes per group;
@@ -63,7 +64,8 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
                fix_group_id preserved per-finding in fix_attempts)
 
 /adamsreview:add [<paste...>] [--file path --line N --claim "..."] [--impact <type>] [--no-dedup]
-└── Locate artifact (latest.txt) → leftover-attempted gate → build candidates
+└── Locate artifact (latest.txt) → leftover-attempted gate →
+    branch-behind-base advisory at 3a → build candidates
     (paste-normalizer Sonnet | structured one-shot | mixed) → dedup against
     existing findings (Sonnet, one-direction) → assign IDs continuing past
     max existing F-id (assign-finding-ids.sh --start-from) → --add-finding loop →

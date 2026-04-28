@@ -173,6 +173,43 @@ used by step 0.11 (trivial check) AND by step 0.15 (seed's
 unconditionally — if step 0.11 is skipped by `--full`, these still need
 to exist.
 
+### 0.6a. Branch-behind-base advisory
+
+Step 0.2a already attempted a fetch, so this is passive — `$comparison_ref`
+is whatever ref freshness-gate.sh produced (which may still be local on
+`no_remote` / `no_fetch`). When HEAD is behind it, the lens diff includes
+phantom deletions for code that landed on the base after this branch was
+cut. When `$comparison_ref` doesn't resolve to a count at all, append a
+`branch_behind_base unresolvable` entry to `preflight_warnings[]` (flushed
+at §0.15 into the artifact) so an operator inspecting the artifact later
+can distinguish a genuinely-up-to-date branch (`behind=0`) from a
+silently-degraded gate (also `behind=0`).
+
+```bash
+if behind=$(git rev-list --count "HEAD..$comparison_ref" 2>/dev/null); then
+    :  # behind already populated
+else
+    behind=0
+    preflight_warnings+=("branch_behind_base unresolvable comparison_ref=$comparison_ref")
+fi
+```
+
+If `$behind > 0`, `AskUserQuestion` once:
+
+> Branch `$head_branch` is `$behind` commits behind `$comparison_ref`
+> (the diff base for this review). The lens diff includes phantom
+> deletions for code that landed on `$comparison_ref` after this branch
+> was cut, and may have shifted code your branch calls into. Recommend
+> merging `$comparison_ref` into `$head_branch` first — this updates
+> your feature branch tip, separate from any earlier diff-base choice.
+
+- **(a) Stop — I'll merge `$comparison_ref` into `$head_branch` first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $comparison_ref\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
+- **(b) Proceed.** Append a buffered warning and continue:
+  ```bash
+  preflight_warnings+=("branch_behind_base proceeded behind=$behind comparison_ref=$comparison_ref")
+  ```
+- **(c) Abort.** Exit 0 with `Aborted.`.
+
 ### 0.7. Enumerate `claude_md_paths`
 
 Run:
