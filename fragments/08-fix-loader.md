@@ -1,14 +1,5 @@
 ## Phase 7 — Load artifact + gates (fix command)
 
-Phase 7 sets up every downstream fix-run variable from the artifact on
-disk, applies the four gates (leftover-`attempted` hard abort, clean
-tree, staleness, PR eligibility), and generates the run identity.
-Mostly deterministic shell — no LLM calls.
-
-Work through the steps below in order. Capture each named variable
-into your working context — later phases will reference them by name
-("the `run_id` captured in Phase 7").
-
 ### 7.1. Resolve argument flags
 
 Parse `$ARGUMENTS` (whitespace-split):
@@ -219,9 +210,8 @@ fixes still run (they just don't publish to a PR comment in 9e).
 
 ### 7.8. Generate `run_id` and capture `input_sha`
 
-Per the schema, `fix_attempts[].run_id` must match
-`^fixrun_[A-Za-z0-9]+$`. Prefer ULID; fall back to timestamp + random
-tail (same pattern as Phase 0 step 0.15):
+`fix_attempts[].run_id` must match `^fixrun_[A-Za-z0-9]+$`. Prefer
+ULID; fall back to timestamp + random tail:
 
 ```bash
 if ulid=$(uv run --with ulid-py python3 -c 'import ulid; print(ulid.new())' 2>/dev/null); then
@@ -234,9 +224,7 @@ fi
 input_sha=$(git rev-parse HEAD)
 ```
 
-Capture `run_id`, `input_sha`. The pair `(run_id, fix_group_id)`
-uniquely identifies a specific group across the lifetime of the
-project (§24.4); `fix_group_id` alone only scopes within `run_id`.
+Capture `run_id`, `input_sha`.
 
 Append a working-set record to `trace.md`:
 

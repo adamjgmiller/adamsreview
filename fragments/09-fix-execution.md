@@ -1,11 +1,5 @@
 ## Phase 8 — Per-fix-group agents
 
-Compute eligibility, union-find the groups, transition every eligible
-finding open→attempted, and dispatch one Opus fix-group agent per
-group in a single orchestrator turn. Each agent returns a strict JSON
-shape (§19.8) that Phase 9 reads to classify outcomes and decide which
-groups survive or revert.
-
 ### 8.1. Compute `eligible_finding_ids`
 
 The Phase 8 fix gate filters on current_state + disposition +
@@ -13,14 +7,6 @@ impact_type (deep lane only — §13.2) + `score_phase4 >= threshold`.
 A non-null `human_confirmation` (set by `/adamsreview:promote`, §27)
 bypasses both the impact_type lane filter AND the score threshold —
 the human has overridden the validator's conservative defaults.
-
-The `/adamsreview:walkthrough` scope filter (§28, step 3 in
-`commands/walkthrough.md`) is the **inverse** of this selector, plus
-an additional walkthrough-local score floor (`COALESCE(score_phase4,
-score_phase3, -1) >= $threshold`) to drop low-signal items from the
-interactive session. Keep the inverse piece in sync — any edit to the
-eligibility logic below must mirror into the walkthrough's scope jq.
-The score floor is walkthrough-specific; don't propagate it here.
 
 ```bash
 eligible_finding_ids=$(jq -r --argjson thr "$threshold" '
@@ -120,10 +106,7 @@ echo "$start_tuples" | \
       --path "$artifact_path" --apply-fix-start @-
 ```
 
-On non-zero (stale attempted state — the leftover-attempted hard
-abort in 7.4 is supposed to catch it; a failure here would mean the
-orchestrator filtered an ineligible finding in 8.1, so surface the
-error and abort — DO NOT retry silently):
+On non-zero, surface the error and abort — DO NOT retry silently:
 
 1. Log stderr to `trace.md`.
 2. Pop stash if taken.
@@ -132,8 +115,7 @@ error and abort — DO NOT retry silently):
    <id> --set current_state=open` to reset.
 
 On success, every eligible finding is now `current_state=attempted`
-on disk. This is the transient state the §4 Phase 7 step 4 hard abort
-catches if the run is interrupted between here and Phase 9e.
+on disk.
 
 ### 8.5. Dispatch parallel fix-group agents (one turn)
 

@@ -1,12 +1,5 @@
 ## Phase 6 — Finalize
 
-Close out the review: validate the artifact, tally `subagent_tokens`
-and `orchestrator_tokens`, populate `metrics`, record the final
-`phases.jsonl` entry, render `artifact.md`, update `latest.txt`
-(already done in Phase 0 — re-asserted here for atomic safety),
-publish to the PR (PR mode) or no-op (local mode), mirror the report
-to chat, and pop any stash taken at Phase 0's dirty-tree gate.
-
 ### 6.1. Schema-validate the artifact
 
 ```bash
@@ -27,19 +20,11 @@ tally-subagent-tokens.sh \
   --artifact   "$artifact_path"
 ```
 
-The helper slurps `tokens.jsonl`, computes totals + invocation count +
-per-phase + per-model + per-lens + per-finding-phase4, and writes the
-rollup to `<artifact>.subagent_tokens` via `artifact-patch.py
---set-json`. It's a pure readback — `tokens.jsonl` itself is never
-touched, and repeat invocations are idempotent.
-
-`tokens: null` entries (§11 parse-failure fallback) coerce to 0 in
-totals; an empty log produces a zero rollup rather than an error, so
-the helper is safe to call at any terminus. The three lifecycle
-commands (`/adamsreview:fix`, `/adamsreview:add`,
-`/adamsreview:walkthrough`) each re-invoke it before their final
-render so the published PR comment reflects cumulative sub-agent
-spend, not just the initial `/adamsreview:review` snapshot.
+`tokens: null` entries coerce to 0; an empty log produces a zero
+rollup rather than an error. The three lifecycle commands
+(`/adamsreview:fix`, `/adamsreview:add`, `/adamsreview:walkthrough`)
+each re-invoke it before their final render so the published PR
+comment reflects cumulative sub-agent spend.
 
 ### 6.2b. Tally `orchestrator_tokens` from the session transcript(s)
 
@@ -51,41 +36,18 @@ orchestrator-tokens.sh \
   --since    "$review_started_at"
 ```
 
-Companion to the sub-agent tally. Scans every Claude Code transcript
-under `~/.claude/projects/<cwd-slug>/` whose assistant-line timestamps
-fall in the review window and sums the main-session (orchestrator)
-`message.usage` counters into `<artifact>.orchestrator_tokens`.
-Complements `subagent_tokens` — the two are non-overlapping: sub-agent
-tokens are the sub-agents' own internal API calls, orchestrator tokens
-are the main session's per-turn usage. Together they cover the full
-spend of a review.
-
-The helper defaults `--cwd` to `$(pwd -P)`, which is exactly the
-Claude Code session's cwd — the same path whose slugged form
-(`tr '/.' '-'`) names the transcript directory. Don't override
-`--cwd` unless testing; passing `$repo_root` would mis-point in
-worktrees where the session was started from the worktree path.
-
-The helper is safe to call when the transcript directory is absent —
-it emits a zero rollup rather than erroring. Same "cumulative across
-every lifecycle terminus" pattern as the sub-agent tally:
-`/adamsreview:fix`, `/adamsreview:add`, and
-`/adamsreview:walkthrough` each re-invoke it before their final
-render.
+Companion to the sub-agent tally; the two are non-overlapping. Don't
+override `--cwd` — passing `$repo_root` mis-points in worktrees where
+the session was started from the worktree path. Safe to call when
+the transcript directory is absent (zero rollup, no error). Same
+cumulative-across-lifecycle-terminus pattern as the sub-agent tally:
+each lifecycle command re-invokes it before its final render.
 
 The helper is **opt-in** via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`
-(default skip — the transcript scan trips the macOS Sequoia/Tahoe
-"access data from other apps" prompt because Claude Code marks
-transcripts with the `com.apple.provenance` xattr). When opted out
-it exits 0 with one `orchestrator-tally: skipped (...)` stdout line
-and does not touch the artifact, so the rendered PR comment simply
-omits the **Orchestrator tokens** line. See README §"Token counts"
-for the user-facing rationale and enable path.
-
-Soft over-count modes (unrelated same-cwd sessions, intermission chat
-between lifecycle commands) are accepted for v1 — both bias towards
-over-count, never under-count, and only apply when opted in. See the
-helper header for the full list.
+(default skip). When opted out it exits 0 with one
+`orchestrator-tally: skipped (...)` stdout line and does not touch
+the artifact, so the rendered PR comment simply omits the
+**Orchestrator tokens** line.
 
 ### 6.3a. Recompute `reviewer_sources` from actual findings
 
@@ -189,10 +151,6 @@ prerequisite for publish and for mirror-to-chat.
 
 ### 6.6. Re-assert `latest.txt` (atomic)
 
-Phase 0 already wrote this at step 0.16. Re-write it here as an
-idempotent safety rail — if the Phase 0 write raced with a concurrent
-run, this re-assertion establishes correctness at Phase 6.
-
 ```bash
 tmp="$reviews_root/$repo_slug/$head_branch/latest.txt.tmp.$$"
 printf '%s\n' "$review_id" > "$tmp"
@@ -232,12 +190,9 @@ publish_args=(
     --branch "$head_branch"
     --review-dir "$review_dir"
 )
-# Prefer artifact-recorded comment_id (which step 0.15's --init seeded
-# from step 0.14's existing_comment_id if the user opted into
-# "replace prior" recovery). Fall back to existing_comment_id directly
-# for defense-in-depth if the seed missed it for any reason.
-# Omitting --comment-id on a fresh /adamsreview:review is intentional: the
-# publisher will POST a new comment.
+# Prefer artifact-recorded comment_id; fall back to existing_comment_id
+# directly. Omitting --comment-id on a fresh /adamsreview:review is
+# intentional — the publisher will POST a new comment.
 if [[ -n "$comment_id_from_artifact" ]]; then
     publish_args+=(--comment-id "$comment_id_from_artifact")
 elif [[ -n "$existing_comment_id" ]]; then
@@ -291,13 +246,7 @@ Prepend a one-line mode-aware header:
 - `local` → `### Code review (local — \`$head_branch\` vs \`$base_branch\`)`
 
 After the main report body (the contents of `artifact.md`), add a
-**Next steps** block so the reviewer knows their options. The block
-has two bullets — one for each follow-up command — framed as
-suggestions rather than forced next actions. Do NOT use
-`AskUserQuestion` here: the walkthrough is a 15-30 minute interactive
-session and prompting at review completion catches the reviewer at a
-bad time (they're just reading output). A descriptive block gives
-discoverability without pressure.
+**Next steps** block. Do NOT use `AskUserQuestion` here.
 
 Render this block verbatim (with the review's actual threshold
 default):
