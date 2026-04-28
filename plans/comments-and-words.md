@@ -181,6 +181,17 @@ THEN preserve those bullets and delete only the pure-contrast ones around them.
 
 ### Phase 0 — Pre-execution safety sweep + fixture build (must complete before Phase 1)
 
+#### Stage 0.0: Capture execution-start SHA
+
+Before any cleanup work begins, run:
+
+```bash
+execution_start_sha=$(git rev-parse HEAD)
+echo "execution_start_sha=$execution_start_sha"
+```
+
+Record this SHA in the build journal at `plans/comments-and-words-execution.md` under a top-level `## Run identity` heading. Stage 4.1's verify gate (step 1) uses this exact value as the diff baseline; without it, the verify gate has no anchor and could compare against `main` (which would over-report unrelated commits) or HEAD (which would never report any drift).
+
 #### Stage 0.1: Fenced-block annotation sweep
 
 Before any cleanup work begins, run:
@@ -265,7 +276,7 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
 
 **Spec:**
 - Apply Pattern F removal: lines 1–8 (preamble + DESIGN §27 cross-ref).
-- Apply Pattern C removal at L89-107 — **Surgical, not whole-block:** DELETE only L89-91 (the *"**Note on...**"* heading + *"Previously a blanket no-op..."* historical framing) and L101-107 (the *"harmlessly redundant"* trailing aside about deep-lane above-threshold findings). PRESERVE L92-99 (the two current-bypass example bullets — light-lane impact filter case and deep-lane below-threshold case — these document why the table row says *"always proceed"* and are not deletable history).
+- Apply Pattern C removal at L89-107 — **Surgical, not whole-block:** DELETE L89-93 (the *"**Note on...**"* heading + *"Previously a blanket no-op..."* historical-framing sentence including its wraparound through *"...Examples where the old no-op silently broke promote:"*). PRESERVE L95-102 (the two current-bypass example bullets — light-lane impact filter case and deep-lane below-threshold case — these document why the table row says *"always proceed"* and are not deletable history). DELETE L104-107 (the *"harmlessly redundant"* trailing aside about deep-lane above-threshold findings).
 - Apply Pattern B removal: lines 224–227 (*"Step numbering (3, 4, 4.5, 5, 6, 9) matches the original /adamsreview:promote step numbers for continuity..."* — pure numbering meta-commentary).
 
 **Verify:** smoke + the contract tables (lines 11–39) and step bodies must still flow without the deleted preamble.
@@ -294,13 +305,13 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
 - L50–51 — justification aside (*"snapshot for audit (commit message + trace want it..."*)* → trim to *"Snapshot for commit message + trace:"*.
 - L73–74 — *"matches prior behavior"* change-log noise (Pattern C).
 - L278 — DELETE only the *"Why `git status --porcelain` not agent self-reports:"* header line. PRESERVE L279-289 (the four enumerated correctness bullets: *catches everything actually changed*, *catches rogue reconcile-agent edits*, *robust against agent-report disagreement*, *git diff can't substitute*) — these document failure modes the chosen approach prevents and pre-empt the obvious-but-wrong alternative (*"why not just `git diff`?"*) that a future LLM editor would propose.
-- L351–352 — implementation rationale comment (Pattern G-adjacent — explains why FG-RECON is used).
+- L351–352 — **PRESERVE** the comment *"Use FG-RECON's files_planned — the Phase-8-plus-reconcile union, i.e., the full set 9b reverts on regression. $reconcile_result alone undercounts Phase 8 files the merge agent didn't re-edit."* The "undercounts" clause documents a current failure mode the choice prevents (Pattern C plan L90 trigger — current-state failure mode, not historical). No deletion at this site.
 - L818, L829–833 — *"per §13.6"* cross-ref + cross-section explanation → trim per Pattern A + drop the cross-section explanation.
 - L861–863, L1130–1132 — implementation-rationale comments about FG-RECON id substitution → drop the comment; keep the code.
-- L902–907 — Apply this exact replacement:
+- L904–907 — Apply this exact replacement:
   *"On non-zero: log stderr verbatim to `trace.md`; do NOT retry — first-failure-halt means tuples 0..N-1 are already persisted, and the commit already happened; re-running would trip state-transition validation. Surface as the primary user error at end of 9e. Next run's leftover-attempted check catches the rest."*
-  The "first-failure-halt" framing is the WHY behind "do NOT retry" — judgment-shaping rationale that earns its tokens.
-- L1100–1105 — re-states what the body shows (Pattern F-adjacent).
+  The "first-failure-halt" framing is the WHY behind "do NOT retry" — judgment-shaping rationale that earns its tokens. (Range starts at L904, not L902 — L902 is the closing bash fence ` ``` ` and L903 is blank; both are excluded from the replacement.)
+- L1100–1105 — **PRESERVE.** This is a section-opener under heading `#### No-commit branch (\`commit_sha == null\`)` that classifies the five degenerate paths (empty-eligibility, overlap-abort, overlap-inspect, all-regression, revert-failure) and surfaces the operative claim that *"Overlap-abort via reconcile-fallback carries `reconcile_fallback=true` for step 8."* — operative state-machine documentation, not Pattern F preamble. No deletion at this site.
 - L1244–1247 — terminal invariant cross-ref (Pattern A).
 
 **Hard constraints:**
@@ -315,20 +326,22 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
 
 **Spec:**
 - Apply Pattern A removals: L20–21 (`see DESIGN §28...`), other inline `§N.N` cites at L459 (parenthetical only — *"Prompt (see DESIGN §28.4):"* → *"Prompt:"*), L535 (`per §11 / §24.4`), L901 (`per §3`), L965 (`per §5.2 convention`), L1093 (`DESIGN §27.6`).
-- Apply Pattern C removals: L115–127 (*"Reading them once at the top of the run avoids the historical bug..."* — keep bash, drop prose), L283–286 (preventive-docs fix historical reference).
-- Apply Pattern B-adjacent removal: L411–413 (meta-commentary about variable-capture position), L626–630 (implementation gripe about `${edited_hint:+...}`).
+- Apply Pattern C removals: L116b-L117 (DELETE only the sentence beginning *"Reading them once at the top of the run avoids the historical bug where §6.5 ran before §6.2's extraction and found `mode` unset:"*; spans mid-L116 through L117). PRESERVE L113-116a (consumer enumeration of `mode`/`pr_number` ending mid-L116 with *"...and §7's decisions-log POST."*), L119-122 (the bash block), and L125-127 (the `comment_id` deferred-extraction parenthetical — operative state-machine claim documenting the read-deferral). Also: L283-286 (preventive-docs fix historical reference).
+- L411-413 — **PRESERVE** the sentence *"Capturing before the loop ensures a single consistent value across the session even though promote-core re-resolves `$reviewer` per iteration."* — the "ensures" + "even though" language documents a current invariant (single-value-across-session) that constrains the bash placement; deleting it invites a future LLM to move the capture inside the loop. No deletion at this site.
+- L626-630 — **PRESERVE** the parenthetical *"`${edited_hint:+...}` would expand for the string `\"false\"` since `:+` tests emptiness, not boolean — we need an explicit string compare against `\"true\"`."* The "since" + "we need" framing prevents a future LLM from substituting the simpler `:+` form (Pattern C plan L90 trigger words). No deletion at this site.
 - Apply Pattern D removal: L880–887 (defensive maintainer rationale — keep operative *"re-extract per iteration"*; drop the *"if §6.5 runs after the §5 walk loop, $f_file otherwise carries..."* explanation).
 - L148–149 — **PRESERVE** as the single canonical sync marker between walkthrough's scope jq and `09-fix-execution.md`'s eligibility jq (provably-inverse predicates). Future LLM-driven edits to either jq need this marker to know they must mirror. Mirrors at `08-fix-loader.md` L18-23 and `09-fix-execution.md` L13-23 are still removed in Stage 3.4 (walkthrough is canonical because it's the lower-volume invocation).
 - Apply Pattern G removals:
   - L1013-1032 — **Surgical, not whole-block:**
     - PRESERVE L1017-1024 (the actual `gh issue create` bash invocation).
     - REPLACE the four-line bash comments at L1013-1016 with one operative comment: `# Capture gh_rc directly; piping gh through awk would swallow gh's exit (pipefail is off here).`
-    - DELETE the standalone prose paragraph at L1026-1032 (post-bash tutorial about awk URL extraction, `tail` vs `awk`, `mktemp` vs PID-based tempfiles).
-  - L1167–1172 (`gh api` owner/repo substitution explanation).
+    - DELETE L1026-1028 (awk URL extraction / `tail` vs `awk` mechanics — true Pattern G tutorial).
+    - PRESERVE L1029-1032 surgically as: *"`$err_tmp` uses `mktemp`, not `/tmp/...$$`, because the orchestrator may invoke successive bash calls with different PIDs."* (Pattern C plan L90 trigger: "because" + current-failure-mode preventing a future LLM from substituting the simpler PID-based form.)
+  - L1167-1172 — **Surgical:** DELETE L1167-1170a (the *"`gh api` auto-substitutes `{owner}` and `{repo}` placeholders..."* substitution explanation through *"...no manual resolution needed."* — true Pattern G tutorial). REPLACE L1170b-1172 with one operative line preserving the directive: *"Run from `$repo_root` (set at step 2); the gh process inherits the working directory unless we explicitly cd."*
 - Apply Pattern F removals:
   - L8-21 — **Surgical, not whole-block:** PRESERVE sentences that define walkthrough scope, threshold semantics, promote-core semantics with `--defer-publish`, and end-of-run side effects (per Pattern F's preserve list). DELETE only any duplicate-of-frontmatter sentences.
   - L1054–1062 (durable-side-effects note), L1314–1325 (Appendix — restates what step 5.5 already says).
-- L1298-1313 — **Surgical:** PRESERVE the resumption-state bullet (*"No resumption state file. If you quit mid-walkthrough, the promotions you already made stand. Re-invoking the walkthrough skips them naturally..."*) — operative state-machine claim. DELETE only the three pure-contrast bullets (no fix-run, no disproven handling, no cross-branch).
+- L1298-1313 — **Surgical:** PRESERVE the resumption-state bullet (*"No resumption state file. If you quit mid-walkthrough, the promotions you already made stand. Re-invoking the walkthrough skips them naturally..."*) — operative state-machine claim. PRESERVE the disproven-handling bullet (*"No `disposition=disproven` handling. Disproven findings need `/adamsreview:promote <id> --force` with a conscious justification; the walkthrough scope filter excludes them."*) — operative scope-filter claim plus the user-actionable `--force` recovery directive (Pattern E preserve rule, code-recipe + state-behavior). DELETE only the two pure-contrast bullets (no fix-run, no cross-branch).
 
 **Hard constraints:**
 - L283–314 *"Understanding the scope"* user-facing chat block is **preserved verbatim** (it renders to the reviewer running the walkthrough — UX text per preserve list #6).
@@ -344,11 +357,11 @@ Stages 2.1 through 2.6 each touch a single file with a discrete cluster of HIGH-
   - L46-57 — Apply this exact replacement text in place of the existing 12-line block:
     *"**Never batch deep-lane candidates into one Opus call.** Each candidate needs independent blast-radius and fix-proposal work. The `--apply-decisions --expected $N` guard catches under-count violations but cannot catch the collapse-then-correct-unwrap failure mode (batching N candidates into one Opus call, then unwrapping the response into N tuples to satisfy the guard). The discipline is yours."*
     The unwrap-warning is judgment-shaping rationale per the preserve list and must survive in some form.
-  - L206–215 (*"Why chunked, unlike the deep lane"*).
-  - L283–288 (`Stage 2.5.B clarification` historical).
+  - L206-215 — Apply this exact replacement: *"Light-lane batches well — rubric-checking against CLAUDE.md, not per-candidate blast-radius investigation. Cap chunks at 25: unbounded batches collapse score resolution onto the rubric anchors and stop using parallelism on large reviews. The §4.4 `--apply-decisions --expected $N` guard catches a chunk-agent dropping a finding the same way it catches collapsed deep-lane Opus calls."* (Mirrors Fix-10's treatment of the structurally-identical block in `04-scoring-gate.md`.)
+  - L283-288 — **Surgical:** Strip only the *"(Stage 2.5.B clarification, DESIGN §21.2)"* parenthetical citation (Pattern A — archive cross-ref). PRESERVE the rest, particularly the operative claim that the helper *"collapses what was previously a per-finding loop... into one helper invocation per wave, so the orchestrator's working context sees a single summary line instead of N per-finding prose blocks."* (Current-state rationale — Pattern C plan L90 trigger word "so".)
   - L326–336 (*"have been observed"* prose → keep operative *"Pipe through `parse-validator-result.py`"*; drop the rationale).
   - L496-502 — Apply this exact replacement: *"**Invariant:** Phase 0's dirty-tree gate clears the tree before Phase 1, and Phases 1–5 are tree-read-only. Any uncommitted change discovered post-validation is therefore validator-sourced and safely revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the incident for post-mortem."*
-  - L559-578 — Apply this exact replacement: *"**Drop-recovery for missing scores.** If a chunk-agent drops a finding from its returned array, the missing finding's `score_phase3` would normally default to null. In Wave 2 this is a silent confirmation loss: every Wave 2 candidate is structurally seeded with a single source family, so a null-scored Wave 2 candidate cannot auto-graduate, and the hard 2-wave cap means it will never be retried. Mitigation: when the returned chunk count is shy of the dispatched count, re-dispatch the scoring chunk for any missing ids before applying decisions. The `--apply-decisions --expected $N` guard alone cannot catch this — it sees the chunked-batch step, not the per-id-presence step."*
+  - L559-578 — Apply this exact replacement: *"**Drop-recovery for missing scores.** If a chunk-agent drops a finding from its returned array, the missing finding's `score_phase3` would normally default to null. In Wave 2 this is a silent confirmation loss: every Wave 2 candidate is structurally seeded with a single source family, so a null-scored Wave 2 candidate cannot auto-graduate, and the hard 2-wave cap means it will never be retried. Mitigation: when the returned chunk count is shy of the dispatched count, re-dispatch the scoring chunk for any missing ids before applying decisions. The `--apply-decisions --expected $N` guard alone cannot catch this — it sees the chunked-batch step, not the per-id-presence step. This scoring re-dispatch is still inside Wave 2, not a Wave 3, so the hard cap is preserved."* (Trailing sentence preserves the intra-Wave-2 framing — without it a future sub-agent reading this alongside §4's hard-cap rule may treat the scoring re-dispatch as forbidden.)
 - Apply Pattern B removal: L64–66 (*"noted here for symmetry"*).
 - Apply Pattern G removal: L304–312 (validator-helper internals).
 - Apply Pattern A removals: L399–414 (cross-file line citation to `commands/add.md §7.6 lines 551–556` — drop the line ref; keep the awk caveat), L418–422 (mirror reference to add.md guard).
@@ -371,7 +384,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 **Spec — `review.md`:**
 - L8–11, L26–29, L38–41, L55–58, L65–77, L83–94 — apply Pattern A + F (frontmatter-restating preamble, DESIGN cross-refs, effort paragraph).
 - L96–114 — Pattern F (*"Working-set variables (§25.1 summary)"* enumeration; Phase 0 establishes these anyway).
-- L168–176 — Pattern E (*"What this command does NOT do"*).
+- L168–176 — **Surgical, not whole-block:** PRESERVE the bullet describing `git push` side effects (*"The only `git push` is in Phase 0 step 0.9 (unpushed commits → PR branch), and ONLY in PR mode after user dirty-tree confirmation."* — operative state-machine claim per Pattern E preserve rule). PRESERVE the closed/merged PR bullet (*"No review of closed/merged PRs — bail at Phase 0 step 0.4 with a user-visible message."* — operative error-semantics). DELETE only the pure-contrast bullets (*"No git commits, no git tags, no branch creation."*, *"No file deletes or renames anywhere in the working tree."*, *"No fix application — that's `/adamsreview:fix`."*).
 
 **Spec — `fix.md`:**
 - L8–17, L33–36, L60–63 — Pattern A + F.
@@ -379,7 +392,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L108–114 — Pattern F (effort paragraph).
 - L116–140 — Pattern F (Working-set variables).
 - L181–185 — Pattern B (TODO/futures: *"a future `--resume-interrupted` flag could automate..."*).
-- L171–189 — Pattern E.
+- L171–189 — **Surgical, not whole-block:** PRESERVE the deletes/renames-v1 bullet (*"No deletes, renames, or moves in the working tree (v1). Fix groups edit via `Edit`/`Write` only; the revert model in Phase 9b only handles modifications and creations."* — operative state-machine claim per Pattern E preserve rule). PRESERVE the leftover-`attempted` bullet (*"No automated recovery from leftover-`attempted` state. Phase 7 step 4 aborts with a deterministic recovery message; the user decides what to keep."* — operative error semantics; the *"A future `--resume-interrupted` flag..."* sentence is removed separately by the Pattern B bullet at L181-185). PRESERVE the light-lane bullet (*"No light-lane auto-fix. Phase 8 eligibility is restricted to `impact_type ∈ {correctness, security}`."* — operative gate claim). PRESERVE the closed/merged bullet (*"No review of closed/merged PRs — Phase 7 step 7.7 aborts."* — operative error semantics). PRESERVE the no-git-in-fix-group-sub-agents bullet (*"No git operations inside fix-group sub-agents. All staging, commits, and push happen in the orchestrator's Phase 9c / 9e."* — operative state-machine claim). DELETE only the pure-contrast bullet (*"No new review (that's `/adamsreview:review`)."*).
 
 **Spec — `promote.md`:**
 - L8–12 — Pattern A (DESIGN §27, §5.2.1 cross-ref).
@@ -399,9 +412,9 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L495–498 — Pattern C (Wave 2 absence justification — keep *"no Wave 2"*; drop the *"the user is adding a bounded set..."* rationale).
 - L507–509 — Pattern A (cross-fragment design-decision cite to §3.8).
 - L558–575 — Pattern A + B (cross-ref to `05-validation.md §4.2` + meta-commentary about why the prompt is inlined; keep the operative rule *"One Opus per candidate"*).
-- L686-697 — Apply this exact replacement: *"When `pre_validator_clean == false`, skip the sweep — without a clean baseline we can't distinguish user state from validator writes, and a blind revert would clobber user work. `/adamsreview:add` has no Phase-0 dirty-tree gate, so this conditional is the only safeguard against that data-loss class."* (Preserves the "only safeguard" claim that documents the data-loss prevention.)
+- L686-697 — Apply this exact replacement: *"When `pre_validator_clean == true`, the entry tree was clean and validators are read-only by contract — any post-validation dirt is validator-sourced and safely revertable. When `pre_validator_clean == false`, skip the sweep: without a clean baseline we can't distinguish user state from validator writes, and a blind revert would clobber user work. `/adamsreview:add` has no Phase-0 dirty-tree gate, so this conditional is the only safeguard against that data-loss class."* (Covers BOTH branches — the prior single-branch replacement dropped the `true`-branch's clean-baseline rationale, which is the WHY behind why the sweep is safe at all.)
 - L730–740 — Pattern F (*"The contract is the output, not the technique"* explanatory paragraph; replace with one operative sentence).
-- L980–994 — Pattern E (*"What this command does NOT do"*).
+- L980–994 — **Surgical, not whole-block:** PRESERVE the cross-cutting-recompute bullet (*"No Phase 5 cross-cutting recompute. Added findings are not retroactively grouped into existing `cross_cutting_groups`. Documented small loss; the rendered report still shows them in the standard per-finding tables."* — operative state-machine claim documenting the known gap). PRESERVE the persistence bullet (*"No persistence across fresh `/adamsreview:review` runs. A re-review overwrites the artifact; added findings are lost. Re-add if needed."* — operative state-machine claim plus user recovery directive). DELETE only the pure-contrast bullets (*"No fix-run."*, *"No promotion."*).
 - L996–1000 — Pattern B (*"Defined in this file (rather than as separate fragments)..."* prompt-organization rationale).
 - L1056, L1102 — Pattern B (*"Model: Sonnet. Budget: ~3–8k tokens..."* maintainer hints — confirm the dispatch site already specifies the model; if so, the hint is decoration).
 
@@ -421,7 +434,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L88–90 — Pattern B (justifies why code lives here).
 - L99–101 — Pattern C (comparison_ref vs base_branch rationale; confirm operative directive remains).
 - L113–115 — Pattern G (helper algorithm description).
-- L169–173 — Pattern C (*"Pre-Stage-2.8 this timestamp also anchored..."* through *"...metrics-only."*). Note: L168 (*"This is the review's start time — consumed by Phase 6 `metrics.time_elapsed_seconds` for cost-vs-size tracking."*) is operative and PRESERVED.
+- L169b-173 — Pattern C. DELETE the sentence beginning *"Pre-Stage-2.8 this timestamp also anchored..."* through *"...metrics-only."* (spans mid-L169 through L173). PRESERVE the preceding operative sentence about Phase 6 metrics — it spans L168 through mid-L169 and ends with *"...for cost-vs-size tracking."* (phrase-targeted boundary sidesteps the L169 mid-line wraparound).
 - L398–405 — Pattern A + F (forward-reference + cross-reference prose around `base_context` build).
 
 **Preserve in 00-preflight.md (do NOT remove):**
@@ -441,7 +454,7 @@ Stages 3.1–3.4 are smaller per-file cleanups. Each targets HIGH-confidence fin
 - L242–246 — Pattern A (`§13.7` cross-ref).
 
 **Spec — `04-scoring-gate.md`:**
-- L62-69 — Apply this exact replacement: *"Chunk into batches of at most 25 candidates per Sonnet sub-agent. Unbounded batches collapse score resolution onto the rubric anchors (every score landing on 0/25/50/75/100) and stop using parallelism on large reviews — the 25-cap restores both."*
+- L60-69 — Apply this exact replacement: *"Chunk into batches of at most 25 candidates per Sonnet sub-agent. Unbounded batches collapse score resolution onto the rubric anchors (every score landing on 0/25/50/75/100) and stop using parallelism on large reviews — the 25-cap restores both. The Phase-3 gate is a sharp cutoff at 45, so slight per-candidate score loss is tolerable; loss of triage signal feeding Phase 4 is not."* (Range starts at L60 to include the bolded `**Why chunked, not per-finding.**` heading + first sentence; trade-off framing — Pattern C plan L90 explicit "trade-off" preserve trigger — appended.)
 - L228–249 — Pattern B + A (cross-references plan #24, restates what code does).
 
 **Hard constraints:**
