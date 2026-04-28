@@ -245,24 +245,3 @@ printf 'phase_7_ready run_id=%s input_sha=%s threshold=%s granular=%s staleness=
     "$run_id" "$input_sha" "$threshold" "$granular_commits" "$staleness_verdict" "${stash_taken:-false}" \
     >> "$trace_log_path"
 ```
-
-### Working-set delta after Phase 7
-
-- **Loaded from artifact** (§25.1): `review_id`, `review_dir`,
-  `artifact_path`, `base_branch`, `head_branch`, `reviewed_sha`,
-  `reviewed_files_all`, `claude_md_paths`, `mode`, `pr_number`,
-  `pr_state`, `comment_id`, `trivial_mode`, `reviewer_sources`, all
-  log paths.
-- **Fix-run-specific** (§25.2): `threshold`, `granular_commits`,
-  `run_id`, `input_sha`, `latest_known_sha`, `staleness_verdict`,
-  `stash_taken`.
-- **Gates passed**: leftover-attempted clear, tree clean (or stashed),
-  staleness safe or warn, PR open (or local mode).
-- **Helper paths** (convenience for later phases — every path is
-  absolute so no cwd assumption leaks in):
-  - `log-phase.sh`, `artifact-patch.py`, `artifact-read.sh`,
-    `artifact-validate.sh`, `artifact-render.py`,
-    `artifact-publish.sh`, `group-fixes.py`, `staleness.sh`,
-    `log-tokens.sh`.
-
-Phase 8 reads these by name.

@@ -664,18 +664,3 @@ log-phase.sh \
     --argjson total_open "$(artifact-read.sh --path "$artifact_path" --filter '[.findings[] | select(.current_state == "open")] | length')" \
     '{name:"validation", elapsed_sec:$elapsed, counts_by_state:{open:$total_open}, counts_by_disposition:$by_disp, delta:"<summarize e.g. +9 confirmed_mechanical, -5 disproven>"}')"
 ```
-
-### Working-set delta after Phase 4
-
-- Every non-pre-existing, non-below-gate finding has `score_phase4` set
-  and a final `disposition` from the §13.1 Phase-4 table.
-- Deep-lane confirmed findings have `validation_result` populated
-  (evidence, blast_radius, fix_proposal, verification_context).
-- Light-lane confirmed findings have `actionability` (rarely
-  `auto_fixable`; mostly `manual`/`report_only`, and never
-  `auto_fixable` under trivial_mode).
-- Pre-existing high-confidence findings are re-asserted to
-  `pre_existing_report` regardless of Phase 4 verdict.
-- `tokens.jsonl` + one entry per Wave-1 + Wave-2 sub-agent.
-- `phases.jsonl` + Phase 4 record with the first deeply-populated
-  `counts_by_disposition`.

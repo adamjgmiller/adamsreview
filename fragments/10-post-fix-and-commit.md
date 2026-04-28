@@ -1226,22 +1226,6 @@ for step 8.
    - `no_eligible` → "No fix-eligible findings at threshold=$threshold.
      Nothing to do." (Clean no-op, no error prefix.)
 
-### Working-set delta after Phase 9
-
-- Committed branch: `commit_sha` captured; every touched finding is
-  `resolved` (verified), `open/partial`, or `open/regression`;
-  `fix_attempts` appended per finding; artifact re-rendered; (PR mode)
-  push + publish attempted; stash popped (if taken); summary mirrored.
-- No-commit branch: `commit_sha=null`; finding state is `attempted`
-  (overlap-abort / reconcile-fallback — next run catches),
-  `attempted` (overlap-inspect — next run catches, no audit fix_attempts),
-  `open/regression` (all-regression, including reconciled all-regression
-  which reverts FG-RECON's full file set atomically), or `attempted`
-  (revert-failure — manual recovery); artifact re-rendered reflecting
-  the degenerate case; stash popped unless revert-failure or
-  overlap-inspect; user-visible error surfaced.
-
-Terminal invariant (§24.4): regardless of branch, the on-disk artifact
-is schema-valid and tracks git reality. A partially failed terminal
-block may log errors to `trace.md` but cannot leave the artifact
-inconsistent.
+Terminal invariant: regardless of branch, the on-disk artifact is
+schema-valid and tracks git reality. A partially failed terminal block
+may log errors to `trace.md` but cannot leave the artifact inconsistent.

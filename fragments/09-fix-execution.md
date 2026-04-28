@@ -350,15 +350,3 @@ log-phase.sh \
       fix_group_count:$groups,
       eligible_finding_count:$eligible}')"
 ```
-
-### Working-set delta after Phase 8
-
-- Every eligible finding is `current_state=attempted` on disk.
-- `fix_groups` is a fully populated array: each entry has `id`,
-  `finding_ids`, `files_planned`, and a populated `results` object
-  (with `files_modified`, `files_created`, `per_finding`,
-  `per_file_summary`, optional `_parse_failed`).
-- Working tree has the fix-group agents' edits (or the prior stash's
-  edits if they bypassed the Phase 7 gate — which they can't; we took
-  a clean-tree baseline).
-- Phase 9 reads `fix_groups[*].results` plus the working-tree diff.

@@ -1261,13 +1261,3 @@ Under joint dispatch (§13.12), `phase_1_elapsed` and the Phase 1.5
 elapsed logged by `02-ensemble-adapter.md` step 1.5.7 will overlap
 because both phases share a dispatch-turn start boundary. That overlap
 is the intended observability signal.
-
-### Working-set delta after Phase 1
-
-- `internal_candidates` (orchestrator-context pool) was built during
-  1.4 and consumed at 1.5.
-- `artifact.findings[]` populated with IDed candidates at 1.5.
-- `tokens.jsonl` grew one entry per lens sub-agent.
-- `phases.jsonl` grew a Phase 1 record (ts overlaps Phase 1.5's under
-  `--ensemble`).
-- `trace.md` grew a Phase 1 section.

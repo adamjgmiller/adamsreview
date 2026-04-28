@@ -393,15 +393,3 @@ log-phase.sh \
 
 Where `coderabbit_status` is one of `success|failed|skipped|timed_out`
 (same for `codex_status`).
-
-### Working-set delta after Phase 1.5
-
-- `external_candidates` (orchestrator-context pool) holds the
-  normalized + location-repaired candidates. The join step at
-  01-detection.md 1.5 consumes it; `artifact.findings[]` does NOT grow
-  until then.
-- `tokens.jsonl` grew one entry for the normalizer (not for the CLI
-  reviewers — those are external processes).
-- `phases.jsonl` grew a Phase 1.5 record (ts overlaps Phase 1's under
-  §13.12 joint dispatch).
-- `trace.md` grew a Phase 1.5 section.

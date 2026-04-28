@@ -271,17 +271,3 @@ log-phase.sh \
     --argjson histogram "$score_phase3_histogram" \
     '{name:"scoring-gate", elapsed_sec:$elapsed, counts_by_state:{open:($pass+$fail)}, counts_by_disposition:$by_disp, demote_rate:$demote_rate, score_phase3_histogram:$histogram, delta:"\($fail) gated below, \($pass) advanced"}')"
 ```
-
-### Working-set delta after Phase 3
-
-- Every finding has `score_phase3` set (null only on parse failure).
-- Pre-existing high-confidence findings have `disposition=pre_existing_report`.
-- Sub-threshold findings have `disposition=below_gate`, `is_actionable=false`.
-- Gate-passing findings have `disposition=pending_validation` (the
-  §5.2.1 gate-in parking state); Phase 4 overwrites.
-- `tokens.jsonl` + one entry per scoring chunk-agent (not per finding —
-  a chunk-agent owns up to 25 candidates and logs at agent granularity;
-  see §3.3 step 1).
-- `phases.jsonl` + Phase 3 record with `counts_by_disposition`,
-  `demote_rate` (float), and `score_phase3_histogram` (10 buckets)
-  — telemetry for post-conversion-ideas #24 rubric calibration.

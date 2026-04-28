@@ -356,15 +356,3 @@ should name the step and the next action the user should take.
 
 If everything succeeded: nothing more to say — the chat mirror + any
 PR comment is the deliverable.
-
-### Working-set delta after Phase 6
-
-- `artifact.json` has fully-populated `subagent_tokens`,
-  `orchestrator_tokens`, and `metrics`.
-- `artifact.md` rendered at `$review_dir/artifact.md`.
-- `latest.txt` points at `$review_id`.
-- PR mode: review comment posted or edited (`comment_id` persisted).
-- Local mode: trace.md notes "local mode, nothing to publish."
-- Chat: full rendered report is visible.
-- Working tree: identical to start (stash popped if stashed; otherwise
-  unchanged — this command does no edits/commits).

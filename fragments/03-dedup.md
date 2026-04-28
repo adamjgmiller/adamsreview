@@ -269,12 +269,3 @@ log-phase.sh \
 
 Capture `phase_2_start_epoch` and `pre_dedup_count` at the top of Phase 2
 (the latter via `artifact-read.sh --filter '.findings | length'`).
-
-### Working-set delta after Phase 2
-
-- `artifact.findings[]` shrunk by the merged duplicate count.
-- Survivors have unioned `sources` and `source_families` (enables
-  Phase 3 source-family auto-graduation for multi-family overlaps).
-- `tokens.jsonl` + 1 (the dedup sub-agent).
-- `phases.jsonl` + 1 (Phase 2 record).
-- `trace.md` + 1 section.
