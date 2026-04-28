@@ -44,7 +44,10 @@ This matters because:
 - **The artifact is the source of truth.** Phase 7 loads every piece
   of context from `artifact.json` (review_id, reviewed_sha,
   reviewed_files_all, findings[], claude_md_paths, comment_id, …) —
-  nothing runs fresh from the filesystem except the working tree.
+  nothing runs fresh from the filesystem for *context* except the
+  working tree. The §7.5 / §7.6a advisory git-state checks (staleness,
+  branch-behind-base) read fresh ref state but only to gate the run,
+  not to produce context that flows downstream.
   Losing track of a variable (`run_id`, `input_sha`, `stash_taken`,
   `latest_known_sha`, `eligible_finding_ids`) breaks later phases.
 - **`attempted` is the transient recovery anchor.** Between Phase 8

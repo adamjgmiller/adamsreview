@@ -56,30 +56,34 @@ helper-script error-as-prompt).**
 This command runs against an artifact that ALREADY exists. The
 sequencing matters:
 
-1. Locate the artifact via `latest.txt` (same pattern as
+1. **Parse arguments.** Paste / structured / mixed mode detection;
+   honor `--no-dedup`, `--impact` overrides.
+2. Locate the artifact via `latest.txt` (same pattern as
    `/adamsreview:fix` and `/adamsreview:promote`).
-2. **Hard abort if any finding is `current_state == attempted`.**
+3. **Hard abort if any finding is `current_state == attempted`.**
    Mirrors `/adamsreview:fix` Phase 7's leftover-attempted gate. Adding
    findings while the artifact is mid-mutation is a footgun.
-3. **Branch-behind-base advisory.** Active fetch + behind-count vs
-   `$base_branch`; if behind, `AskUserQuestion` (Stop / Proceed / Abort).
+3a. **Branch-behind-base advisory.** Active fetch + behind-count vs
+    `$base_branch`; if behind, `AskUserQuestion` (Stop / Proceed / Abort).
 4. Build candidate findings — either via the structured one-shot, the
    paste normalizer, or both (mixed mode = paste + `--impact` override).
 5. Dedup against existing findings (one Sonnet call) unless
    `--no-dedup` is set. Matched candidates merge `sources[]` into the
    existing finding; unmatched proceed to validation.
-6. Assign new IDs continuing past the highest existing F-id (via
-   `assign-finding-ids.sh --start-from`).
-7. `--add-finding` loop to land the new candidates into `artifact.json`.
-8. Phase 4 validation, lane-aware (Opus deep / Sonnet light), no Wave 2
+6. Assign new IDs and run the `--add-finding` loop to land the new
+   candidates into `artifact.json` (continuing past the highest
+   existing F-id via `assign-finding-ids.sh --start-from`).
+7. Phase 4 validation, lane-aware (Opus deep / Sonnet light), no Wave 2
    chain retry. `--apply-decisions` batched call writes the §13.1
    dispositions.
-9. Re-render `artifact.md` and re-publish to the existing `comment_id`.
+8. Re-tally `subagent_tokens` + `orchestrator_tokens`, then re-render
+   `artifact.md`.
+9. Re-publish to the existing `comment_id` (PR mode only).
 10. Append a `## add (<ts>)` block to `trace.md` and print a user-visible
     summary.
 
-**Build a TaskList that mirrors the steps above** (1–10). Mark each
-`in_progress` when starting, `completed` when done.
+**Build a TaskList that mirrors the steps above** (1, 2, 3, 3a, 4–10).
+Mark each `in_progress` when starting, `completed` when done.
 
 ## Sub-agent dispatch pattern
 
@@ -612,7 +616,7 @@ done
 ```
 
 Capture the new ID list as `new_ids` (CSV) for step 7's dispatch and
-step 9's summary:
+step 10's summary:
 
 ```bash
 new_ids=$(echo "$findings_to_add" | jq -r '[.[].id] | join(",")')
