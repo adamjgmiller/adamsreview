@@ -213,11 +213,10 @@ If `$behind > 0`, `AskUserQuestion` once:
 > (the diff base for this review). The lens diff includes phantom
 > deletions for code that landed on `$comparison_ref` after this branch
 > was cut, and may have shifted code your branch calls into. Recommend
-> merging `$base_branch` into `$head_branch` first — this updates your
-> feature branch tip, distinct from any earlier choice about which ref
-> the review compares against.
+> merging `$comparison_ref` into `$head_branch` first — this updates
+> your feature branch tip, separate from any earlier diff-base choice.
 
-- **(a) Stop — I'll merge `$base_branch` into `$head_branch` first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
+- **(a) Stop — I'll merge `$comparison_ref` into `$head_branch` first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $comparison_ref\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:review.` (No `review_dir` exists yet — nothing to clean up.)
 - **(b) Proceed.** Append a buffered warning and continue:
   ```bash
   preflight_warnings+=("branch_behind_base proceeded behind=$behind comparison_ref=$comparison_ref")

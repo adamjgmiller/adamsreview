@@ -226,7 +226,11 @@ fallback to local `<base>` for narrow-refspec configs that don't update
 remote-tracking refs even after a clean fetch); on failure, fall back
 to local `<base>` AND surface a "fetch failed" note in the prompt so
 the user knows the count may itself be stale (a bare `origin/<base>`
-rev-list would silently resolve from cached refs and mislead).
+rev-list would silently resolve from cached refs and mislead). Track
+`$merge_ref` alongside the count so the Stop guidance points at the
+same ref the count was actually against — telling the user to merge
+local `<base>` when the count was against `origin/<base>` would be a
+no-op against a still-stale local ref.
 
 ```bash
 base_branch=$(jq -r '.base_branch' "$artifact_path")
@@ -234,12 +238,17 @@ fetch_ok=true
 GIT_TERMINAL_PROMPT=0 git fetch origin "$base_branch" --quiet 2>/dev/null \
     || fetch_ok=false
 if $fetch_ok; then
-    behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null \
-           || git rev-list --count "HEAD..$base_branch" 2>/dev/null \
-           || echo 0)
+    if behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null); then
+        merge_ref="origin/$base_branch"
+    else
+        # origin/<base> didn't resolve — narrow-refspec edge — fall back to local
+        behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
+        merge_ref="$base_branch"
+    fi
     fetch_note=""
 else
     behind=$(git rev-list --count "HEAD..$base_branch" 2>/dev/null || echo 0)
+    merge_ref="$base_branch"
     fetch_note=" (Note: fetch of \`origin/$base_branch\` failed; behind-count is from local \`$base_branch\`, which may itself be stale.)"
 fi
 ```
@@ -254,9 +263,9 @@ If `$behind > 0`, `AskUserQuestion` once:
 > set and validated against the diff `:review` saw — if `$base_branch`
 > has shifted, validators may reason against stale shared context
 > (callers or helpers on `$base_branch` that have changed since).
-> Recommend merging `$base_branch` first.
+> Recommend merging `$merge_ref` into `$head_branch` first.
 
-- **(a) Stop — I'll merge first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $base_branch\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`
+- **(a) Stop — I'll merge `$merge_ref` into `$head_branch` first, then re-run.** Exit 0 with: `Stopping. Run \`git merge $merge_ref\` (or fast-forward) on \`$head_branch\`, then re-run /adamsreview:add.`
 - **(b) Proceed.** Append a trace line and continue:
   ```bash
   printf '[%s] branch_behind_base proceeded behind=%s\n' \

@@ -5066,18 +5066,29 @@ BB_FIX="$REPO/fragments/08-fix-loader.md"
 # §7.6a stash-pop block via a distinct prose anchor; pin both so a future
 # edit that drops the Abort path (while keeping Stop's) fails BB-2.
 BB_FIX_BODY=$(awk '/^### 7\.6a\. /{flag=1} /^### 7\.7\. /{flag=0} flag' "$BB_FIX")
+# Routing structure assertions (`fetch_ok=true`, `|| fetch_ok=false`,
+# `if $fetch_ok; then`, `merge_ref=`) prove the fetch-conditional shape
+# itself — without them, a future regression to the old unconditional
+# `||`-chain (`git fetch ... || true; behind=origin || local || 0`)
+# would still satisfy the rev-list-string greps and silently revert the
+# narrow-refspec stale-origin guard + Stop-guidance-uses-fresh-ref fixup.
 if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'git fetch origin "$base_branch" --quiet' <<<"$BB_FIX_BODY" \
+   && grep -qF 'fetch_ok=true' <<<"$BB_FIX_BODY" \
+   && grep -qF '|| fetch_ok=false' <<<"$BB_FIX_BODY" \
+   && grep -qF 'if $fetch_ok; then' <<<"$BB_FIX_BODY" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_FIX_BODY" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_FIX_BODY" \
    && grep -qF '|| echo 0' <<<"$BB_FIX_BODY" \
+   && grep -qF 'merge_ref=' <<<"$BB_FIX_BODY" \
+   && grep -qF 'fetch_note=' <<<"$BB_FIX_BODY" \
    && grep -q 'git stash pop || true' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the stash-pop block' <<<"$BB_FIX_BODY" \
    && grep -qF 'Run the same stash-pop block as (a)' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_FIX_BODY"; then
-    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + fetch-routed rev-list cascade + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
+    pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracking + fetch_note + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
 else
-    fail "BB-2: §7.6a header/fetch/fetch-routed rev-list cascade/stash-pop block/Stop or Abort reference/Proceed-trace missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch/fetch_ok routing/merge_ref/fetch_note/stash-pop block/Stop or Abort reference/Proceed-trace missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
@@ -5088,15 +5099,20 @@ BB_ADD="$REPO/commands/add.md"
 # frontmatter alone even if the §3a invocation prose was deleted.
 if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
    && grep -qF 'git fetch origin "$base_branch" --quiet' "$BB_ADD" \
+   && grep -qF 'fetch_ok=true' "$BB_ADD" \
+   && grep -qF '|| fetch_ok=false' "$BB_ADD" \
+   && grep -qF 'if $fetch_ok; then' "$BB_ADD" \
    && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_ADD" \
    && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_ADD" \
    && grep -qF '|| echo 0' "$BB_ADD" \
+   && grep -qF 'merge_ref=' "$BB_ADD" \
+   && grep -qF 'fetch_note=' "$BB_ADD" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
    && grep -qF '`AskUserQuestion` once:' "$BB_ADD" \
    && grep -qF 'branch_behind_base proceeded behind=' "$BB_ADD"; then
-    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + fetch-routed rev-list cascade + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
+    pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracking + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
 else
-    fail "BB-3: §3a header/fetch/fetch-routed rev-list cascade/AskUserQuestion grant or §3a invocation/Proceed-trace missing in $BB_ADD"
+    fail "BB-3: §3a header/fetch/fetch_ok routing/merge_ref/fetch_note/AskUserQuestion grant or §3a invocation/Proceed-trace missing in $BB_ADD"
 fi
 
 echo
