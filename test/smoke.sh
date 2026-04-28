@@ -5049,19 +5049,22 @@ fi
 # bash + AskUserQuestion prose, no helper script). Asserts: header at
 # the right step, behind-count rev-list, fail-open `|| echo 0`.
 BB_PRE="$REPO/fragments/00-preflight.md"
-# `git merge $comparison_ref` consumer assertion pins the Stop-guidance
-# fix from round 1: a future regression to `git merge $base_branch` would
-# leave the assignment-side greps satisfied while silently restoring the
-# no-op-after-freshness-gate-option-(b) bug. Same idea drives the
-# `git merge $merge_ref` greps in BB-2/BB-3.
-if grep -q '### 0.6a. Branch-behind-base advisory' "$BB_PRE" \
-   && grep -qF 'git rev-list --count "HEAD..$comparison_ref"' "$BB_PRE" \
-   && grep -qF '|| echo 0' "$BB_PRE" \
-   && grep -qF 'git merge $comparison_ref' "$BB_PRE" \
-   && grep -q 'preflight_warnings+=("branch_behind_base proceeded' "$BB_PRE"; then
+# Section-extract §0.6a body so the consumer-side `git merge $comparison_ref`
+# assertion can't be satisfied by drift elsewhere in the file (mirrors BB-2's
+# §7.6a-scoping). The consumer assertion pins the Stop-guidance fix from
+# round 1: a future regression to `git merge $base_branch` would leave the
+# assignment-side greps satisfied while silently restoring the no-op-after-
+# freshness-gate-option-(b) bug. Same idea drives the `git merge $merge_ref`
+# greps in BB-2/BB-3.
+BB_PRE_BODY=$(awk '/^### 0\.6a\. /{flag=1} /^### 0\.7\. /{flag=0} flag' "$BB_PRE")
+if grep -q '### 0.6a. Branch-behind-base advisory' <<<"$BB_PRE_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..$comparison_ref"' <<<"$BB_PRE_BODY" \
+   && grep -qF '|| echo 0' <<<"$BB_PRE_BODY" \
+   && grep -qF 'git merge $comparison_ref' <<<"$BB_PRE_BODY" \
+   && grep -q 'preflight_warnings+=("branch_behind_base proceeded' <<<"$BB_PRE_BODY"; then
     pass "BB-1: /adamsreview:review §0.6a branch-behind-base gate present (passive count vs comparison_ref + Stop guidance merges comparison_ref + preflight_warnings buffer)"
 else
-    fail "BB-1: §0.6a header/rev-list/fail-open/Stop-merge-comparison_ref/preflight_warnings missing in $BB_PRE"
+    fail "BB-1: §0.6a header/rev-list/fail-open/Stop-merge-comparison_ref/preflight_warnings missing in $BB_PRE (§0.6a slice)"
 fi
 
 BB_FIX="$REPO/fragments/08-fix-loader.md"
@@ -5096,33 +5099,35 @@ if grep -q '### 7.6a. Branch-behind-base advisory' <<<"$BB_FIX_BODY" \
    && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_FIX_BODY"; then
     pass "BB-2: /adamsreview:fix §7.6a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + §7.6a-scoped stash-pop block + Stop AND Abort references + Proceed trace)"
 else
-    fail "BB-2: §7.6a header/fetch/fetch_ok routing/merge_ref assignment-or-Stop-consumer/fetch_note/stash-pop block/Stop or Abort reference/Proceed-trace missing in $BB_FIX (§7.6a slice)"
+    fail "BB-2: §7.6a header/fetch/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/stash-pop block/Stop AND Abort references/Proceed-trace missing in $BB_FIX (§7.6a slice)"
 fi
 
 BB_ADD="$REPO/commands/add.md"
-# `AskUserQuestion` appears twice — once in the frontmatter allowed-tools
-# (granting permission, required since :add previously had no interactive
-# surface) and once in §3a's prompt prose. Two greps so removing either
-# fails BB-3 — the bare `grep -q 'AskUserQuestion'` would pass on the
-# frontmatter alone even if the §3a invocation prose was deleted.
-if grep -q '### 3a. Branch-behind-base advisory' "$BB_ADD" \
-   && grep -qF 'git fetch origin' "$BB_ADD" \
-   && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' "$BB_ADD" \
-   && grep -qF 'fetch_ok=true' "$BB_ADD" \
-   && grep -qF '|| fetch_ok=false' "$BB_ADD" \
-   && grep -qF 'if $fetch_ok; then' "$BB_ADD" \
-   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' "$BB_ADD" \
-   && grep -qF 'git rev-list --count "HEAD..$base_branch"' "$BB_ADD" \
-   && grep -qF '|| echo 0' "$BB_ADD" \
-   && grep -qF 'merge_ref=' "$BB_ADD" \
-   && grep -qF 'git merge $merge_ref' "$BB_ADD" \
-   && grep -qF 'fetch_note=' "$BB_ADD" \
+# Section-extract §3a body so §3a-internal greps can't be satisfied by
+# drift elsewhere in the file (mirrors BB-2's §7.6a-scoping). Frontmatter
+# `AskUserQuestion` grant stays file-scoped against `$BB_ADD` (line 1 isn't
+# in the §3a slice); the in-prose `AskUserQuestion` invocation grep stays
+# slice-scoped so a regression that drops §3a's prompt while keeping the
+# frontmatter grant still fails BB-3.
+BB_ADD_BODY=$(awk '/^### 3a\. /{flag=1} /^### 4\. /{flag=0} flag' "$BB_ADD")
+if grep -q '### 3a. Branch-behind-base advisory' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git fetch origin' <<<"$BB_ADD_BODY" \
+   && grep -qF 'refs/heads/$base_branch:refs/remotes/origin/$base_branch' <<<"$BB_ADD_BODY" \
+   && grep -qF 'fetch_ok=true' <<<"$BB_ADD_BODY" \
+   && grep -qF '|| fetch_ok=false' <<<"$BB_ADD_BODY" \
+   && grep -qF 'if $fetch_ok; then' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..origin/$base_branch"' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git rev-list --count "HEAD..$base_branch"' <<<"$BB_ADD_BODY" \
+   && grep -qF '|| echo 0' <<<"$BB_ADD_BODY" \
+   && grep -qF 'merge_ref=' <<<"$BB_ADD_BODY" \
+   && grep -qF 'git merge $merge_ref' <<<"$BB_ADD_BODY" \
+   && grep -qF 'fetch_note=' <<<"$BB_ADD_BODY" \
    && grep -qE '^allowed-tools:.*AskUserQuestion' "$BB_ADD" \
-   && grep -qF '`AskUserQuestion` once:' "$BB_ADD" \
-   && grep -qF 'branch_behind_base proceeded behind=' "$BB_ADD"; then
+   && grep -qF '`AskUserQuestion` once:' <<<"$BB_ADD_BODY" \
+   && grep -qF 'branch_behind_base proceeded behind=' <<<"$BB_ADD_BODY"; then
     pass "BB-3: /adamsreview:add §3a branch-behind-base gate present (active fetch + fetch_ok routing structure + merge_ref tracked AND consumed in Stop guidance + fetch_note + AskUserQuestion grant + §3a invocation prose + Proceed trace)"
 else
-    fail "BB-3: §3a header/fetch/fetch_ok routing/merge_ref assignment-or-Stop-consumer/fetch_note/AskUserQuestion grant or §3a invocation/Proceed-trace missing in $BB_ADD"
+    fail "BB-3: §3a header/fetch/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed-trace missing in $BB_ADD (§3a slice)"
 fi
 
 echo
