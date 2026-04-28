@@ -29,8 +29,7 @@ helper-script error-as-prompt).**
   dropped from the walk scope so the session isn't padded with
   low-signal findings. Independent of the `/adamsreview:fix`
   threshold — promoted findings are picked up by `/adamsreview:fix`
-  regardless of the score gate via the `human_confirmation` bypass
-  (§27.6).
+  regardless of the score gate via the `human_confirmation` bypass.
 
 ## What it does
 
@@ -111,8 +110,7 @@ On non-zero: surface the validator stderr and abort.
 Extract `mode` and `pr_number` from the validated artifact now — both
 are needed by §3's mode-aware exit checks, §4's preflight messaging,
 §6.2's publish call, §6.5's issue-filing gate, and §7's decisions-log
-POST. Reading them once at the top of the run avoids the historical
-bug where §6.5 ran before §6.2's extraction and found `mode` unset:
+POST:
 
 ```bash
 mode=$(jq -r '.mode' "$artifact_path")
@@ -278,9 +276,7 @@ has work to offer.
 ### 4. Pre-flight summary + go/no-go
 
 Before the preview table, render this short preamble so the reviewer
-understands what "scope" means here. This is the preventive-docs fix
-for the historical "which gate?" confusion (see CLAUDE.md §Score
-gates → Gate terminology):
+understands what "scope" means here:
 
 ```markdown
 **Understanding the scope.** Three different gates govern this pipeline,
@@ -532,9 +528,8 @@ options `Skip (briefing failed)` / `Promote anyway (no fix-hint)` /
 Log the agent's token count to `tokens.jsonl`.
 Extract the agent id and token count from the Agent tool result's
 `<usage>` block. When the block is missing or unparseable, pass the
-literal `null` for tokens (same fallback pattern as §8.6 / Phase 8
-fix-group logging) — token tracking is observability, not
-correctness:
+literal `null` for tokens (same fallback pattern as Phase 8 fix-group
+logging) — token tracking is observability, not correctness:
 
 ```bash
 log-tokens.sh \
@@ -611,8 +606,7 @@ otherwise.
 Set ambient context for the shared promote-core fragment (steps 3,
 4, 4.5, 5, 6, 9 — the orchestrator reads `fragments/promote-core.md`
 with the `Read` tool at this point and executes the listed steps
-inline; see the appendix at the end of this file for a short
-pointer):
+inline):
 
 ```bash
 fix_hint="$briefing_option.fix_hint_if_picked"          # or reviewer override when edited_hint
@@ -877,10 +871,7 @@ Iterate `filing_ids` in the order returned. For each `$finding_id`:
 
 **Fetch the finding JSON and per-finding variables** (same pattern as
 §5.1). These MUST be re-extracted inside the §6.5.2 loop — they are
-local to each iteration. If §6.5 runs after the §5 walk loop,
-`$f_file` / `$f_line_start` / `$f_line_end` otherwise carry the last
-walked finding's values (wrong file in the draft) or are unset when
-the walk was cancelled (undefined-variable expansion):
+local to each iteration:
 
 ```bash
 finding_json=$(artifact-read.sh \
@@ -895,10 +886,10 @@ f_hc=$(jq -c '.human_confirmation // null' <<<"$finding_json")
 
 **Guard: skip findings already promoted off-menu.** The default flow
 never promotes a `pre_existing_report` finding (scope_full_ids excludes
-them per §3). But a user can direct Claude mid-run to promote a
+them). But a user can direct Claude mid-run to promote a
 specific pre-existing finding as an explicit override. In that case
 the finding has `human_confirmation != null` now, even though
-`scope_preexisting_ids` (captured at §3 before the override) still
+`scope_preexisting_ids` (captured before the override) still
 lists its id. Filing a GitHub issue for a finding that's also queued
 for auto-fix double-processes it:
 
@@ -959,7 +950,7 @@ second failure, log to `trace.md` under tag
 UX: offer `Skip this finding` or `Write body free-form` (captured
 via one `AskUserQuestion` free-form follow-up).
 
-Log the drafting agent's tokens per §5.2 convention:
+Log the drafting agent's tokens:
 
 ```bash
 log-tokens.sh \
@@ -1007,10 +998,7 @@ was available, so absence = skipped.
 body_tmp=$(mktemp -t adams-walkthrough-issue.XXXXXX)
 err_tmp=$(mktemp -t adams-walkthrough-gh-err.XXXXXX)
 # write $draft_body (possibly user-edited) to $body_tmp
-# Capture gh's full stdout so we can detect failure by its own exit
-# status — piping through awk would swallow gh's non-zero exit
-# because bash without `set -o pipefail` reports only the pipeline's
-# last command's exit, and awk 'END{print}' always succeeds.
+# Capture gh_rc directly; piping gh through awk would swallow gh's exit (pipefail is off here).
 gh_stdout=$(gh issue create \
     --repo "$repo_name_with_owner" \
     --title "$draft_title" \
@@ -1020,13 +1008,7 @@ rm -f "$body_tmp"
 issue_url=$(awk 'END{print}' <<<"$gh_stdout")
 ```
 
-`gh issue create` emits the URL as its final stdout line on success;
-`awk 'END{print}'` extracts it in a separate step so `gh_rc` is
-gh's own exit, not awk's. (`tail` is not in this command's
-`allowed-tools`; `awk` is.) Stderr is captured to `$err_tmp` — a
-`mktemp` file, not `/tmp/...$$`, because the orchestrator may invoke
-successive bash calls with different PIDs, and `mktemp` gives a
-stable path for the whole step.
+`$err_tmp` uses `mktemp`, not `/tmp/...$$`, because the orchestrator may invoke successive bash calls with different PIDs.
 
 If `gh_rc != 0`, read `$err_tmp`, log under tag
 `walkthrough_issue_filed_failed:$finding_id` with the drafted
@@ -1047,15 +1029,6 @@ On success, append to `issues_filed`:
 
 Print a one-line chat update: "Filed $finding_id → $issue_url.
 Ns processed of M." Mirrors the §5.6 cadence for the main loop.
-
-Note on partial runs: any issues filed before an interruption stand
-— these are durable side effects. If the reviewer later re-runs
-`/adamsreview:walkthrough`, the same `pre_existing_report` findings
-will re-appear (they don't set `human_confirmation`, and the
-artifact has no `filed_issue_url` field per our no-schema-change
-decision). The reviewer can close duplicates manually on GitHub. The
-trace entry at step 8 records which findings were filed in each run,
-so cross-referencing is straightforward.
 
 ### 7. Post the decisions-log PR comment
 
@@ -1161,12 +1134,7 @@ gh_rc=$?
 rm -f "$comment_body_path"
 ```
 
-`gh api` auto-substitutes `{owner}` and `{repo}` placeholders with
-the current git remote's owner/repo when invoked from inside the
-repo working tree — no manual resolution needed. Run the command
-from `$repo_root` (the command file's $repo_root is already set at
-step 2; the gh process inherits working directory unless we explicitly
-cd).
+Run from `$repo_root` (set at step 2); the gh process inherits the working directory unless we explicitly cd.
 
 Stderr is captured to `$err_tmp` (mirrors the §6.5.2 `gh issue create`
 pattern) so the "log to trace on failure" branch below has something
@@ -1236,7 +1204,7 @@ Cumulative sub-agent spend: <total> tokens across <invs> invocations.
 Cumulative orchestrator spend: <output> output / <input> input across <turns> turns.
 
 Promoted findings are now auto-fix-eligible via the human_confirmation
-bypass (§27.6) — they'll be picked up at any fix threshold. To apply:
+bypass — they'll be picked up at any fix threshold. To apply:
 
   /adamsreview:fix
 
@@ -1294,29 +1262,10 @@ pattern as `/adamsreview:promote` step 10).
 
 ## What this command does NOT do
 
-- **No fix-run.** Walkthrough is metadata-only (via promote's patch
-  primitive). Run `/adamsreview:fix` afterward to apply (promoted
-  findings are picked up at any fix threshold via the
-  `human_confirmation` bypass).
 - **No `disposition=disproven` handling.** Disproven findings need
   `/adamsreview:promote <id> --force` with a conscious justification;
   the walkthrough scope filter excludes them.
-- **No cross-branch walkthrough.** Operates on `latest.txt` for the
-  current branch — same as promote and fix.
 - **No resumption state file.** If you quit mid-walkthrough, the
   promotions you already made stand. Re-invoking the walkthrough
   skips them naturally (the scope filter excludes
   `human_confirmation != null`).
-
----
-
-## Appendix — shared promote-core fragment
-
-Step 5.5 above dispatches the shared promote sequence by reading
-`fragments/promote-core.md` with the `Read` tool and executing its
-steps 3, 4, 4.5, 5, 6, and 9 for the chosen finding. Treat the fragment
-as the per-iteration playbook for a single promote decision, not as
-a single-shot action — it re-runs once per finding the reviewer
-promotes in step 5.5.
-
-Read `fragments/promote-core.md` when step 5.5 calls for it.
