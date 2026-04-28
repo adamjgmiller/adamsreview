@@ -1,11 +1,5 @@
 ## Phase 9 — Post-fix review + commit
 
-Classifies each attempted finding, reverts regression groups, commits
-survivors with per-group truth in the message, applies state transitions
-+ fix_attempts in one batched call, and runs the deterministic terminal
-cleanup that keeps the artifact consistent with git reality through
-every failure mode (§24.4).
-
 ### 9.pre. Touched-file overlap guard
 
 Compute per-group `actual_touched` from Phase 8 results:
@@ -28,14 +22,13 @@ overlap_files=$(echo "$fix_groups_with_actual" | jq -r '
 ')
 ```
 
-Belt-and-suspenders for §19.8's prompt-only delete/rename prohibition:
-scan `git status --porcelain` for `D ` entries. Any hit → overlap-abort
+Scan `git status --porcelain` for `D ` entries. Any hit → overlap-abort
 (same no-commit branch) with a diagnostic naming the file(s):
 
 ```bash
 deleted_paths=$(git status --porcelain | awk '/^( D|D )/ {print substr($0, 4)}')
 if [[ -n "$deleted_paths" ]]; then
-    overlap_files=$(jq -nc --arg reason "fix agent deleted file(s) — §19.8 forbids this in v1: $deleted_paths" \
+    overlap_files=$(jq -nc --arg reason "fix agent deleted file(s) — forbidden in v1: $deleted_paths" \
         '[{file:"<delete-detected>", groups:[], reason:$reason}]')
 fi
 ```
@@ -46,8 +39,7 @@ Delete-leak (`deleted_paths` non-empty) goes straight to abort — v1 revert
 can't handle deletes and neither can reconcile, so no merge offer. For
 plain overlap, offer a three-way `AskUserQuestion` before abort.
 
-Snapshot the overlap summary for audit (commit message + trace want it
-even if reconcile succeeds and clears `overlap_files`):
+Snapshot for commit message + trace:
 
 ```bash
 overlap_files_snapshot="$overlap_files"
@@ -70,8 +62,7 @@ Fix agents touched overlapping files:
 Choose how to proceed.
 ```
 
-Dispatch `AskUserQuestion` with three options; Abort highlighted as default
-(safe, matches prior behavior):
+Dispatch `AskUserQuestion` with three options; Abort highlighted as default:
 
 - "⭐ Abort (recommended) — discard all edits, restore tree, reset state, re-run manually"
 - "Reconcile — dispatch one merge agent to combine edits, then run full Phase 9 review"
@@ -275,7 +266,6 @@ After the agent returns:
    revert via `git checkout --`) vs. new (→ `files_created`, revert via
    `rm -f`).
 
-   Why `git status --porcelain` not agent self-reports:
    - **Catches everything actually changed.** Phase 8 agents `Write` new
      files (untracked, git-visible) and modify files (unstaged, git-visible).
      Phase 7's clean-tree gate + optional stash guarantees the only changes
@@ -828,9 +818,7 @@ reconciled_flag=$(echo "$fix_groups" | jq -r '.[0].id == "FG-RECON"')
   2. Scoped message (same template, single group in committed-section and
      outcome lines). The run-level "reverted" section stays in the first
      granular commit's message so history is complete.
-  3. Commit, capture SHA. Final `commit_sha` is the chain's HEAD — 9d uses
-     it for every surviving finding's `output_sha` (all landed in the chain
-     starting at `input_sha`).
+  3. Commit, capture SHA. Final `commit_sha` is the chain's HEAD.
 
 Capture `commit_sha` IMMEDIATELY via `git rev-parse HEAD` after the last
 `git commit`. **Nothing else between commit and capture** — a tool failure
@@ -858,9 +846,6 @@ group_by_finding=$(echo "$group_outcomes" | jq -c '
     [.[] as $g | $g.finding_ids[] | {id: ., group: $g.id, group_outcome: $g.outcome}]
 ')
 
-# On a reconciled run, $group_by_finding carries FG-RECON (schema rejects).
-# Substitute each finding's ORIGINAL fix_group_id from the 9.pre.reconcile
-# snapshot; keep the reconcile-aggregated group_outcome.
 if [[ -n "${original_fix_group_by_finding:-}" ]] && \
    echo "$fix_groups" | jq -e '.[0].id == "FG-RECON"' >/dev/null; then
     group_by_finding=$(jq -nc \
@@ -901,10 +886,7 @@ echo "$apply_tuples" | \
       --path "$artifact_path" --apply-fix-outcomes @-
 ```
 
-On non-zero: first-failure-halts means some tuples may already be
-applied. Log stderr verbatim to `trace.md`, do NOT retry (commit already
-happened), surface as the primary user error at end of 9e. Next run's
-leftover-attempted check catches the rest.
+On non-zero: log stderr verbatim to `trace.md`; do NOT retry — first-failure-halt means tuples 0..N-1 are already persisted, and the commit already happened; re-running would trip state-transition validation. Surface as the primary user error at end of 9e. Next run's leftover-attempted check catches the rest.
 
 On success: surviving-group findings are `resolved` (verified) or
 `open/partial`; reverted-group findings are `open/regression` with
@@ -1125,10 +1107,6 @@ for step 8.
              [.[] as $g | $g.finding_ids[] | {id: ., group: $g.id, group_outcome: $g.outcome}]
          ')
 
-         # Reconciled all-regression: FG-RECON reverted atomically and
-         # $group_by_finding carries FG-RECON (schema rejects). Substitute
-         # each finding's ORIGINAL fix_group_id from the 9.pre.reconcile
-         # snapshot. Non-reconciled runs skip the override.
          if [[ -n "${original_fix_group_by_finding:-}" ]] && \
             echo "$fix_groups" | jq -e '.[0].id == "FG-RECON"' >/dev/null; then
              group_by_finding=$(jq -nc \
