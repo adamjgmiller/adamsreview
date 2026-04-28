@@ -5,22 +5,10 @@ description: Inject externally-sourced findings (cloud /ultrareview, manual find
 disable-model-invocation: false
 ---
 
-Inject one or more findings sourced from outside `/adamsreview:review` —
-a Claude Code cloud `/ultrareview` dump, an Opus once-over, a teammate's
-Slack message, a CodeRabbit run outside `--ensemble` mode, or a human's
-own discovery — into the **existing** `artifact.json` produced by the
-most recent `/adamsreview:review` on this branch. Each new finding goes
-through Phase 4 validation (deep Opus or light Sonnet, lane-aware) and
-lands with whatever disposition the validator produces. The PR comment
-is re-rendered + re-published to the existing `comment_id` so the new
-findings appear alongside the original review's findings.
-
-This command is **additive**. It does not re-run Phase 1 detection,
+This command is **additive** — it does NOT re-run Phase 1 detection,
 Phase 2 dedup against the original lens output, Phase 5 cross-cutting
 analysis, or any fix loop. To re-derive everything from the diff, run
-`/adamsreview:review` (which overwrites the artifact). To act on the new
-findings after they land, run `/adamsreview:fix` (auto-eligible
-findings only) or `/adamsreview:walkthrough` (everything else).
+`/adamsreview:review` (which overwrites the artifact).
 
 ## Arguments
 
@@ -51,50 +39,8 @@ Optional flags:
 rules that apply to every step below (sub-agent return handling,
 helper-script error-as-prompt).**
 
-## Execution overview — read this first
-
-This command runs against an artifact that ALREADY exists. The
-sequencing matters:
-
-1. Locate the artifact via `latest.txt` (same pattern as
-   `/adamsreview:fix` and `/adamsreview:promote`).
-2. **Hard abort if any finding is `current_state == attempted`.**
-   Mirrors `/adamsreview:fix` Phase 7's leftover-attempted gate. Adding
-   findings while the artifact is mid-mutation is a footgun.
-3. Build candidate findings — either via the structured one-shot, the
-   paste normalizer, or both (mixed mode = paste + `--impact` override).
-4. Dedup against existing findings (one Sonnet call) unless
-   `--no-dedup` is set. Matched candidates merge `sources[]` into the
-   existing finding; unmatched proceed to validation.
-5. Assign new IDs continuing past the highest existing F-id (via
-   `assign-finding-ids.sh --start-from`).
-6. `--add-finding` loop to land the new candidates into `artifact.json`.
-7. Phase 4 validation, lane-aware (Opus deep / Sonnet light), no Wave 2
-   chain retry. `--apply-decisions` batched call writes the §13.1
-   dispositions.
-8. Re-render `artifact.md` and re-publish to the existing `comment_id`.
-9. Append a `## add (<ts>)` block to `trace.md` and print a user-visible
-   summary.
-
-**Build a TaskList that mirrors steps 1–9 below.** Mark each
+**Build a TaskList that mirrors the numbered steps below.** Mark each
 `in_progress` when starting, `completed` when done.
-
-## Sub-agent dispatch pattern
-
-Sub-agent dispatches in this command:
-
-- **Paste normalizer** (Sonnet, step 4) — only fires in paste mode.
-- **Dedup** (Sonnet, step 5) — only fires when `--no-dedup` is unset
-  AND there is at least one new candidate.
-- **Phase 4 validators** (Opus deep / Sonnet light, step 7) — deep
-  lane is one Opus per candidate; light lane is chunked-batch (≤25
-  candidates per Sonnet chunk-agent). Both dispatch in a single
-  orchestrator turn for concurrency.
-
-Token extraction, `log-tokens.sh`, structured-output parse, and
-helper-script error-as-prompt behaviour are all covered by rules §1
-and §2 of `fragments/_prelude-shared.md` — apply them after every
-sub-agent returns and on every non-zero helper exit.
 
 ## Execution
 
@@ -409,15 +355,8 @@ ids_assigned=$(echo "$new_candidates" \
 ```
 
 Read `trivial_mode` from the artifact so the `validation_lane`
-derivation below matches Phase 1's builder (`01-detection.md` §1.10).
-Under `trivial_mode`, every candidate lands
-in the light lane regardless of `impact_type` — Phase 4b handles the
-whole pool and light-lane-under-trivial refuses `auto_fixable`. If we
-skipped this branch here, new findings would ship with
-`validation_lane="deep"` while the rest of the trivial-mode artifact
-has `validation_lane="light"`, and the renderer's lane-section filters
-(`artifact-render.py` — `.validation_lane == "deep"`/`"light"`) would
-misplace them:
+derivation below matches Phase 1's builder: under `trivial_mode`,
+every candidate lands in the light lane regardless of `impact_type`.
 
 ```bash
 trivial_mode=$(jq -r '.trivial_mode' "$artifact_path")
@@ -493,19 +432,16 @@ This step inlines the relevant slices of
 `fragments/05-validation.md` — lane partition, deep + light
 dispatch, post-wave tree-cleanliness sweep, `--apply-decisions`, and
 the §4.6 pre-existing override re-assertion. Wave 2 chain retry is
-intentionally NOT included (the user is adding a bounded set; following
-`related_candidates_to_investigate` chains would expand scope
-unpredictably).
+intentionally NOT included.
 
 Capture `phase_4_start_epoch=$(date +%s)`.
 
 Snapshot the working tree's cleanliness before dispatch. Step 7.5's
 belt-and-braces sweep reverts any dirty state detected after
 validators run — but only when the tree was clean going in. Unlike
-`/adamsreview:review` Phase 0, `/adamsreview:add` has no clean-tree gate
-(§3.8 design decision: validators are read-only by contract). If the
-user has their own uncommitted work when they invoke this command, a
-blind sweep would clobber it.
+`/adamsreview:review` Phase 0, `/adamsreview:add` has no clean-tree gate.
+If the user has their own uncommitted work when they invoke this
+command, a blind sweep would clobber it.
 
 ```bash
 pre_validator_clean=true
@@ -562,16 +498,11 @@ orchestrator turn for concurrency. Read the finding JSON and pass it
 inline.
 
 **One Opus per candidate — never collapse multiple deep-lane candidates
-into a single batched Opus call.** Same rule as `05-validation.md` §4.2
-and the same structural enforcement: §7.6's `--apply-decisions
---expected $total_dispatched` rejects under-sized batches with a
-recovery action. Each candidate needs its own blast-radius trace and
-fix-proposal context.
+into a single batched Opus call.** §7.6's `--apply-decisions --expected
+$total_dispatched` rejects under-sized batches with a recovery action.
+Each candidate needs its own blast-radius trace and fix-proposal context.
 
-Prompt essence — verbatim from `05-validation.md` §4.2 (kept
-self-contained here for the user-add path; do NOT dispatch through that
-fragment as it pulls in the Wave-2/§4.6/§4.4.5 prelude that doesn't
-apply):
+Prompt:
 
 > You are a deep validator. Confirm or disprove this candidate, trace
 > its blast radius, and — if real — produce a concrete fix proposal.
@@ -682,19 +613,13 @@ findings, model `sonnet`).
 
 #### 7.5 Tree-cleanliness sweep (belt-and-braces)
 
-After every validator dispatch returns, run a `git status --porcelain`
-sweep **only when the tree was clean at step 7 entry**
-(`pre_validator_clean == "true"`). Validators have no legitimate reason
-to touch the working tree — the §7.3/§7.4 prompts already forbid it —
-so any new dirt against a clean baseline is a prompt-override we can
-safely revert.
-
-When `pre_validator_clean == "false"` (the user had their own
-uncommitted work going in), skip the sweep. Without a clean baseline
-we can't distinguish user state from validator writes, and a blind
-revert would clobber user work. `/adamsreview:add` has no Phase-0
-dirty-tree gate (§3.8), so this is the only safeguard against that
-data-loss class.
+When `pre_validator_clean == true`, the entry tree was clean and
+validators are read-only by contract — any post-validation dirt is
+validator-sourced and safely revertable. When `pre_validator_clean ==
+false`, skip the sweep: without a clean baseline we can't distinguish
+user state from validator writes, and a blind revert would clobber
+user work. `/adamsreview:add` has no Phase-0 dirty-tree gate, so this
+conditional is the only safeguard against that data-loss class.
 
 ```bash
 if [[ "$pre_validator_clean" == "true" ]]; then
@@ -727,17 +652,9 @@ findings get the full validator output stored, light-lane confirmed
 findings get nothing (matching Phase 4.4's behavior in the original
 review path).
 
-**The contract is the output, not the technique.** Agent tool results
-land in orchestrator context, not a shell variable, so there's no
-single "right" way to marshal them. Compose the tuple array however is
-natural — a direct `Write` of the assembled JSON array, a `jq`
-pipeline, or an inline helper script — and emit it to
-`$scratch/add-decisions.json`. The trailing `rm -rf "$scratch"` below
-cleans everything in that directory, so ad-hoc helpers that land
-inside it get auto-removed too. Tuple shape is identical to
-Phase 4.4's (`{id, score_phase4, decision, actionability, reason,
-validation_result}`) — the helper validates and aborts the batch on
-shape drift.
+Compose the tuple array in orchestrator context and emit it to
+`$scratch/add-decisions.json` (tuple shape identical to Phase 4.4's:
+`{id, score_phase4, decision, actionability, reason, validation_result}`).
 
 ```bash
 scratch="/tmp/adams-review-add-$review_id"
@@ -979,12 +896,6 @@ The artifact patches stand; to republish run:
 
 ## What this command does NOT do
 
-- **No fix-run.** Add is metadata-only (with validation). Run
-  `/adamsreview:fix` afterward to apply auto-eligible new findings.
-- **No promotion.** New findings land at whatever disposition Phase 4
-  produces. Run `/adamsreview:walkthrough` (or
-  `/adamsreview:promote <id>`) to promote anything that didn't land
-  deep-`confirmed_mechanical`.
 - **No Phase 5 cross-cutting recompute.** Added findings are not
   retroactively grouped into existing `cross_cutting_groups`.
   Documented small loss; the rendered report still shows them in the
@@ -993,11 +904,6 @@ The artifact patches stand; to republish run:
   overwrites the artifact; added findings are lost. Re-add if needed.
 
 ## Sub-agent prompts (used by steps 4 and 5)
-
-Defined in this file (rather than as separate fragments) to keep the
-add path self-contained. Inline copies, not separate-fragment reads —
-the prompts are short and the indirection cost outweighs the reuse
-benefit for two short prompts used by exactly one command.
 
 ### Paste-mode normalizer prompt (Sonnet)
 
@@ -1053,9 +959,6 @@ benefit for two short prompts used by exactly one command.
 >
 > If the input contains no actionable bug claims, return `[]`.
 
-Model: Sonnet. Tool access: none (text-only — the paste IS the input).
-Budget: ~3–8k tokens depending on paste length.
-
 ### Dedup prompt (Sonnet)
 
 > You are deduplicating new bug candidates against an existing review's
@@ -1098,5 +1001,3 @@ Budget: ~3–8k tokens depending on paste length.
 > `new_index` is the 0-based index into the new-candidates array. One
 > verdict per new candidate. `matches` is either an existing finding
 > id or `null`.
-
-Model: Sonnet. Budget: ~2–4k tokens.
