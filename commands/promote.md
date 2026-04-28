@@ -42,21 +42,6 @@ helper-script error-as-prompt).**
   internally. When set, the caller is responsible for running
   `artifact-render.py` and `artifact-publish.sh` afterward.
 
-## What it does
-
-1. Parses args.
-2. Locates the artifact via `latest.txt` under
-   `~/.adams-reviews/<slug>/<branch>/`.
-3. Reads the target finding. Enforces preconditions (see shared
-   `promote-core.md` step 4).
-4. Patches the finding atomically via `artifact-patch.py` (see shared
-   `promote-core.md` step 6).
-5. Re-renders `artifact.md`.
-6. Re-publishes to the PR (PR mode) or no-ops (local mode) — the same
-   `gh api PATCH` flow `/adamsreview:fix` uses at Phase 9e.
-7. Appends a `## promote (<ts>)` block to `trace.md`.
-8. Prints a summary showing what changed.
-
 Does NOT run `/adamsreview:fix` for you. Run it yourself when you're
 ready to apply promoted findings.
 
@@ -135,17 +120,7 @@ tool to diagnose it.
 
 ### 3–6, 9. Shared promote core
 
-Steps 3 (read finding + existing-id suggestion), 4 (precondition
-table), 4.5 (`fix_hint` heuristic prompt), 5 (build
-`human_confirmation` object), 6 (atomic patch), and 9 (append trace
-entry) live in the shared fragment below. It reads `$finding_id`,
-`$reason`, `$fix_hint`, `$force`, `$artifact_path`, and
-`$trace_log_path` from ambient context and populates `$curr_disp`,
-`$curr_action`, `$curr_score`, `$curr_hc`, `$ts`, and `$reviewer` for
-use in steps 7, 8, and 10 below.
-
-Read `fragments/promote-core.md` and execute the listed steps (3, 4,
-4.5, 5, 6, and 9) inline before proceeding to step 7 below.
+Read `fragments/promote-core.md` and execute steps 3, 4, 4.5, 5, 6, 9 inline.
 
 ### 7. Re-render `artifact.md`
 
@@ -248,8 +223,6 @@ promote_publish_failed). The artifact patch stands; to republish run:
 
 ## What this command does NOT do
 
-- **No fix-run.** Promote is metadata-only. You must run
-  `/adamsreview:fix` to apply the promoted finding.
 - **No batch promotion.** One finding per invocation. Loop from the
   shell if you need multiple:
   `for id in F003 F037 F039; do /adamsreview:promote $id --reason "..."; done`
@@ -259,7 +232,6 @@ promote_publish_failed). The artifact patch stands; to republish run:
   `artifact-patch.py --path <artifact> --finding-id F037 --set-json human_confirmation=null --set disposition=<prior> --set actionability=<prior>`
 - **No persistence across fresh `/adamsreview:review` runs.** A new review
   overwrites the artifact; promotions are lost. Re-promote if needed.
-  (Future work: `overrides.json` sidecar keyed by claim fingerprint.)
 - **No argument for changing `score_phase4`.** The validator's score is
   preserved for audit. Phase 8 eligibility bypasses the score threshold
   for promoted findings via the `human_confirmation != null` gate.
