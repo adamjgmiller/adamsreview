@@ -34,42 +34,15 @@ orchestrator-context `external_candidates` variable; the join step at
 with `source_family: "external-deep-family"` and
 `origin_confidence: "low"`.
 
-**Token accounting.** The CodeRabbit and Codex CLIs are EXTERNAL processes —
-their token spend is billed separately by their respective providers and is
-NOT logged to `tokens.jsonl` (with CLI dispatch there is no Claude
-wrapper sub-agent to track). Only the Sonnet normalizer is logged,
-under `phase_1_5`.
+**Token accounting.** CodeRabbit and Codex CLI spend is NOT logged to
+`tokens.jsonl`. Only the Sonnet normalizer is logged, under `phase_1_5`.
 
-### 1.5.1. Readiness — already done in the Phase 1 fragment (§13.12)
+### 1.5.1. Readiness
 
-Under §13.12, the readiness check, scratch-dir creation, and Codex
-prompt file write all live in `01-detection.md` step 1.2a — they run
-BEFORE any dispatch so missing-CLI prompts surface ahead of token
-spend. `phase_1_5_start_epoch` is captured at the tail of step 1.2b
-(§13.11b) — after the prior-fix suspect scan — so neither the
-readiness-gate user wait nor the helper runtime is billed into Phase
-1.5's elapsed.
-
-By the time execution reaches this fragment, the following are already
-in your working context:
-
-- `coderabbit_available` (bool) and, if false, `coderabbit_reason`
-- `codex_available` (bool) and, if false, `codex_reason`
-- `CODEX_COMPANION` (path, if Codex available)
-- `scratch_dir` (`/tmp/adams-review-$review_id`)
-- `phase_1_5_start_epoch` (captured at end of 1.2b, not at this fragment)
-- Codex prompt file at `/tmp/adams-review-codex-$review_id.md` (if
-  Codex available)
-
-If `ensemble_mode != true`, this entire fragment is skipped — trace.md
-gets one line:
-
-```
-Phase 1.5 skipped — --ensemble not set
-```
-
-…and execution proceeds to Phase 2. Under `ensemble_mode=true`,
-continue with step 1.5.2.
+By this point, `coderabbit_available`, `codex_available`,
+`CODEX_COMPANION`, `scratch_dir`, `phase_1_5_start_epoch`, and the
+Codex prompt file are in working context (set by `01-detection.md`
+step 1.2a).
 
 ### 1.5.2. Launch CLI reviewers (background Bash; dispatched from 01 step 1.3)
 
@@ -294,17 +267,10 @@ Dispatch via `Agent` with `model: sonnet`. Prompt essence:
 
 **After the normalizer returns**, repair missing location info and
 emit the result to `external_candidates` for the join step at
-01-detection.md step 1.5. Do NOT call `--add-finding` / `--add-findings`
-here (§13.12 — ids are assigned atomically at the join, not per-phase).
+01-detection.md step 1.5. Do NOT call `--add-finding` / `--add-findings` here.
 
-**Parse-with-repair front-stop.** External-tool output (Codex CLI,
-CodeRabbit CLI, PR bot comments) is the messiest boundary in the
-pipeline — the normalizer is a Sonnet sub-agent that reads free-form
-Markdown/JSON and emits structured JSON, with the usual LLM failure
-modes (trailing commas, single quotes, ```json fences, unescaped
-newlines). Pipe the raw normalizer output through `parse-with-repair.py`
-before handing it to `jq` so the downstream schema guard sees canonical
-JSON:
+**Parse-with-repair front-stop.** Pipe the raw normalizer output
+through `parse-with-repair.py` before handing it to `jq`:
 
 ```bash
 normalizer_clean=$(printf '%s' "$normalizer_output" \
@@ -312,26 +278,17 @@ normalizer_clean=$(printf '%s' "$normalizer_output" \
         2> >(tee -a "$trace_log_path" >&2))
 
 if [[ -z "$normalizer_clean" ]]; then
-    # parse-with-repair exited non-zero — it already logged the
-    # error-as-prompt to $trace_log_path via the tee above. Drop the
-    # whole external pool to an empty array (§24.2: fail-loud,
-    # continue-pipeline). The one retry budget from the
-    # dispatch-pattern's step 3 should have already been spent upstream
-    # before reaching this helper; a second failure means the
-    # normalizer output is irrecoverable.
+    # parse-with-repair exited non-zero (already logged via tee above).
+    # Drop the external pool to an empty array.
     printf 'phase_1_5_normalizer_unparseable: dropping external candidates\n' \
         >> "$trace_log_path"
     external_candidates="[]"
 fi
 ```
 
-**Schema guard for missing location info.** The normalizer prompt
-allows `file: null` / `line_range: null` for candidates whose body
-text didn't specify a location. Schema (`schema-v1.json`) requires
-`file` non-null with `minLength:1` and `line_range` as `[int,int]`
-with both items `>=1`. Repair before pooling — default to a sentinel
-so the finding is still stored (Phase 2 dedup + Phase 4 validation may
-still match it against an internal finding with proper location):
+**Schema guard for missing location info.** Schema requires `file`
+non-null and `line_range` as `[int,int]` with items `>=1`. Repair the
+normalizer's `null` fields before pooling by defaulting to a sentinel:
 
 ```bash
 if [[ -n "$normalizer_clean" ]]; then
@@ -359,19 +316,14 @@ log-tokens.sh \
   --model sonnet --tokens <N or null>
 ```
 
-(The batched `--add-findings` sweep moved to 01-detection.md step 1.5
-— it runs once across the combined internal + external pool after ids
-are assigned. Do not `--add-finding` / `--add-findings` here.)
-
 ### 1.5.6b. Clean up scratch_dir
 
 ```bash
 rm -rf -- "$scratch_dir"
 ```
 
-Keep `$review_dir` free of transient CLI output (§9.3). Any
-orchestrator-fatal failure before this point leaves the scratch dir
-for post-mortem inspection.
+Any orchestrator-fatal failure before this point leaves the scratch
+dir for post-mortem inspection.
 
 ### 1.5.7. Log Phase 1.5 summary
 

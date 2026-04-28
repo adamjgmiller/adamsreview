@@ -1,8 +1,5 @@
 ## Phase 0 — Pre-flight
 
-Pre-flight sets up every downstream phase's working context: branch + base,
-PR state, `review_started_at`, CLAUDE.md paths, the dirty-tree gate, the
-trivial-diff gate, prior-review detection, and the initial `artifact.json`.
 This phase is mostly deterministic shell — the only LLM call is the Sonnet
 user-facing-change classifier (step 0.9), and that's skipped in trivial mode.
 
@@ -46,10 +43,6 @@ For `base_branch`, try in order:
 
 Capture `base_branch`.
 
-(The sanity check that `base..HEAD > 0` moves to step 0.2a below, after
-`comparison_ref` is resolved — a stale local `base_branch` can show zero
-commits ahead while `origin/$base_branch..HEAD` is genuinely non-empty.)
-
 ### 0.2a. Reconcile base-branch freshness (§13.10)
 
 Phase-0 invariant preventing stale-local-`base_branch` runs from poisoning
@@ -85,9 +78,7 @@ loop appends any additional warnings to the prior-call set. A second
 `pending_user_gate` (non-FF on (a)) re-asks with only (b)/(c)/(d). (d) exits 0
 with a one-line message — no `review_dir` exists yet.
 
-**Sanity check (against `comparison_ref`).** Phase-0-level decision, not
-a freshness decision — stays inline so the "nothing to do" message is
-user-facing:
+**Sanity check (against `comparison_ref`):**
 
 ```bash
 if [[ "$(git rev-list --count "$comparison_ref..HEAD")" -eq 0 ]]; then
@@ -95,10 +86,6 @@ if [[ "$(git rev-list --count "$comparison_ref..HEAD")" -eq 0 ]]; then
     exit 0
 fi
 ```
-
-Running this against `$comparison_ref` (not `$base_branch`) means a
-feature branch that looks empty vs stale local `main` but has real
-commits vs `origin/main` still reviews correctly under option (b).
 
 ### 0.3. Derive repo slug
 
@@ -108,11 +95,6 @@ Phase 7's fix-loader so the two paths cannot drift):
 ```bash
 repo_slug=$(repo-slug.sh --repo-root "$repo_root")
 ```
-
-The helper runs `git remote get-url origin`, strips scheme + `git@` +
-trailing `.git`, normalizes separators, and lowercases. No remote → falls
-back to `local-<sanitized-path>`. See `bin/repo-slug.sh` for the exact
-algorithm and test matrix.
 
 Capture as `repo_slug`.
 
@@ -166,11 +148,7 @@ Run `gh pr view --json number,state,isDraft,url,author,headRefName,baseRefName`
 
 Run `date -u +%Y-%m-%dT%H:%M:%SZ` and capture as `review_started_at`.
 This is the review's start time — consumed by Phase 6 `metrics.time_elapsed_seconds`
-for cost-vs-size tracking. Pre-Stage-2.8 this timestamp also anchored
-the Phase 1.5 scrape window, which is why its capture was deliberately
-pre-mutation; Stage 2.8 moved PR comment filtering onto a code-locality
-axis (§13.13) so the timing invariant is gone and this field is now
-metrics-only.
+for cost-vs-size tracking.
 
 ### 0.6. Compute `reviewed_files_all`, `num_files`, and `lines_changed`
 
@@ -395,14 +373,9 @@ log paths:
 - `tokens_log_path = "$review_dir/tokens.jsonl"`
 - `trace_log_path = "$review_dir/trace.md"`
 
-Build the initial seed doc. `base_context` encodes the §13.10 freshness
-reconciliation; `remote_sha` / `behind_count` may be null on the
-offline / no-remote paths. Build that sub-object inline (jq keeps the
-null cases clean), then hand the rest of the seed shape to
-`artifact-seed.sh`, which emits schema-shaped JSON for `artifact-patch.py
---init -` to persist. `reviewer_sources: ["internal"]` seeds as Phase
-6.3a's pre-image; Phase 6.3a recomputes the authoritative list from
-`findings[].sources[]` union.
+Build the initial seed doc. `remote_sha` / `behind_count` may be null
+on the offline / no-remote paths. Build the `base_context` sub-object
+inline, then hand the rest of the seed shape to `artifact-seed.sh`:
 
 ```bash
 base_context_json=$(jq -n \

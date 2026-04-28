@@ -57,16 +57,13 @@ balanced as evenly as feasible (e.g. 22 → one chunk of 22; 50 → 25/25;
 chunk-agents from a single orchestrator turn so they run concurrently —
 same parallel fan-out pattern as Phase 1 lenses, but at chunk granularity.
 
-**Why chunked, not per-finding.** Per-finding fan-out (one Sonnet per
-candidate) was the original design but was empirically too expensive on
-typical PRs (20+ candidates → 20+ dispatches) and the orchestrator
-self-collapsed to a single batched call anyway, off-spec. A single
-unbounded batch lost score resolution (anchor collapse — every score
-landing on 0/25/50/75/100 with no intermediate values). The 25-cap
-restores parallelism on large reviews and keeps each agent's working
-set small enough to use the full 0-100 range. The Phase-3 gate is a
-sharp cutoff at 45 — slight per-candidate score loss is tolerable; loss
-of triage signal feeding Phase 4 is not.
+**Why chunked, not per-finding.** Chunk into batches of at most 25
+candidates per Sonnet sub-agent. Unbounded batches collapse score
+resolution onto the rubric anchors (every score landing on
+0/25/50/75/100) and stop using parallelism on large reviews — the
+25-cap restores both. The Phase-3 gate is a sharp cutoff at 45, so
+slight per-candidate score loss is tolerable; loss of triage signal
+feeding Phase 4 is not.
 
 **Sub-agent prompt** — each chunk-agent receives the full finding JSON
 for every candidate in the chunk, the §20 rubric verbatim, the
@@ -226,21 +223,12 @@ log-phase.sh \
   --elapsed "$phase_3_elapsed" \
   --summary "advanced_to_phase_4=$gate_pass; below_gate=$gate_fail"
 
-# phases.jsonl record: shows counts_by_disposition for the first time
-# with the Phase-3 table. (Phase 1 + Phase 2 parked every finding at
-# pending_validation; this phase is where below_gate / pre_existing_report
-# first appear on gate-fail / override findings respectively.)
-#
-# Telemetry for post-conversion-ideas #24 calibration: demote_rate (fraction
-# gated out of the Phase-3-scored candidates) and score_phase3_histogram
-# (10 buckets of width 10 over [0, 100]). These feed the decision on
-# whether to tune the Phase 3 err-up rubric. demote_rate is a float in
-# [0.0, 1.0]; when no candidates were scored (all routed to pre_existing_report
-# in step 3.1) the denominator is zero and we emit 0.0 explicitly.
 by_disp=$(artifact-read.sh \
   --path "$artifact_path" --summary \
   | jq -c '.counts_by_disposition')
 
+# demote_rate: fraction gated out of Phase-3-scored candidates. Emit
+# 0.0 when score_total is 0 (all routed to pre_existing_report in 3.1).
 score_total=$(( gate_pass + gate_fail ))
 if [[ "$score_total" -eq 0 ]]; then
     demote_rate="0.0"
@@ -248,9 +236,7 @@ else
     demote_rate=$(jq -nc --argjson f "$gate_fail" --argjson t "$score_total" '$f / $t')
 fi
 
-# Histogram over the Phase-3-scored population (excludes pre_existing_report
-# overrides and null scores from parse failures). Buckets are 0-9, 10-19,
-# ..., 80-89, 90-100 (the top bucket is inclusive of 100).
+# Histogram buckets: 0-9, 10-19, ..., 80-89, 90-100 (top bucket inclusive of 100).
 score_phase3_histogram=$(artifact-read.sh \
   --path "$artifact_path" \
   --filter '[.findings[] | select(.score_phase3 != null) | .score_phase3]' \
