@@ -273,13 +273,10 @@ If `$behind > 0`, `AskUserQuestion` once:
       >> "$trace_log_path"
   ```
 - **(b) Proceed.** Append a trace line and continue. Logs `merge_ref`
-  and `fetch_ok` alongside the count so an operator reading `trace.md`
-  later can tell which ref the count was measured against and whether
-  the active fetch succeeded — mirrors `:review` §0.6a's
-  Proceed-on-warning pattern; the active variants additionally log
-  `merge_ref` and `fetch_ok` because the fetch may have failed and the
-  gate may have measured against a different ref than the user is told
-  to merge.
+  and `fetch_ok` because the active fetch may have failed and the gate
+  may have measured against a different ref than the user is told to
+  merge — `:review` §0.6a's passive variant skips them since
+  `$comparison_ref` is the only ref in play.
   ```bash
   printf '[%s] branch_behind_base proceeded behind=%s merge_ref=%s fetch_ok=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$behind" "$merge_ref" "$fetch_ok" \
