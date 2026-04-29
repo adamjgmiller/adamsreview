@@ -530,13 +530,13 @@ downstream or the reviewer agent's interpretation.
 # printf '%s', not echo — see operational rule 12.
 attempted_ids_json=$(printf '%s' "$fix_groups_with_actual" | jq -c '[.[].finding_ids[]] | unique')
 jq --argjson ids "$attempted_ids_json" --argjson groups "$fix_groups_with_actual" '
-    [ .findings[] | select(.id | IN($ids[])) | {
+    [ .findings[] | select(.id | IN($ids[])) | . as $f | {
         id, file, line_range, claim,
         evidence:               .validation_result.evidence,
         blast_radius:           .validation_result.blast_radius,
         fix_proposal:           .validation_result.fix_proposal,
         verification_context:   .validation_result.verification_context,
-        fix_group_id:           ($groups[] | select(.finding_ids | index(.id)) | .id)
+        fix_group_id:           ($groups[] | select(.finding_ids | index($f.id)) | .id)
     } ]' "$artifact_path" > /tmp/9a-findings-$run_id.json
 
 # Per-group results (Phase 8 self-report)

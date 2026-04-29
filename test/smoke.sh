@@ -178,20 +178,38 @@ fi
 # AR-1: artifact-read.sh emits JSON-encoded backslashes that survive a
 # downstream pipe under shells that interpret `\\` in echo (zsh, dash,
 # bash with xpg_echo). Pre-fix the helper used `echo "$result"`, which
-# collapses `\\d` → `\d` and parse-errors the next jq. Reproduce by:
-# 1) injecting a finding string containing a literal backslash via --set,
-# 2) reading it back through the helper inside `bash -O xpg_echo`, and
-# 3) piping into jq -e to confirm it stays valid JSON.
+# collapses `\\d` → `\d` and parse-errors the next jq.
+#
+# Invocation note: `bash -O xpg_echo -c "$helper | jq …"` only enables
+# xpg_echo on the wrapper bash; the helper's #!/usr/bin/env bash shebang
+# spawns a fresh bash with default options, so the helper's internal
+# `echo` never sees xpg_echo and the test passes even when broken.
+# Instead, invoke the helper as `bash -O xpg_echo <script>` — that
+# bypasses the shebang and runs the helper's body in the xpg_echo bash.
+# Verified: pre-fix this triggers `jq: parse error: Invalid escape`;
+# post-fix the value round-trips. AR-1b adds a structural pin so a
+# revert from `printf` to `echo` is caught even if the runtime path
+# stops triggering for environment reasons.
 AR_ART="$WORK/art-ar1.json"
 cp "$ART" "$AR_ART"
 "$TOOLS/artifact-patch.py" --path "$AR_ART" --finding-id F001 \
     --set 'reason=use \d for digit class' >/dev/null
-ar1_out=$(bash -O xpg_echo -c \
-    "'$TOOLS/artifact-read.sh' --path '$AR_ART' --finding-id F001 | jq -r '.reason'" 2>&1)
+ar1_out=$(bash -O xpg_echo "$TOOLS/artifact-read.sh" \
+    --path "$AR_ART" --finding-id F001 \
+    | jq -r '.reason' 2>&1)
 if [[ "$ar1_out" == 'use \d for digit class' ]]; then
-    pass "AR-1: artifact-read.sh round-trips backslash content under xpg_echo"
+    pass "AR-1: artifact-read.sh round-trips backslash content under xpg_echo bash"
 else
-    fail "AR-1: backslash mangled in artifact-read.sh pipe" "out=$ar1_out"
+    fail "AR-1: backslash mangled in artifact-read.sh single-finding emit" "out=$ar1_out"
+fi
+
+# AR-1b: structural regression pin — single-finding emission must use printf,
+# not echo. Catches a code revert even if a future host shell stops triggering
+# AR-1's runtime path (e.g., bash binary built without xpg_echo support).
+if grep -qE "^[[:space:]]+printf '%s\\\\n' \"\\\$result\"" "$TOOLS/artifact-read.sh"; then
+    pass "AR-1b: artifact-read.sh single-finding emits via printf (structural pin)"
+else
+    fail "AR-1b: artifact-read.sh single-finding emit reverted away from printf"
 fi
 
 # B. artifact-publish.sh local no-op
