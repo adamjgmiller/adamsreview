@@ -8,13 +8,14 @@ Phase 1.5 skipped — --ensemble not set
 ```
 
 **Dispatch under §13.12.** When `--ensemble` IS set, Phase 1.5's CLI
-launches and PR scrape fire in the same orchestrator turn as the
-Phase 1 lens `Agent` dispatches — see 01-detection.md step 1.3. This
-fragment documents the Phase-1.5-owned work (readiness pointer,
-launch specs, normalizer, token logging, summary); execution sequencing
-is orchestrated from 01-detection.md. The readiness gate moved to
-01-detection.md step 1.2a so missing-CLI prompts surface before any
-token spend.
+launches fire in the same orchestrator turn as the Phase 1 lens
+`Agent` dispatches — see 01-detection.md step 1.3. The PR comment
+scrape (§1.5.4) is deferred to after CLI collection so third-party
+PR-comment bots have time to land their posts. This fragment documents
+the Phase-1.5-owned work (readiness pointer, launch specs, normalizer,
+token logging, summary); execution sequencing is orchestrated from
+01-detection.md. The readiness gate moved to 01-detection.md step
+1.2a so missing-CLI prompts surface before any token spend.
 
 Phase 1.5 pulls additional candidates from three external channels:
 
@@ -24,8 +25,11 @@ Phase 1.5 pulls additional candidates from three external channels:
 2. **Codex CLI** — `node "$CODEX_COMPANION" task --prompt-file <file>`, a
    local Codex-based review. Same shape.
 3. **GitHub PR comment scrape** — `external-scrape.sh` pulls bot-authored
-   comments posted to the PR since `review_started_at`. Only runs when
-   `mode == pr`. Local mode can't scrape a PR that doesn't exist.
+   comments on the PR. Fires after the CLI reviewers' outputs are collected
+   (§1.5.4) so third-party PR-comment bots — CodeRabbit-as-GitHub-App,
+   Greptile, etc. — have the CLI minutes to land their posts before we
+   fetch. Only runs when `mode == pr`. Local mode can't scrape a PR that
+   doesn't exist.
 
 All three feed a single Sonnet normalizer sub-agent that emits
 standard candidates. The normalizer's output pools into the
@@ -87,66 +91,7 @@ node "$CODEX_COMPANION" task --prompt-file "/tmp/adams-review-codex-$review_id.m
 Launch with `run_in_background: true`; capture shell id as
 `codex_shell_id`. If `codex_available == false`, skip.
 
-### 1.5.3. PR comment scrape (PR mode only; dispatched from 01 step 1.3)
-
-While the CLI reviewers are running, synchronously scrape bot comments
-and run the §13.13 code-locality filter. The scrape (`external-scrape.sh`
-§21.8) fetches every bot-authored comment on the PR; the freshness
-filter (`comment-freshness.sh` §21.10) drops records whose referenced
-code has changed between when the comment was posted and HEAD. Guard
-the exit-code captures with `||` so `set -e` orchestrator context
-doesn't abort on non-zero — we deliberately want to read the code and
-continue:
-
-```bash
-if [[ "$mode" == "pr" ]]; then
-    external-scrape.sh \
-        --pr "$pr_number" \
-        > "$scratch_dir/pr-scrape.raw.json" \
-        2> "$scratch_dir/pr-scrape.err" \
-        || scrape_exit=$?
-    scrape_exit=${scrape_exit:-0}
-
-    if [[ $scrape_exit -eq 0 ]]; then
-        reviewed_files_csv=$(printf '%s\n' "$reviewed_files_all" \
-            | awk 'NF' | paste -sd, -)
-
-        # Pipe through comment-freshness.sh. Audit lines (`comment_freshness: …`)
-        # flow into trace.md via `tee -a` — mirrors origin-crosscheck.sh
-        # dispatch at 01-detection.md step 1.4 step 2a.
-        if ! comment-freshness.sh \
-                --pr "$pr_number" \
-                --reviewed-files "$reviewed_files_csv" \
-                --comments "$scratch_dir/pr-scrape.raw.json" \
-                > "$scratch_dir/pr-scrape.json" \
-                2> >(tee -a "$trace_log_path" >&2); then
-            # Freshness helper itself failed (rare — its own errors log to
-            # stderr with a `comment_freshness_api_failed` prefix). Degrade
-            # gracefully: use the raw scrape. Log the tag so a reader can
-            # explain why stale-but-pre-existing comments made it through.
-            printf 'phase_1_5_freshness_helper_failed: using raw scrape\n' \
-                >> "$trace_log_path"
-            cp "$scratch_dir/pr-scrape.raw.json" "$scratch_dir/pr-scrape.json"
-        fi
-    else
-        # Scrape failed — write an empty array so downstream consumers
-        # don't trip on a missing file. The scrape-failed tag is logged
-        # below.
-        echo "[]" > "$scratch_dir/pr-scrape.json"
-    fi
-else
-    echo "[]" > "$scratch_dir/pr-scrape.json"
-    scrape_exit=0
-fi
-```
-
-On scrape non-zero exit (rate limit, auth, network): log stderr to
-`trace.md` with tag `phase_1_5_scrape_failed`; continue with
-the CLI reviewer outputs only. Do not abort. The freshness-filter
-failure path (inner `if`) is separately logged because it can fire
-independently of the scrape succeeding.
-
-### 1.5.4. Collect CLI reviewer outputs
+### 1.5.3. Collect CLI reviewer outputs
 
 Poll each background shell via the `BashOutput` tool — it's the only
 non-blocking read-current-output mechanism granted in
@@ -201,6 +146,69 @@ Clean up the Codex prompt file:
 ```bash
 rm -f "/tmp/adams-review-codex-$review_id.md"
 ```
+
+### 1.5.4. PR comment scrape (PR mode only)
+
+Now that the CLI outputs are collected, scrape PR bot comments and
+apply the §13.13 code-locality filter. Running the scrape here (rather
+than in parallel with the CLI launches at step 1.5.2) gives third-party
+PR-comment bots — CodeRabbit-as-GitHub-App, Greptile, etc. — the CLI
+minutes they need to land their posts before we fetch.
+
+The scrape (`external-scrape.sh` §21.8) fetches every bot-authored
+comment on the PR; the freshness filter (`comment-freshness.sh` §21.10)
+drops records whose referenced code has changed between when the
+comment was posted and HEAD. Guard the exit-code captures with `||`
+so `set -e` orchestrator context doesn't abort on non-zero — we
+deliberately want to read the code and continue:
+
+```bash
+if [[ "$mode" == "pr" ]]; then
+    external-scrape.sh \
+        --pr "$pr_number" \
+        > "$scratch_dir/pr-scrape.raw.json" \
+        2> "$scratch_dir/pr-scrape.err" \
+        || scrape_exit=$?
+    scrape_exit=${scrape_exit:-0}
+
+    if [[ $scrape_exit -eq 0 ]]; then
+        reviewed_files_csv=$(printf '%s\n' "$reviewed_files_all" \
+            | awk 'NF' | paste -sd, -)
+
+        # Pipe through comment-freshness.sh. Audit lines (`comment_freshness: …`)
+        # flow into trace.md via `tee -a` — mirrors origin-crosscheck.sh
+        # dispatch at 01-detection.md step 1.4 step 2a.
+        if ! comment-freshness.sh \
+                --pr "$pr_number" \
+                --reviewed-files "$reviewed_files_csv" \
+                --comments "$scratch_dir/pr-scrape.raw.json" \
+                > "$scratch_dir/pr-scrape.json" \
+                2> >(tee -a "$trace_log_path" >&2); then
+            # Freshness helper itself failed (rare — its own errors log to
+            # stderr with a `comment_freshness_api_failed` prefix). Degrade
+            # gracefully: use the raw scrape. Log the tag so a reader can
+            # explain why stale-but-pre-existing comments made it through.
+            printf 'phase_1_5_freshness_helper_failed: using raw scrape\n' \
+                >> "$trace_log_path"
+            cp "$scratch_dir/pr-scrape.raw.json" "$scratch_dir/pr-scrape.json"
+        fi
+    else
+        # Scrape failed — write an empty array so downstream consumers
+        # don't trip on a missing file. The scrape-failed tag is logged
+        # below.
+        echo "[]" > "$scratch_dir/pr-scrape.json"
+    fi
+else
+    echo "[]" > "$scratch_dir/pr-scrape.json"
+    scrape_exit=0
+fi
+```
+
+On scrape non-zero exit (rate limit, auth, network): log stderr to
+`trace.md` with tag `phase_1_5_scrape_failed`; continue with
+the CLI reviewer outputs only. Do not abort. The freshness-filter
+failure path (inner `if`) is separately logged because it can fire
+independently of the scrape succeeding.
 
 ### 1.5.5. Normalize all external inputs (single Sonnet sub-agent)
 

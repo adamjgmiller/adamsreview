@@ -732,18 +732,21 @@ freely):
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 
 When `ensemble_mode=true`, the dispatch turn also launches the
-external reviewers and PR scrape. These run as tool-use blocks in the
-same orchestrator turn as the lens `Agent` dispatches above — waiting
-a turn between them serializes what's meant to be parallel.
+external CLI reviewers. These run as tool-use blocks in the same
+orchestrator turn as the lens `Agent` dispatches above — waiting a
+turn between them serializes what's meant to be parallel. The PR
+comment scrape is NOT in this turn; it's deferred to §1.5.4 in
+`02-ensemble-adapter.md` so third-party PR-comment bots have time
+to land their posts during the CLI window.
 
 Total tool-use blocks in the dispatch turn:
 
 | Condition | Blocks |
 |---|---|
 | `ensemble_mode=false` | applicable lenses (6 max — L1..L6; L7 is ensemble-gated) |
-| `ensemble_mode=true`, both CLIs available, `mode=pr` | lenses (up to 7, including L7) + 2 background Bash + 1 foreground Bash |
-| `ensemble_mode=true`, both CLIs available, `mode=local` | lenses (up to 7) + 2 background Bash |
-| `ensemble_mode=true`, one CLI unavailable | lenses (up to 7) + 1 background Bash + (1 foreground Bash if PR mode) |
+| `ensemble_mode=true`, both CLIs available | lenses (up to 7, including L7) + 2 background Bash |
+| `ensemble_mode=true`, one CLI unavailable | lenses (up to 7) + 1 background Bash |
+| `ensemble_mode=true`, no CLIs available | lenses (up to 7) |
 
 The ensemble launch specs live in `02-ensemble-adapter.md`:
 
@@ -754,11 +757,6 @@ The ensemble launch specs live in `02-ensemble-adapter.md`:
   1.5.2. Skip if `codex_available=false`. The prompt file was already
   written in step 1.2a; the launch block just invokes `node
   "$CODEX_COMPANION" task …`. Capture `codex_shell_id`.
-- **PR comment scrape** (foreground Bash, PR mode only) — see
-  `02-ensemble-adapter.md` step 1.5.3. Skipped in local mode. This
-  call is synchronous, but it's short (seconds of `gh api`) so staying
-  foreground in the dispatch turn doesn't meaningfully delay the
-  background launches — it just means the turn returns a hair later.
 
 Under `ensemble_mode=false`, none of these launches happen; the
 02-ensemble-adapter fragment's top-level skip note fires when
