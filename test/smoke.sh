@@ -175,6 +175,25 @@ else
     fail "A: summary counts mismatch" "expected=$expected_counts actual=$actual"
 fi
 
+# AR-1: artifact-read.sh emits JSON-encoded backslashes that survive a
+# downstream pipe under shells that interpret `\\` in echo (zsh, dash,
+# bash with xpg_echo). Pre-fix the helper used `echo "$result"`, which
+# collapses `\\d` → `\d` and parse-errors the next jq. Reproduce by:
+# 1) injecting a finding string containing a literal backslash via --set,
+# 2) reading it back through the helper inside `bash -O xpg_echo`, and
+# 3) piping into jq -e to confirm it stays valid JSON.
+AR_ART="$WORK/art-ar1.json"
+cp "$ART" "$AR_ART"
+"$TOOLS/artifact-patch.py" --path "$AR_ART" --finding-id F001 \
+    --set 'reason=use \d for digit class' >/dev/null
+ar1_out=$(bash -O xpg_echo -c \
+    "'$TOOLS/artifact-read.sh' --path '$AR_ART' --finding-id F001 | jq -r '.reason'" 2>&1)
+if [[ "$ar1_out" == 'use \d for digit class' ]]; then
+    pass "AR-1: artifact-read.sh round-trips backslash content under xpg_echo"
+else
+    fail "AR-1: backslash mangled in artifact-read.sh pipe" "out=$ar1_out"
+fi
+
 # B. artifact-publish.sh local no-op
 mkdir -p "$WORK/pub"
 if "$TOOLS/artifact-publish.sh" --mode local --review-id rev_stage1smoke --review-dir "$WORK/pub" >/dev/null; then

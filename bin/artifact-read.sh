@@ -89,7 +89,11 @@ case "$MODE" in
             echo "Action: check --finding-id, or list ids with --filter '[.findings[].id]'." >&2
             exit 1
         fi
-        echo "$result"
+        # printf, not echo — `echo "$x"` in zsh / `/bin/sh` / bash with
+        # xpg_echo collapses `\\` to `\`, mangling JSON-encoded backslashes
+        # (e.g., a finding evidence string containing `\d`) so the next jq
+        # in a downstream pipe parse-errors. printf '%s' is shell-portable.
+        printf '%s\n' "$result"
         ;;
 
     summary)

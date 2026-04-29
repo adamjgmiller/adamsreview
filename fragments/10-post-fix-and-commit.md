@@ -518,6 +518,38 @@ phase_9_start_epoch=$(date +%s)
 working_tree_diff=$(git diff HEAD)
 ```
 
+**Build the per-finding context** for the two `<jq output: …>` placeholders
+below. Stream jq directly to a file — never `echo "$jq_var"` into the
+prompt. Under zsh, `/bin/sh`, or bash with `xpg_echo`, `echo` collapses
+`\\` to `\` and any finding string carrying a backslash (regex literal,
+code snippet, fix-hint copy) corrupts the JSON, breaking either jq parsing
+downstream or the reviewer agent's interpretation.
+
+```bash
+# Per-finding context (id, file, line_range, claim, validation_result.*).
+# printf '%s', not echo — see operational rule 12.
+attempted_ids_json=$(printf '%s' "$fix_groups_with_actual" | jq -c '[.[].finding_ids[]] | unique')
+jq --argjson ids "$attempted_ids_json" --argjson groups "$fix_groups_with_actual" '
+    [ .findings[] | select(.id | IN($ids[])) | {
+        id, file, line_range, claim,
+        evidence:               .validation_result.evidence,
+        blast_radius:           .validation_result.blast_radius,
+        fix_proposal:           .validation_result.fix_proposal,
+        verification_context:   .validation_result.verification_context,
+        fix_group_id:           ($groups[] | select(.finding_ids | index(.id)) | .id)
+    } ]' "$artifact_path" > /tmp/9a-findings-$run_id.json
+
+# Per-group results (Phase 8 self-report)
+printf '%s' "$fix_groups_with_actual" | jq '[.[] | {
+    id, finding_ids, files_modified: .results.files_modified,
+    files_created: .results.files_created,
+    per_finding_verification: .results.per_finding
+}]' > /tmp/9a-groups-$run_id.json
+```
+
+Embed each file's contents directly at the placeholder site (Read the
+file, paste its contents). Do not capture into a shell variable + echo.
+
 **Prompt body:**
 
 ```
