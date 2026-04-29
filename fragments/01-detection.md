@@ -746,6 +746,7 @@ Total tool-use blocks in the dispatch turn:
 | `ensemble_mode=false` | applicable lenses (6 max — L1..L6; L7 is ensemble-gated) |
 | `ensemble_mode=true`, both CLIs available | lenses (up to 7, including L7) + 2 background Bash |
 | `ensemble_mode=true`, one CLI unavailable | lenses (up to 7) + 1 background Bash |
+| `ensemble_mode=true`, no CLIs available | lenses (up to 7) |
 
 The ensemble launch specs live in `02-ensemble-adapter.md`:
 
