@@ -34,7 +34,8 @@ The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 
 ├── Phase 1.5  ─┘ External-source pooling (PR-comment scrape: gh api → bot
 │                 filter → comment-freshness; merged with --ensemble's
 │                 CodeRabbit + Codex CLI output through a single Sonnet
-│                 normalizer; ensemble mode only; joint dispatch with Phase 1)
+│                 normalizer; ensemble mode only; CLI launches dispatched
+│                 jointly with Phase 1, PR scrape deferred to post-CLI)
 ├── Phase 2 — Dedup (one Sonnet call; merges equivalent candidates, unions source_families)
 ├── Phase 3 — Cheap scoring + gate (chunked-batch Sonnet err-up rubric, ≤25
 │              candidates per chunk-agent; ≥2 families auto-graduate; logs
@@ -344,7 +345,7 @@ Enough to work without opening the archive. Each rule is a decision that was lea
 
 ## Working set (what each phase establishes)
 
-**`/adamsreview:review`** Phase 0 establishes: `review_id` (ULID), `artifact_path` (absolute), `repo_root`, `repo_slug`, `base_branch`, `comparison_ref` (from §13.10 freshness reconciliation — use this, not `base_branch`, for every diff/blame/lens prompt), `reviewed_sha` (post-push), `review_started_at` (ISO-8601 UTC, captured before any push/stash so Phase 1.5's scrape window doesn't race), `mode` (`pr`/`local`), `pr_number`, `trivial_mode`, `reviewed_files_all` (staleness envelope — every file in the diff), `claude_md_paths`, and the three append-only log paths (`trace.md`, `phases.jsonl`, `tokens.jsonl`). `comment_id` is set by Phase 6+ on first POST and persisted into the artifact.
+**`/adamsreview:review`** Phase 0 establishes: `review_id` (ULID), `artifact_path` (absolute), `repo_root`, `repo_slug`, `base_branch`, `comparison_ref` (from §13.10 freshness reconciliation — use this, not `base_branch`, for every diff/blame/lens prompt), `reviewed_sha` (post-push), `review_started_at` (ISO-8601 UTC, captured before any push/stash so it represents the start of the review session), `mode` (`pr`/`local`), `pr_number`, `trivial_mode`, `reviewed_files_all` (staleness envelope — every file in the diff), `claude_md_paths`, and the three append-only log paths (`trace.md`, `phases.jsonl`, `tokens.jsonl`). `comment_id` is set by Phase 6+ on first POST and persisted into the artifact.
 
 **`/adamsreview:fix`** Phase 7 loads the artifact (which carries all of the above) and adds: `run_id` (ULID, `fixrun_<ULID>`), `threshold` (default 60; command arg), `latest_known_sha` (most-recent `fix_attempt.output_sha` OR `reviewed_sha`), `stash_taken` (bool), `input_sha` (pre-edit), `eligible_finding_ids` (pre-filtered per Phase 8 gate), `fix_groups` (from `group-fixes.py`). Phase 9 adds `phase_9a_outcomes`, `overlap_files`, `reverted_groups`, `surviving_groups`, and finally `commit_sha`.
 
