@@ -308,7 +308,7 @@ Expects `smoke: PASS (N assertions)` where N grows as helpers are added. Every h
 
 | Tool | Version | Notes |
 |---|---|---|
-| `uv` | 0.7+ | PEP 723 inline-script shebang (`#!/usr/bin/env -S uv run --script`) — no venv, no pip install. `brew install uv`. |
+| `uv` | 0.7+ | PEP 723 inline-script shebang (`#!/usr/bin/env -S uv run --quiet --script`) — no venv, no pip install. `brew install uv`. `--quiet` suppresses the "Installed N packages" stderr line on cold cache so smoke's `2>&1`-captured assertions stay clean (GH #13). |
 | `bash` | 4+ | Helpers use `#!/usr/bin/env bash`; macOS default `/bin/bash` is 3.2 so `brew install bash` or user's newer default is required. |
 | `jq` | 1.6+ | `brew install jq`. |
 | `gh` | 2.x | `brew install gh`, `gh auth login`. |
@@ -323,7 +323,7 @@ Enough to work without opening the archive. Each rule is a decision that was lea
 
 1. **Bash 3.2 portable.** Helpers run under macOS `/bin/bash` 3.2 in practice. Avoid `declare -A`, `mapfile`/`readarray`, `${var,,}`. `awk '!seen[$0]++' | sort` beats associative arrays for dedup. `set -euo pipefail` and process substitution are fine.
 
-2. **uv shebang for Python helpers.** `#!/usr/bin/env -S uv run --script` with a `# /// script` inline dep spec. Never `pip install` directly (PEP 668 blocks it on Homebrew Python 3.12+).
+2. **uv shebang for Python helpers.** `#!/usr/bin/env -S uv run --quiet --script` with a `# /// script` inline dep spec. The `--quiet` flag suppresses the "Installed N packages in Xms" stderr line on first resolve — without it, smoke's `var=$(cmd 2>&1)` capture pattern eats the install message into JSON output and downstream `jq` parses break (GH #13). Never `pip install` directly (PEP 668 blocks it on Homebrew Python 3.12+).
 
 3. **Exit codes are a contract.** Python helpers: `0=OK, 1=validation, 2=invalid-transition, 3=dry-run-invalid, 4=unexpected, 5=missing-dep, 6=expected-mismatch (--apply-decisions tuple count != --expected; recover by re-dispatch), 7=all-rejected (--add-findings: every input element was rejected at preflight; distinct from 1 so callers can branch), 64=usage`. Codes 2 and 3 are context-sensitive — `parse-validator-result.py` reuses 2 for score-unrecoverable; `source-family-map.py` reuses 3 for unknown-family. Defined in `bin/_common.py`; reuse, don't invent.
 

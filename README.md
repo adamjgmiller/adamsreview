@@ -37,7 +37,7 @@ Steps 2–4 can land days or weeks after step 1 — the review artifact persists
 
 | Tool | Version | Used by | Notes |
 |---|---|---|---|
-| `uv` | 0.7+ | `artifact-patch.py`, `artifact-render.py` | `brew install uv`. Scripts use a PEP 723 inline-script shebang (`#!/usr/bin/env -S uv run --script`) so `uv` fetches and caches `jsonschema` on first run — no venv, no global pip install |
+| `uv` | 0.7+ | `artifact-patch.py`, `artifact-render.py` | `brew install uv`. Scripts use a PEP 723 inline-script shebang (`#!/usr/bin/env -S uv run --quiet --script`) so `uv` fetches and caches `jsonschema` on first run — no venv, no global pip install |
 | `python3` | 3.10+ | invoked by `uv` | `uv` will install a matching Python if needed |
 | `bash` | 4+ | all `*.sh` helpers | macOS default `/bin/bash` is 3.2 — scripts use `#!/usr/bin/env bash` and rely on `brew install bash` or the user's newer default. On Windows, Git for Windows ships bash 5+ via Git Bash and Claude Code auto-routes through it |
 | `jq` | 1.6+ | `artifact-read.sh`, log helpers | `brew install jq` |
@@ -192,7 +192,7 @@ No symlinks, no install script. The plugin runtime discovers `commands/`, `fragm
 
 ### First invocation is slow
 
-The Python helpers (`artifact-patch.py`, `artifact-render.py`) use a PEP 723 inline-script shebang (`#!/usr/bin/env -S uv run --script`). On a fresh machine, the first run pauses for a few seconds while `uv` resolves a matching Python interpreter and fetches the `jsonschema` dep into its cache. Subsequent runs hit the cache and are effectively instant. This is a one-time cost per machine, not per review.
+The Python helpers (`artifact-patch.py`, `artifact-render.py`) use a PEP 723 inline-script shebang (`#!/usr/bin/env -S uv run --quiet --script`). On a fresh machine, the first run pauses for a few seconds while `uv` resolves a matching Python interpreter and fetches the `jsonschema` dep into its cache. Subsequent runs hit the cache and are effectively instant. This is a one-time cost per machine, not per review.
 
 ### `--ensemble` mode requirements
 
