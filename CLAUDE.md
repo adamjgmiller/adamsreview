@@ -14,7 +14,7 @@ Build repo for five personal Claude Code slash commands, packaged as a plugin (`
 - **`/adamsreview:fix [threshold] [--granular-commits]`** — automated fix loop for auto-fixable findings (Phases 7–9). `--granular-commits` emits one commit per surviving fix group instead of the default single combined commit.
 - **`/adamsreview:promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adamsreview:fix` afterwards to apply. Used internally by `/adamsreview:walkthrough` via `fragments/promote-core.md` + `--defer-publish`.
 
-The original four reached **original-roadmap closure** on 2026-04-19 (Stages 1, 2, 2.5, 2.6, 2.7, 2.8, 3 closed; walkthrough closed on branch `walkthrough-mode`) and have been in production use since. `/adamsreview:add` was added on branch `review-add` (plan: `plans/review-add.md`). Plugin conversion (repackaging as a Claude Code plugin, D18 namespacing from `/adams-review-<stem>` to `/adamsreview:<stem>`) landed on branch `plugin-conversion` (plan: `plans/plugin-conversion-execution.md`). Stage 4 (fragment shrink — manifest-style command bodies, helper extractions, prose compression) closed 2026-04-23 on branch `stage-4-fragment-shrink` (plan: `plans/stage-4-fragment-shrink.md`; execution journal: `plans/stage-4-fragment-shrink-execution.md`). All original-roadmap scope is now executed; forward-looking work lives in `plans/backlog.md`.
+All five commands are in production. Forward-looking work lives in `plans/backlog.md`; per-stage plans and execution journals live in `plans/` (consult for historical rationale).
 
 **Recommended flow on a non-trivial PR:** `/adamsreview:review` → (optional) `/adamsreview:add` to inject parallel-review findings → `/adamsreview:walkthrough` (optional) → `/adamsreview:fix`. Each command is independent; `/adamsreview:promote` remains useful for one-off manual promotions outside the walkthrough.
 
@@ -294,7 +294,7 @@ adamsreview/
     └── fixtures/
 ```
 
-Plugin users install via `/plugin marketplace add adamjgmiller/adamsreview` + `/plugin install adamsreview@adamsreview` in Claude Code — no symlinks, no install script. Plugin authors iterate with `scripts/dev-run.sh` (loads the working tree as a plugin via `claude --plugin-dir "$(pwd)"`). Adding a new top-level command means dropping `commands/<stem>.md` at bare-stem path (no `adamsreview-` prefix — namespacing lives in the plugin name); post-install invocation is automatically `/adamsreview:<stem>`. See README §Installation for the end-user flow.
+Plugin authors iterate with `scripts/dev-run.sh` (loads the working tree as a plugin via `claude --plugin-dir "$(pwd)"`). Adding a new top-level command means dropping `commands/<stem>.md` at bare-stem path (no `adamsreview-` prefix — namespacing lives in the plugin name); post-install invocation is automatically `/adamsreview:<stem>`. See README §Installation for the end-user install flow.
 
 ## How to test
 
