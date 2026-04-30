@@ -1179,7 +1179,9 @@ landed despite a non-empty pool) is a distinct loud-failure tag.
 requires `disposition` non-null, so we can't leave it unset.
 `is_actionable: false` + `disposition: "pending_validation"` keeps the
 §5.2.1 coupling happy. Phase 3's gate either locks a gate-fail finding
-into `below_gate` with the "below validation gate (score X)" reason,
+into `below_gate` with a "below validation gate (…)" reason (score N
+when the Phase-3 chunk produced a number; "score unavailable …" when
+§3.3 set the score to null on parse failure or missing-id),
 or leaves it at `pending_validation` for Phase 4 to overwrite with the
 final verdict. Pre-existing overrides set `pre_existing_report` at
 Phase 3.1 before any of that runs.

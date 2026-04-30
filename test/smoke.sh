@@ -5229,6 +5229,59 @@ else
     fail "BB-3: §3a header/fetch with 30s timeout/fetch_ok routing/merge_ref assignment AND Stop-consumer/fetch_note/AskUserQuestion grant AND §3a invocation/Proceed/Stop/Abort traces/unresolvable-path warning/degraded-path warning missing in $BB_ADD (§3a slice)"
 fi
 
+# UV-1: every uv-shebang Python helper uses `--quiet --script`, not bare
+# `--script`. On a cold uv cache, `uv run --script` prints
+# `Installed N packages in Xms` to stderr the first time each helper's
+# inline-dep set is resolved; smoke captures stderr-into-stdout via
+# `2>&1` and the install line then contaminates JSON outputs that
+# downstream `jq`s parse — producing flaky `Invalid numeric literal`
+# failures whose first-affected assertion drifts with cache state.
+# `--quiet` suppresses the install summary; verified locally that the
+# JSON output is otherwise unchanged. (GH #13.)
+UV_HELPERS=(
+    parse-with-repair.py
+    group-fixes.py
+    artifact-render.py
+    artifact-patch.py
+    source-family-map.py
+    parse-validator-result.py
+)
+uv1_missing=()
+for helper in "${UV_HELPERS[@]}"; do
+    shebang=$(head -1 "$REPO/bin/$helper")
+    if [[ "$shebang" != '#!/usr/bin/env -S uv run --quiet --script' ]]; then
+        uv1_missing+=("$helper:$shebang")
+    fi
+done
+if [[ ${#uv1_missing[@]} -eq 0 ]]; then
+    pass "UV-1 (GH #13): all 6 bin/*.py helpers use 'uv run --quiet --script' shebang (suppresses cold-cache install summary)"
+else
+    fail "UV-1: helpers missing --quiet shebang: ${uv1_missing[*]}"
+fi
+
+# SG-1: Phase 3 below-gate `reason` write must not leak a raw null/empty
+# `$score` into the persisted artifact. §3.4 (fragments/04-scoring-gate.md)
+# now contains an explicit null-handling clause: when `score_phase3` is
+# null, treat `(score >= 45)` as false and write a descriptive reason
+# rather than `(score null)` / `(score )`. Prevents the GH #11 corruption
+# where parse-failure / missing-id paths from §3.3 (which set score to
+# null) bled raw internal state into a user-facing artifact field.
+SG_MD="$REPO/fragments/04-scoring-gate.md"
+sg1_missing=()
+for phrase in \
+    'When `score` is null' \
+    'treat `(score >= 45)` as false' \
+    'score unavailable — Phase 3 score missing or unparseable'; do
+    if ! grep -qF "$phrase" "$SG_MD"; then
+        sg1_missing+=("$phrase")
+    fi
+done
+if [[ ${#sg1_missing[@]} -eq 0 ]]; then
+    pass "SG-1 (GH #11): §3.4 Phase-3 below-gate write null-guards \$score (no raw null/empty parens in user-visible reason)"
+else
+    fail "SG-1: missing §3.4 null-handling phrases in $SG_MD: ${sg1_missing[*]}"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

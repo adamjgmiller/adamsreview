@@ -176,6 +176,15 @@ For each returned entry, compute:
 
 - `advances_to_phase_4 = (score >= 45) OR (count(distinct source_families) >= 2)`
 
+**When `score` is null** (§3.3 set it that way after a chunk parse
+failure or a missing-id response): treat `(score >= 45)` as false. The
+auto-graduation clause still runs — a candidate with ≥2 source families
+advances to Phase 4 even with a null score, matching §3.3's stated
+intent. Only candidates that are *both* null-scored and single-family
+take the gate-out branch below; their `reason` write must use the
+descriptive null form (next paragraph), not the bare `$score`
+interpolation.
+
 If `advances_to_phase_4 == true`: leave the candidate's disposition as
 `pending_validation` (the §5.2.1 gate-in parking value). Phase 4 will
 overwrite with the real verdict. Erase the Phase-3 rationale from
@@ -196,15 +205,27 @@ from gate-out findings (`below_gate`, locked). Phase 4 overwrites
 confidence findings are already at `pre_existing_report` from step
 3.1 and skip this read.
 
-If `advances_to_phase_4 == false`: lock in the gate-out state:
+If `advances_to_phase_4 == false`: lock in the gate-out state. Pick the
+`reason=` body based on whether `$score` is non-null:
 
 ```bash
+if [[ "$score" == "null" || -z "$score" ]]; then
+    reason="below validation gate (score unavailable — Phase 3 score missing or unparseable)"
+else
+    reason="below validation gate (score $score)"
+fi
+
 artifact-patch.py \
   --path "$artifact_path" --finding-id "$id" \
   --set disposition=below_gate \
   --set is_actionable=false \
-  --set "reason=below validation gate (score $score)"
+  --set "reason=$reason"
 ```
+
+The null branch keeps the user-visible `reason` field free of raw
+`null` literals and empty parens; the operator can cross-reference
+`trace.md` for whether the cause was a chunk parse failure or a
+missing-id response (both are logged at §3.3).
 
 ### 3.5. Log Phase 3 summary
 
