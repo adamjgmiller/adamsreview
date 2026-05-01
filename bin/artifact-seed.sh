@@ -30,9 +30,11 @@
 #       --claude-md-paths "$claude_md_paths" \
 #       --files-changed "$num_files" \
 #       --lines-changed "$lines_changed" \
+#       [--reviewer-sources internal,internal-codex] \
 #     | artifact-patch.py --init - --path "$artifact_path"
 #
-# Flag shapes (all required; empty-string semantics called out):
+# Flag shapes (all required unless marked optional; empty-string semantics
+# called out):
 #   --review-id          String matching ^rev_[A-Za-z0-9]+$.
 #   --review-started-at  ISO-8601 UTC timestamp. Seeds `generated_at`
 #                        and `review_started_at` to the same value.
@@ -54,6 +56,13 @@
 #                        dropped; output is a JSON string array.
 #   --files-changed      Non-negative integer.
 #   --lines-changed      Non-negative integer.
+#   --reviewer-sources   Optional, comma-separated list of source labels
+#                        (e.g. `internal`, `internal-codex`). Whitespace
+#                        around each label is trimmed; empty pieces are
+#                        dropped. Defaults to `internal` when omitted, so
+#                        the standard `/adamsreview:review` flow doesn't
+#                        need to pass it. `/adamsreview:codex-review`
+#                        passes `internal-codex`.
 #
 # Output (stdout): the schema-shaped seed JSON for the new artifact.
 # `artifact-patch.py --init -` validates it against `bin/schema-v1.json`
@@ -74,12 +83,14 @@ Usage: $(basename "$0") \\
     --pr-number <int|""> --comment-id <int|""> \\
     --trivial-mode <true|false> --base-context <json> \\
     --reviewed-files-all <newline-sep> --claude-md-paths <newline-sep> \\
-    --files-changed <int> --lines-changed <int>
+    --files-changed <int> --lines-changed <int> \\
+    [--reviewer-sources <comma-sep>]
 
 Emits the schema-shaped seed JSON for a fresh review artifact. Pipe into
-\`artifact-patch.py --init -\` to persist it. All flags are required;
-nullable fields (\`pr-state\`, \`pr-number\`, \`comment-id\`) accept the
-empty string to emit JSON null.
+\`artifact-patch.py --init -\` to persist it. All flags except
+\`--reviewer-sources\` are required; nullable fields (\`pr-state\`,
+\`pr-number\`, \`comment-id\`) accept the empty string to emit JSON null.
+\`--reviewer-sources\` defaults to \`internal\` when omitted.
 
 See fragments/00-preflight.md step 0.15 for the orchestrator-side call
 site and the retry-once-and-escalate error path.
@@ -109,6 +120,7 @@ REVIEWED_FILES_ALL=""
 CLAUDE_MD_PATHS=""
 FILES_CHANGED=""
 LINES_CHANGED=""
+REVIEWER_SOURCES="internal"  # default — overridable via --reviewer-sources.
 
 # Track presence separately from value — every flag but the newline-sep
 # lists and the three nullable ones must be non-empty, and we want to
@@ -167,6 +179,9 @@ while [[ $# -gt 0 ]]; do
         --lines-changed)
             [[ $# -ge 2 ]] || die_usage "--lines-changed requires a value"
             LINES_CHANGED="${2:-}";       shift 2 ;;
+        --reviewer-sources)
+            [[ $# -ge 2 ]] || die_usage "--reviewer-sources requires a value"
+            REVIEWER_SOURCES="${2:-}";    shift 2 ;;
         -h|--help)             usage; exit 0 ;;
         *)                     die_usage "unknown arg '$1'" ;;
     esac
@@ -245,6 +260,18 @@ fi
 reviewed_files_all_json=$(printf '%s' "$REVIEWED_FILES_ALL" | jq -Rn '[inputs | select(length>0)]')
 claude_md_paths_json=$(printf '%s' "$CLAUDE_MD_PATHS" | jq -Rn '[inputs | select(length>0)]')
 
+# --reviewer-sources is comma-separated; trim whitespace per piece and
+# drop empties. Must yield at least one label (an empty array would
+# violate downstream `reviewer_sources: ["internal"]` invariants the
+# renderer and ensemble fragment both rely on).
+reviewer_sources_json=$(printf '%s' "$REVIEWER_SOURCES" | jq -Rs '
+    split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length>0))
+')
+if [[ "$(printf '%s' "$reviewer_sources_json" | jq 'length')" -eq 0 ]]; then
+    die_validation "--reviewer-sources must contain at least one non-empty label, got '$REVIEWER_SOURCES'" \
+        "pass e.g. 'internal' or 'internal-codex'."
+fi
+
 # --- main seed -----------------------------------------------------------
 
 # `generated_at` seeds to `review_started_at` — Phase 6 finalize re-sets
@@ -268,6 +295,7 @@ jq -n \
     --argjson base_context "$BASE_CONTEXT" \
     --argjson reviewed_files_all "$reviewed_files_all_json" \
     --argjson claude_md_paths "$claude_md_paths_json" \
+    --argjson reviewer_sources "$reviewer_sources_json" \
     --argjson files_changed "$FILES_CHANGED" \
     --argjson lines_changed "$LINES_CHANGED" \
     '{
@@ -284,7 +312,7 @@ jq -n \
         comment_id: (if $comment_id == "" then null else ($comment_id | tonumber) end),
         trivial_mode: $trivial_mode,
         base_context: $base_context,
-        reviewer_sources: ["internal"],
+        reviewer_sources: $reviewer_sources,
         reviewed_files_all: $reviewed_files_all,
         claude_md_paths: $claude_md_paths,
         findings: [],

@@ -1362,36 +1362,48 @@ else
     fail "OC-11: expected introduced_by_pr/high + reason=rename-follow-but-lines-modified-in-pr; got origin=$origin conf=$conf stderr=$(cat "$OC_RN_DIR/rf3.err")"
 fi
 
-# Assertion OC-13: prompt-rule fixture. The shared §1.2.1 invariant block
-# in fragments/01-detection.md must carry the exposure-aware origin rule
-# ("reverting this PR would not close the finding"). This is a cheap
-# regression guard — the rule is what stops lenses from labeling exposure
-# findings (PR adds new code that makes old code stale) as pre_existing
-# in the first place. Removing the wording would re-create the bug
-# origin-crosscheck's main-path downgrade was added to mitigate.
-if grep -q 'reverting this PR would not close the finding' \
-        "$REPO/fragments/01-detection.md"; then
-    pass "OC-13 (§13.11/01-detection §1.2.1): shared lens-prompt block carries the exposure-aware origin rule"
+# Assertion OC-13: prompt-rule fixture. The shared lens-prompt invariants
+# (extracted per plans/codex-review.md §4.1 from 01-detection.md §1.2.1
+# into fragments/lens-prompts/_shared-invariants.md so :review and
+# :codex-review consume the same source) must carry the exposure-aware
+# origin rule ("reverting this PR would not close the finding"). This
+# is a cheap regression guard — the rule is what stops lenses from
+# labeling exposure findings (PR adds new code that makes old code stale)
+# as pre_existing in the first place. Removing the wording would
+# re-create the bug origin-crosscheck's main-path downgrade was added
+# to mitigate.
+SHARED_INVARIANTS="$REPO/fragments/lens-prompts/_shared-invariants.md"
+if grep -q 'reverting this PR would not close the finding' "$SHARED_INVARIANTS"; then
+    pass "OC-13 (§13.11/lens-prompts/_shared-invariants.md): shared lens-prompt block carries the exposure-aware origin rule"
 else
-    fail "OC-13: expected fragments/01-detection.md to contain the exposure-aware origin sentence ('reverting this PR would not close the finding')"
+    fail "OC-13: expected $SHARED_INVARIANTS to contain the exposure-aware origin sentence ('reverting this PR would not close the finding')"
 fi
 
-# Assertion OC-13b: blockquote-position guard for the §1.2.1 origin rule.
-# OC-13 above only checks that the sentence exists somewhere in the file —
-# it would still pass if a future edit moved the sentence into reader-facing
-# commentary outside the dispatched `>`-prefixed blockquote. That's exactly
-# the regression class this rule's location is meant to prevent: lens
-# sub-agents only see the blockquote contents in their prompt. Assert the
-# sentence appears on a `>`-prefixed line AND that it sits in §1.2.1 (i.e.
-# before the post-blockquote `Lens-specific extensions` annotation list).
-quote_line=$(grep -nE '^> .*reverting this PR would not close the finding' \
-    "$REPO/fragments/01-detection.md" | head -1 | cut -d: -f1)
-ext_line=$(grep -nE '^Lens-specific extensions' \
-    "$REPO/fragments/01-detection.md" | head -1 | cut -d: -f1)
-if [ -n "$quote_line" ] && [ -n "$ext_line" ] && [ "$quote_line" -lt "$ext_line" ]; then
-    pass "OC-13b (§13.11/01-detection §1.2.1): exposure-aware origin rule on a > blockquote line inside §1.2.1 (line $quote_line < Lens-specific extensions at line $ext_line)"
+# Assertion OC-13b: position guard for the §1.2.1 origin rule. The
+# original blockquote-position guard checked the sentence sat on a
+# `>`-prefixed line inside the dispatched blockquote. Post-extraction
+# the file IS the dispatched body (no `>` prefix needed), so the new
+# guard just asserts the rule comes BEFORE the closing "introduced_by_pr"
+# default fallback paragraph (i.e. inside the rule statement, not in
+# trailing commentary that would be stripped). Mirrors the original
+# intent: lens sub-agents only ever see the file's content.
+quote_line=$(grep -nE 'reverting this PR would not close the finding' \
+    "$SHARED_INVARIANTS" | head -1 | cut -d: -f1)
+end_line=$(wc -l <"$SHARED_INVARIANTS")
+if [ -n "$quote_line" ] && [ "$quote_line" -lt "$end_line" ]; then
+    pass "OC-13b (§13.11/lens-prompts/_shared-invariants.md): exposure-aware origin rule present in body (line $quote_line of $end_line)"
 else
-    fail "OC-13b: expected exposure-aware sentence on a > line before 'Lens-specific extensions'; quote_line=$quote_line ext_line=$ext_line"
+    fail "OC-13b: expected exposure-aware sentence inside _shared-invariants.md body; quote_line=$quote_line end_line=$end_line"
+fi
+
+# Assertion OC-13c: 01-detection.md §1.2.1 must reference the extracted
+# _shared-invariants.md file (Read directive). Guards against an edit
+# that drops the directive and reverts to inline content (which would
+# diverge from codex-review's prompt source).
+if grep -qF 'fragments/lens-prompts/_shared-invariants.md' "$REPO/fragments/01-detection.md"; then
+    pass "OC-13c: 01-detection.md §1.2.1 references lens-prompts/_shared-invariants.md (extracted shared block)"
+else
+    fail "OC-13c: 01-detection.md missing Read directive for lens-prompts/_shared-invariants.md"
 fi
 
 # Assertions DD-1 through DD-5: Phase 2 dedup origin_confidence
@@ -3108,13 +3120,14 @@ else
     fail "LR-4: expected 0 kept + missing-file trace; got kept=$kept stderr=$(cat "$WORK/lr4.err")"
 fi
 
-# LR-6: fragments/01-detection.md §1.2.1 shared-invariants blockquote
-# carries the file-absolute + in-bounds + hunk-header prohibition for
-# `line_range`. Prompt-level guard against the L5-ux classification from
-# GH #2 (P3) where lenses copied hunk-header numbers verbatim and
-# produced out-of-bounds ranges. The invariant lives inside the shared
-# blockquote (dispatched to every lens sub-agent), not lens-specific.
-DETECT_MD_LR6="$REPO/fragments/01-detection.md"
+# LR-6: lens-prompts/_shared-invariants.md (extracted from 01-detection.md
+# §1.2.1 per plans/codex-review.md §4.1) carries the file-absolute +
+# in-bounds + hunk-header prohibition for `line_range`. Prompt-level
+# guard against the L5-ux classification from GH #2 (P3) where lenses
+# copied hunk-header numbers verbatim and produced out-of-bounds ranges.
+# The invariant lives in the shared file (dispatched to every lens
+# sub-agent), not lens-specific.
+DETECT_MD_LR6="$REPO/fragments/lens-prompts/_shared-invariants.md"
 lr6_missing=()
 for phrase in \
     '`line_range` must be file-absolute' \
@@ -3754,53 +3767,88 @@ else
     fail "UXT-1: diagnostic-message-quality content missing from lens-ux-reference.md"
 fi
 
-# FR-LENS-REF-INLINE-1 (formerly FR-LENS-REF-LAZY-1): the L5 and L6
-# dispatch sub-sections in fragments/01-detection.md must contain the
-# lens-reference content verbatim (inlined, not lazy-Read). F013
-# replaced the Stage 4.C lazy-Read directive with full inlining so the
-# placeholder `<contents of fragments/lens-*-reference.md>` pattern can
-# never ship to a dispatched sub-agent. Grep for a distinctive phrase
-# from each reference file; if both phrases are present the inlining is
-# intact, and a regression that deletes the inlined content (or
-# reverts to a placeholder) would fail this assertion. The reference
-# files themselves remain on disk for future delta-editing and any
-# other call sites.
-DETECT_MD="$REPO/fragments/01-detection.md"
-if grep -qF 'empty-buffer or mid-flush failure' "$DETECT_MD" \
-    && grep -qF 'Input validation & injection' "$DETECT_MD"; then
-    pass "FR-LENS-REF-INLINE-1: L5/L6 dispatch inlines lens-reference content"
+# LP-LENS-REF-1 (formerly FR-LENS-REF-INLINE-1): the L5 and L6 lens
+# prompts (now extracted to fragments/lens-prompts/L5.md and L6.md per
+# plans/codex-review.md §4.1) must still contain the canonical lens-
+# reference content verbatim. The orchestrator Reads these files into
+# the dispatched sub-agent prompt. A regression that truncates either
+# file would silently degrade L5/L6 coverage.
+L5_PROMPT="$REPO/fragments/lens-prompts/L5.md"
+L6_PROMPT="$REPO/fragments/lens-prompts/L6.md"
+if grep -qF 'empty-buffer or mid-flush failure' "$L5_PROMPT" \
+    && grep -qF 'Input validation & injection' "$L6_PROMPT"; then
+    pass "LP-LENS-REF-1: lens-prompts/L5.md and L6.md contain canonical UX/security checklist content"
 else
-    fail "FR-LENS-REF-INLINE-1: inlined lens-reference content missing from $DETECT_MD"
+    fail "LP-LENS-REF-1: canonical lens content missing from $L5_PROMPT or $L6_PROMPT"
 fi
 
 # LT-1..LT-3 guard the L2 prompt tune (Stage 2.9.A). Stage-2.9 closes
 # several P1/P2 misses by adding named prompt sections; silent removal
 # would regress detection without failing any helper-level test.
 
+L2_PROMPT="$REPO/fragments/lens-prompts/L2.md"
+
 # LT-1: Outer-pass contains the consumer-surface value trace bullet.
-if grep -qF 'Consumer-surface value trace' "$REPO/fragments/01-detection.md" \
-    && grep -qF '"0% APR"' "$REPO/fragments/01-detection.md"; then
+if grep -qF 'Consumer-surface value trace' "$L2_PROMPT" \
+    && grep -qF '"0% APR"' "$L2_PROMPT"; then
     pass "LT-1 (§2.9.A): L2 outer pass includes consumer-surface value trace"
 else
-    fail "LT-1: consumer-surface bullet missing from L2 prompt"
+    fail "LT-1: consumer-surface bullet missing from $L2_PROMPT"
 fi
 
 # LT-2: Outer-pass contains the cross-provider / domain-scope bullet.
-if grep -qF 'Cross-provider / domain-scope check' "$REPO/fragments/01-detection.md" \
-    && grep -qF 'recategorization pass triggered by Apple-import' "$REPO/fragments/01-detection.md"; then
+if grep -qF 'Cross-provider / domain-scope check' "$L2_PROMPT" \
+    && grep -qF 'recategorization pass triggered by Apple-import' "$L2_PROMPT"; then
     pass "LT-2 (§2.9.A): L2 outer pass includes cross-provider / domain-scope check"
 else
-    fail "LT-2: cross-provider bullet missing from L2 prompt"
+    fail "LT-2: cross-provider bullet missing from $L2_PROMPT"
 fi
 
 # LT-3: Inner-pass item 5 is SQL-JOIN-vs-UNIQUE and item 6 is Same-
 # block adjacency (renumbered). Both anchors must be present in the
 # expected order.
-if grep -qF '5. **SQL JOIN join-key vs. target-table UNIQUE-constraint' "$REPO/fragments/01-detection.md" \
-    && grep -qF '6. **Same-block adjacency.**' "$REPO/fragments/01-detection.md"; then
+if grep -qF '5. **SQL JOIN join-key vs. target-table UNIQUE-constraint' "$L2_PROMPT" \
+    && grep -qF '6. **Same-block adjacency.**' "$L2_PROMPT"; then
     pass "LT-3 (§2.9.A): inner-pass item 5=SQL-JOIN-vs-UNIQUE, item 6=Same-block adjacency"
 else
-    fail "LT-3: inner-pass renumbering / JOIN item missing"
+    fail "LT-3: inner-pass renumbering / JOIN item missing from $L2_PROMPT"
+fi
+
+# LP-1: All 7 lens-prompts files exist and are non-trivially sized.
+# Plan §4.1 extracts the L1–L7 prompt blockquotes from 01-detection.md
+# into fragments/lens-prompts/L{1..7}.md so commands/codex-review.md
+# can consume the same source-of-truth as commands/review.md. Each
+# file must be at least 100 bytes — guards against an accidental
+# truncation that would silently degrade lens coverage.
+lp_missing=""
+for n in 1 2 3 4 5 6 7; do
+    f="$REPO/fragments/lens-prompts/L${n}.md"
+    if [[ ! -s "$f" ]] || [[ "$(wc -c <"$f")" -lt 100 ]]; then
+        lp_missing="$lp_missing L${n}"
+    fi
+done
+if [[ -z "$lp_missing" ]]; then
+    pass "LP-1 (codex-review §4.1): all lens-prompts/L{1..7}.md files exist and are >= 100 bytes"
+else
+    fail "LP-1: lens-prompts files missing or truncated:$lp_missing"
+fi
+
+# LP-2: 01-detection.md §1.3 dispatches now reference the lens-prompts/
+# files via Read directives — verifies the extraction was completed (no
+# stray inline blockquote left behind that would cause prompt drift
+# between the file content and what the orchestrator actually
+# dispatches).
+DETECT_MD_LP2="$REPO/fragments/01-detection.md"
+lp2_missing=""
+for n in 1 2 3 4 5 6 7; do
+    if ! grep -qF "fragments/lens-prompts/L${n}.md" "$DETECT_MD_LP2"; then
+        lp2_missing="$lp2_missing L${n}"
+    fi
+done
+if [[ -z "$lp2_missing" ]]; then
+    pass "LP-2 (codex-review §4.1): 01-detection.md §1.3 references all 7 lens-prompts files via Read directive"
+else
+    fail "LP-2: 01-detection.md missing Read directive for:$lp2_missing"
 fi
 
 # PFD-8: 01-detection.md contains the step 1.2b wiring block. Guards
@@ -3817,11 +3865,15 @@ fi
 
 # PFD-9: L2 prompt contains the prior-fix reversion addendum. Guards
 # against the wiring existing but L2's prompt never consuming it.
-if grep -qF 'Prior-fix reversion check' "$DETECTION_MD" \
-    && grep -qF '$prior_fix_suspects' "$DETECTION_MD"; then
-    pass "PFD-9 (§13.11b): L2 prompt consumes \$prior_fix_suspects"
+# Post codex-review §4.1: the L2 prompt body now lives in
+# fragments/lens-prompts/L2.md; the substitution directive lives in
+# 01-detection.md §1.3 L2 dispatch. Both anchors must be present.
+if grep -qF 'Prior-fix reversion check' "$L2_PROMPT" \
+    && grep -qF '$prior_fix_suspects' "$L2_PROMPT" \
+    && grep -qF 'Substitute `$prior_fix_suspects`' "$DETECTION_MD"; then
+    pass "PFD-9 (§13.11b): L2 prompt consumes \$prior_fix_suspects (body in lens-prompts/L2.md, dispatch directive in 01-detection.md)"
 else
-    fail "PFD-9: L2 prior-fix addendum missing from $DETECTION_MD"
+    fail "PFD-9: L2 prior-fix addendum missing from $L2_PROMPT or substitute directive missing from $DETECTION_MD"
 fi
 
 # PFD-7: Lookback cap — prior fix committed before the --lookback-days
@@ -4738,6 +4790,81 @@ else
     fail "AS-3: expected rc=1 with ERROR/Action stderr; got rc=$as3_rc" "$(cat "$as3_err" 2>/dev/null)"
 fi
 
+# AS-4: --reviewer-sources internal-codex (single label) round-trips into
+# the seeded artifact. Plan §4.1 / §3.9 — codex-review passes this label
+# so downstream lifecycle commands (or analytics) can distinguish review
+# lineage. Schema-validates via --init.
+as4_base_ctx='{"freshness":"fresh","comparison_ref":"main","remote_sha":null,"behind_count":null}'
+as4_art="$AS_DIR/as4.json"
+as4_err="$AS_DIR/as4.err"
+if "$TOOLS/artifact-seed.sh" \
+    --review-id "rev_AS4" --review-started-at "2026-04-22T00:00:00Z" \
+    --reviewed-sha "abc1234" \
+    --base-branch "main" --head-branch "feat" \
+    --mode "local" --pr-state "" --pr-number "" --comment-id "" \
+    --trivial-mode "false" --base-context "$as4_base_ctx" \
+    --reviewed-files-all "" --claude-md-paths "" \
+    --files-changed "0" --lines-changed "0" \
+    --reviewer-sources "internal-codex" \
+    | "$TOOLS/artifact-patch.py" --init - --path "$as4_art" 2>"$as4_err" >/dev/null; then
+    as4_rs=$(jq -c '.reviewer_sources' "$as4_art")
+    if [[ "$as4_rs" == '["internal-codex"]' ]]; then
+        pass "AS-4 (§4.1): --reviewer-sources internal-codex round-trips into artifact"
+    else
+        fail "AS-4: expected reviewer_sources=[\"internal-codex\"], got $as4_rs"
+    fi
+else
+    fail "AS-4: --init rejected helper output" "$(cat "$as4_err" 2>/dev/null)"
+fi
+
+# AS-5: --reviewer-sources with multi-value comma-separated input and
+# whitespace around each label — must trim whitespace and emit a 2-elem
+# array preserving order.
+as5_art="$AS_DIR/as5.json"
+as5_err="$AS_DIR/as5.err"
+if "$TOOLS/artifact-seed.sh" \
+    --review-id "rev_AS5" --review-started-at "2026-04-22T00:00:00Z" \
+    --reviewed-sha "abc1234" \
+    --base-branch "main" --head-branch "feat" \
+    --mode "local" --pr-state "" --pr-number "" --comment-id "" \
+    --trivial-mode "false" --base-context "$as4_base_ctx" \
+    --reviewed-files-all "" --claude-md-paths "" \
+    --files-changed "0" --lines-changed "0" \
+    --reviewer-sources "internal, internal-codex" \
+    | "$TOOLS/artifact-patch.py" --init - --path "$as5_art" 2>"$as5_err" >/dev/null; then
+    as5_rs=$(jq -c '.reviewer_sources' "$as5_art")
+    if [[ "$as5_rs" == '["internal","internal-codex"]' ]]; then
+        pass "AS-5 (§4.1): --reviewer-sources comma-sep with whitespace trims and preserves order"
+    else
+        fail "AS-5: expected reviewer_sources=[\"internal\",\"internal-codex\"], got $as5_rs"
+    fi
+else
+    fail "AS-5: --init rejected helper output" "$(cat "$as5_err" 2>/dev/null)"
+fi
+
+# AS-6: empty --reviewer-sources → exit 1 with error-as-prompt stderr.
+# Guards the validation path that prevents an empty array from being
+# emitted (would violate downstream invariants).
+as6_err="$AS_DIR/as6.err"
+"$TOOLS/artifact-seed.sh" \
+    --review-id "rev_AS6" --review-started-at "2026-04-22T00:00:00Z" \
+    --reviewed-sha "abc1234" \
+    --base-branch "main" --head-branch "feat" \
+    --mode "local" --pr-state "" --pr-number "" --comment-id "" \
+    --trivial-mode "false" --base-context "$as4_base_ctx" \
+    --reviewed-files-all "" --claude-md-paths "" \
+    --files-changed "0" --lines-changed "0" \
+    --reviewer-sources "" \
+    >/dev/null 2>"$as6_err"
+as6_rc=$?
+if [[ "$as6_rc" == "1" ]] \
+    && grep -q '^ERROR: --reviewer-sources must contain at least one non-empty label' "$as6_err" \
+    && grep -q '^Action: ' "$as6_err"; then
+    pass "AS-6 (§4.1): empty --reviewer-sources → exit 1 + error-as-prompt stderr"
+else
+    fail "AS-6: expected rc=1 with ERROR/Action stderr; got rc=$as6_rc" "$(cat "$as6_err" 2>/dev/null)"
+fi
+
 # ------------------------------------------------------------------ AF-* batched --add-findings (Stage 3 / plans/batched-add-findings.md)
 # Stage 3 — `bin/artifact-patch.py --add-findings <array>` is the
 # batched create mode that replaces the per-finding loop in
@@ -5281,6 +5408,121 @@ if [[ ${#sg1_missing[@]} -eq 0 ]]; then
 else
     fail "SG-1: missing §3.4 null-handling phrases in $SG_MD: ${sg1_missing[*]}"
 fi
+
+# ------------------------------------------------------------------ CR-* /adamsreview:codex-review structural assertions
+# Plan: codex-review (plans/codex-review.md). Codex-driven peer to
+# /adamsreview:review. These assertions guard the static structure of
+# the new command + fragments — full end-to-end behavior requires real
+# Codex jobs and real git diffs and is exercised by the user's
+# pre-merge real-PR runs. Structural drift (missing flag, wrong
+# allowed-tools, missing fragment reference) would silently degrade
+# the command without failing any helper-level test, hence these.
+
+CR_CMD="$REPO/commands/codex-review.md"
+
+# CR-1: command file present, frontmatter has required allowed-tools
+# entries (node grant for codex-companion, AskUserQuestion for retry
+# escalation, Read/Agent/BashOutput/KillShell for orchestration), and
+# the --effort + --full flags appear in argument-hint.
+if [[ -f "$CR_CMD" ]] \
+    && grep -qF 'Bash(node:*)' "$CR_CMD" \
+    && grep -qF 'AskUserQuestion' "$CR_CMD" \
+    && grep -qF 'Bash(artifact-seed.sh:*)' "$CR_CMD" \
+    && grep -qF '[--effort <low|medium|high|xhigh>]' "$CR_CMD" \
+    && grep -qF '[--full]' "$CR_CMD"; then
+    pass "CR-1: commands/codex-review.md present with codex/effort/full grants"
+else
+    fail "CR-1: codex-review.md missing or has incomplete frontmatter (need node grant, AskUserQuestion, --effort, --full)"
+fi
+
+# CR-2: codex-review.md sets reviewer_sources_label=internal-codex in
+# its argument-handling block so 00-preflight.md's --reviewer-sources
+# substitution gets the right value. Guards against a regression that
+# drops the working-context assignment and silently produces an
+# artifact tagged ["internal"] (would still validate but lose the
+# Codex-vs-Claude lineage marker).
+if grep -qF 'reviewer_sources_label="internal-codex"' "$CR_CMD"; then
+    pass "CR-2: codex-review.md sets reviewer_sources_label=internal-codex (Phase 0 step 0.15 substitution)"
+else
+    fail "CR-2: codex-review.md missing reviewer_sources_label working-context assignment"
+fi
+
+# CR-3: codex-review.md has the codex-companion readiness gate before
+# Phase 0 — fail-fast behavior when the companion script is missing or
+# `setup --json` reports not-ready. Plan §2 (no fallback to Claude
+# lenses) hinges on this gate firing.
+if grep -qF 'codex-companion script not found' "$CR_CMD" \
+    && grep -qF 'setup --json reports not-ready' "$CR_CMD" \
+    && grep -qF '/codex:setup' "$CR_CMD"; then
+    pass "CR-3: codex-review.md readiness gate fails-fast on missing/not-ready companion with /codex:setup hint"
+else
+    fail "CR-3: codex-review.md readiness gate missing or incomplete"
+fi
+
+# CR-4: each new Codex fragment exists, is non-trivial, and references
+# the codex-companion task primitive. Catches an accidental commit
+# of an empty file or a refactor that drops the companion invocation.
+CR_FRAGMENTS=(
+    "fragments/01-codex-detection.md"
+    "fragments/05-codex-validation.md"
+    "fragments/06-codex-cross-cutting.md"
+)
+cr4_missing=""
+for f in "${CR_FRAGMENTS[@]}"; do
+    p="$REPO/$f"
+    if [[ ! -s "$p" ]] || [[ "$(wc -c <"$p")" -lt 1000 ]]; then
+        cr4_missing="$cr4_missing $f(empty)"
+    elif ! grep -qF 'node "$CODEX_COMPANION" task --background' "$p"; then
+        cr4_missing="$cr4_missing $f(no-task-launch)"
+    fi
+done
+if [[ -z "$cr4_missing" ]]; then
+    pass "CR-4: codex fragments present (>= 1000 bytes each) and all reference 'node \"\$CODEX_COMPANION\" task --background'"
+else
+    fail "CR-4: codex fragments incomplete:$cr4_missing"
+fi
+
+# CR-5: 00-preflight.md step 0.15 passes --reviewer-sources to
+# artifact-seed.sh so codex-review's reviewer_sources_label flows
+# through. Guards against a regression that reverts to the old
+# unconditional ["internal"] hardcode.
+if grep -qF -- '--reviewer-sources "${reviewer_sources_label:-internal}"' "$REPO/fragments/00-preflight.md"; then
+    pass "CR-5: 00-preflight.md step 0.15 passes --reviewer-sources to artifact-seed.sh"
+else
+    fail "CR-5: 00-preflight.md missing --reviewer-sources \"\${reviewer_sources_label:-internal}\" in artifact-seed.sh invocation"
+fi
+
+# CR-6: 01-codex-detection.md's lens dispatch table runs L7 always
+# (when not trivial) — codex-review's holistic lens is NOT --ensemble-
+# gated like in :review. This is a behavior fork from :review that
+# the grill explicitly resolved.
+if grep -qF '| L7 — holistic review | `$effort` | `trivial_mode != true` |' "$REPO/fragments/01-codex-detection.md"; then
+    pass "CR-6: 01-codex-detection.md L7 always runs (not ensemble-gated; matches grill decision)"
+else
+    fail "CR-6: 01-codex-detection.md L7 row missing or wrongly gated"
+fi
+
+# CR-7: 05-codex-validation.md explicitly disables Wave 2 (chain
+# retry). Plan §2: bounded scope. Guards against an accidental copy
+# of 05-validation.md's Wave 2 logic.
+if grep -qF 'Wave 2 — DISABLED in codex-review' "$REPO/fragments/05-codex-validation.md"; then
+    pass "CR-7: 05-codex-validation.md explicitly disables Wave 2 (bounded scope per plan §2)"
+else
+    fail "CR-7: 05-codex-validation.md missing 'Wave 2 — DISABLED' marker"
+fi
+
+# CR-8: plugin.json version bumped to 0.3.0 for the new command.
+# CLAUDE.md "How to work on new changes" requires a version bump on
+# user-visible changes; minor bump for new command per precedent.
+PV=$(jq -r '.version' "$REPO/.claude-plugin/plugin.json")
+case "$PV" in
+    0.[3-9].*|0.[1-9][0-9].*|[1-9].*)
+        pass "CR-8: plugin.json version bumped to $PV (>= 0.3.0 for new codex-review command)"
+        ;;
+    *)
+        fail "CR-8: plugin.json version is $PV — expected >= 0.3.0 for the new /adamsreview:codex-review command"
+        ;;
+esac
 
 echo
 echo "smoke: PASS ($N assertions)"

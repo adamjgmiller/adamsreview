@@ -437,6 +437,7 @@ artifact-seed.sh \
   --reviewed-files-all "$reviewed_files_all" \
   --claude-md-paths "$claude_md_paths" \
   --files-changed "$num_files" --lines-changed "$lines_changed" \
+  --reviewer-sources "${reviewer_sources_label:-internal}" \
   | artifact-patch.py --init - --path "$artifact_path"
 ```
 
