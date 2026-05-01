@@ -114,12 +114,24 @@ node "$CODEX_COMPANION" task --background --effort "$effort" \
     --prompt-file "$prompt_file" --json
 ```
 
-Capture `xc_job_id`. Poll via `node "$CODEX_COMPANION" status
-"$xc_job_id" --json | jq -r '.state'`. Once terminal, fetch:
+Capture `xc_job_id` from `.jobId`:
+
+```bash
+xc_job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
+    --prompt-file "$prompt_file" --json | jq -r '.jobId')
+```
+
+Poll via `node "$CODEX_COMPANION" status "$xc_job_id" --json |
+jq -r '.job.status'` (terminal: `completed` | `failed` | `cancelled`).
+Once terminal, fetch and pluck:
 
 ```bash
 node "$CODEX_COMPANION" result "$xc_job_id" --json \
     > "/tmp/adams-review-codex-${review_id}-XC.out.json"
+
+xc_codex_output=$(jq -r '
+    .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
+' "/tmp/adams-review-codex-${review_id}-XC.out.json")
 ```
 
 #### 5.2.3. Adaptive retry-with-judgment
@@ -153,7 +165,7 @@ into the structured shape:
 > **Codex output (freeform):**
 >
 > ```
-> <contents of XC.out.json's `.output` field>
+> $xc_codex_output
 > ```
 >
 > **Valid finding ids in this run:** `<comma-separated ids from xc_input_json>`

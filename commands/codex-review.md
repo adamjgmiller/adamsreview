@@ -77,12 +77,16 @@ node "$CODEX_COMPANION" task --background --effort "$effort" \
     --prompt-file "/tmp/adams-review-codex-<review_id>-<slot>.md"
 ```
 
-The companion returns immediately with a `job_id`. Poll via
-`node "$CODEX_COMPANION" status <job_id> --json` (filter `.state` for
-terminal status), fetch via `node "$CODEX_COMPANION" result <job_id>
---json` (filter `.output` for stdout). Launch ALL jobs in a phase
-within a SINGLE orchestrator turn so they run concurrently. Polling
-happens on subsequent turns.
+The companion returns the launch payload on stdout (extract the id
+with `jq -r '.jobId'`). Poll via `node "$CODEX_COMPANION" status
+<jobId> --json` and read the terminal state from `.job.status`
+(values: `queued` | `running` | `completed` | `failed` | `cancelled`).
+Fetch the freeform output via `node "$CODEX_COMPANION" result <jobId>
+--json` and read it from `.storedJob.payload.rawOutput`
+(fallback to `.storedJob.rawOutput` if the payload object isn't
+populated, e.g. on a partial-failure record). Launch ALL jobs in a
+phase within a SINGLE orchestrator turn so they run concurrently;
+polling happens on subsequent turns.
 
 `CODEX_COMPANION` is discovered the same way as in
 `fragments/01-detection.md` step 1.2a — see that block for the

@@ -70,9 +70,30 @@ files now (extracted per `plans/codex-review.md` §4.1 so
 
 Shared invariants: Read `fragments/lens-prompts/_shared-invariants.md`
 — its content is the shared block prepended to every lens's prompt
-body verbatim. Prose outside the file (headings, annotations,
-commentary) is for the fragment reader, **NOT dispatched** — any
-directive the sub-agent must follow has to live inside the file.
+body. Prose outside the file (headings, annotations, commentary) is
+for the fragment reader, **NOT dispatched** — any directive the
+sub-agent must follow has to live inside the file.
+
+**Substitute orchestrator-context placeholders before dispatch.** The
+file content carries literal `$comparison_ref` (the diff range — set
+in Phase 0 step 0.2a) and `$reviewed_sha` (the reviewed file SHA — set
+in Phase 0 step 0.10) tokens that must resolve to their working-context
+values BEFORE the prompt reaches the sub-agent. (Pre-Round-1 the
+invariants were inlined here; the orchestrator's implicit
+working-context-variable substitution covered them. Post-extraction
+the file content is opaque, so the substitution must be explicit, the
+same way `fragments/01-codex-detection.md` §1.2c handles it.)
+
+```bash
+shared_invariants_body="${shared_invariants_body//\$comparison_ref/$comparison_ref}"
+shared_invariants_body="${shared_invariants_body//\$reviewed_sha/$reviewed_sha}"
+```
+
+The lens-body files (`fragments/lens-prompts/L<N>.md`) are read at
+each lens's dispatch step (1.3). L2's body carries `$prior_fix_suspects`,
+L3's and L5's bodies carry `$claude_md_paths` — substitute these the
+same way before dispatch (the lens dispatch sub-sections below remind
+you per-lens).
 
 Lens-specific extensions the shared block does **not** cover (keep
 inline in each lens sub-section):

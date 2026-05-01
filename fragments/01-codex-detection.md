@@ -15,7 +15,7 @@ This fragment is the codex-review counterpart to `fragments/01-detection.md`.
 Where the canonical fragment dispatches 6–7 Claude `Agent` blocks (one per
 lens), this fragment dispatches 7 parallel **Codex jobs** via the
 `codex-companion.mjs` plugin's `task --background` primitive — captures
-each `job_id`, polls to terminal, fetches the freeform output, and feeds
+each `jobId`, polls to terminal, fetches the freeform output, and feeds
 all 7 outputs into one **Sonnet normalizer** that emits the standard
 candidate JSON shape.
 
@@ -194,40 +194,52 @@ node "$CODEX_COMPANION" task --background --effort "$effort" \
     --json
 ```
 
-The companion returns a JSON line on stdout containing the `job_id`
-(and other metadata). Capture the job_id into a working-context map
-keyed by lens slot:
+The companion returns a JSON launch payload on stdout. Extract the id
+with `jq -r '.jobId'` and capture into a working-context map keyed by
+lens slot:
+
+```bash
+codex_job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
+    --prompt-file "/tmp/adams-review-codex-${review_id}-L${N}.md" \
+    --json | jq -r '.jobId')
+```
+
+Working-context map shape:
 
 ```
 codex_job_ids = {
-  "L1": "job_<id>",
-  "L2": "job_<id>",
+  "L1": "<jobId>",
+  "L2": "<jobId>",
   ...
 }
 ```
 
 Skipped lenses are absent from the map. Lenses that fail the launch
-itself (codex-companion exit != 0) are logged to `trace.md` with tag
-`phase_1_codex_launch_failed:L<N>` and dropped from the map; they
-proceed to the §1.4 retry-or-escalate path with a synthetic "launch
-failed" status.
+itself (codex-companion exit != 0, or `.jobId` empty) are logged to
+`trace.md` with tag `phase_1_codex_launch_failed:L<N>` and dropped
+from the map; they proceed to the §1.4 retry-or-escalate path with a
+synthetic "launch failed" status.
 
-**Tracking**: every lens that successfully receives a `job_id` joins
+**Tracking**: every lens that successfully receives a `jobId` joins
 the `codex_job_ids` map; this is the working-context source of truth
 for what's in flight. The §1.6 summary's `lenses_run` and
 `lenses_dropped` lists are filled in across §1.4 as jobs resolve.
 
 ### 1.4. Poll the Codex jobs (subsequent orchestrator turns)
 
-For each `job_id` in the map, poll via:
+For each `jobId` in the map, poll via:
 
 ```bash
-node "$CODEX_COMPANION" status "$job_id" --json | jq -r '.state'
+node "$CODEX_COMPANION" status "$job_id" --json | jq -r '.job.status'
 ```
 
 Terminal states: `completed`, `failed`, `cancelled`. Non-terminal:
-`pending`, `running`. Poll all jobs in one orchestrator turn (multiple
-Bash blocks, each polling a different job) until all are terminal.
+`queued`, `running`. (The companion's status state field is
+`.job.status` on the snapshot — NOT a top-level `.state`. Verified
+against `~/.claude/plugins/.../scripts/codex-companion.mjs`'s
+`buildSingleJobSnapshot`.) Poll all jobs in one orchestrator turn
+(multiple Bash blocks, each polling a different job) until all are
+terminal.
 
 A reasonable polling cadence is one full sweep per orchestrator turn
 with no explicit sleep between turns — Claude Code's turn cadence
@@ -238,11 +250,20 @@ candidate for the retry-or-escalate path.
 When a job reaches a terminal state, fetch its output:
 
 ```bash
-node "$CODEX_COMPANION" result "$job_id" --json > "/tmp/adams-review-codex-${review_id}-L${N}.out.json"
+node "$CODEX_COMPANION" result "$job_id" --json \
+    > "/tmp/adams-review-codex-${review_id}-L${N}.out.json"
+
+codex_output_L<N>=$(jq -r '
+    .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
+' "/tmp/adams-review-codex-${review_id}-L${N}.out.json")
 ```
 
-The `.output` field of the result is the freeform Codex stdout (the
-review text). Capture it as `codex_output_L<N>`.
+The companion's task-mode result emits `{job, storedJob}`; the
+freeform Codex stdout (the review text) lives at
+`.storedJob.payload.rawOutput`. The `// .storedJob.rawOutput //
+""` fallback handles the partial-failure record where the payload
+sub-object isn't populated (Codex erred mid-task). Capture as
+`codex_output_L<N>`.
 
 #### Retry-with-orchestrator-judgment (per plan §3.7)
 
@@ -254,7 +275,7 @@ the orchestrator inspects the failure context and decides:
 1. **Likely transient** (rate limit, transient API error, single-output
    JSON glitch, sentinel mismatch): retry up to **3 times** with the
    same prompt file. Re-launch via `task --background --effort
-   "$effort" --prompt-file "$prompt_file"`, capture the new job_id, poll
+   "$effort" --prompt-file "$prompt_file"`, capture the new jobId, poll
    again.
 2. **Persistent or fundamental** (3 retries with the same failure mode,
    or a clear structural error like "prompt file unreadable"): treat as
