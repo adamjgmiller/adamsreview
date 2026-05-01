@@ -208,9 +208,26 @@ Same pattern as `fragments/06-cross-cutting.md` §5.3 step 2 onwards.
 Parse the shape-fixer's response, extract `.cross_cutting_groups`,
 write to a tmpfile, apply via `artifact-patch.py --set-json`:
 
+Mirror `fragments/06-cross-cutting.md` §5.3's pluck — accept either
+the envelope (with `.cross_cutting_groups`) or a bare groups array.
+The shape-fixer's prompt asks for the envelope, but a Sonnet that
+returns just the array shouldn't lose its work. The `// .` fallback
+is the same shape :review uses; `// []` would silently zero-out a
+valid bare-array response.
+
 ```bash
-jq -c '.cross_cutting_groups // []' <<<"$xc_response_json" \
+jq -c '.cross_cutting_groups // .' <<<"$xc_response_json" \
     > "/tmp/adams-review-ccg-$review_id.json"
+
+# Defensive type-guard: if neither path produced an array (e.g. the
+# shape-fixer emitted a string or object), fall back to [] before
+# applying so artifact-patch.py's set-json doesn't choke on the type
+# mismatch and we still log a clean trace tag.
+if ! jq -e 'type == "array"' "/tmp/adams-review-ccg-$review_id.json" >/dev/null; then
+    printf 'phase_5_codex_groups_unparseable: shape-fixer output not an array; setting to []\n' \
+        >> "$trace_log_path"
+    echo '[]' > "/tmp/adams-review-ccg-$review_id.json"
+fi
 
 artifact-patch.py \
   --path "$artifact_path" \

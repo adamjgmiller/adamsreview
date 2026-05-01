@@ -468,6 +468,37 @@ Use `--lane light` for light-lane tuples. Iterate over EACH light-lane
 chunk's tuple array element-by-element (do NOT pipe the whole array
 through the helper — exit 2 on non-object input).
 
+**Project the canonical object to the allowed tuple keys before adding
+to the batch.** `parse-validator-result.py`'s canonical output includes
+`related_candidates_to_investigate` (deep-lane passthrough), `notes`,
+and `confirmed_strength` at the top level — all three are NOT in
+`artifact-patch.py --apply-decisions`'s `ALLOWED_DECISION_TUPLE_KEYS`,
+and feeding them through unchanged halts the batch with an unknown-key
+error. Project explicitly:
+
+```bash
+tuple=$(jq -nc \
+    --arg id "$finding_id" \
+    --argjson canon "$canon" '
+  {
+    id: $id,
+    score_phase4:        $canon.score_phase4,
+    decision:            $canon.decision,
+    actionability:       $canon.actionability,
+    validation_result:   $canon.validation_result,
+    reason:              ($canon.notes // null)   # canonical "notes" -> tuple "reason"
+  }
+')
+```
+
+The mapping `notes -> reason` follows `fragments/05-validation.md`
+§4.4 ("The helper's `notes` field flows into the tuple's `reason`
+when the validator didn't supply one — preserving the scale-inference
+audit trail in the persisted finding"). `confirmed_strength` is dropped
+because `--apply-decisions` derives it from score; passing it through
+would conflict with the helper's derivation. `related_candidates_to_investigate`
+is dropped per Wave 2 being disabled in codex-review (§4.5).
+
 Recovery paths for `--apply-decisions` non-zero exit codes (6 expected-
 mismatch, 1 per-tuple validation, etc.) are identical to
 `fragments/05-validation.md` §4.4. Re-dispatch the missing/invalid

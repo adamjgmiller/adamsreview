@@ -373,7 +373,8 @@ log-tokens.sh \
 
 ### 1.5.1. Parse + repair + schema-guard
 
-Pipe `$normalizer_output` through `parse-with-repair.py`:
+Pipe `$normalizer_output` through `parse-with-repair.py`, then type-guard
+before iterating:
 
 ```bash
 normalizer_clean=$(printf '%s' "$normalizer_output" \
@@ -384,14 +385,31 @@ if [[ -z "$normalizer_clean" ]]; then
         >> "$trace_log_path"
     internal_candidates="[]"
 else
-    # Schema-guard repair for missing location info — schema requires
-    # file non-null and line_range as [int,int] with items >= 1.
-    internal_candidates=$(printf '%s' "$normalizer_clean" | jq -c '
-      [ .[] | . + {
-          file:       (.file // "(unknown)"),
-          line_range: (.line_range // [1,1])
-        } ]
+    # Type-guard the normalizer output. Sonnet sometimes wraps the
+    # array in `{"findings": [...]}` or `{"candidates": [...]}`; pluck
+    # those before iterating. If the result is still not an array,
+    # treat as unparseable rather than letting jq's `[ .[] | ... ]`
+    # crash the phase.
+    normalizer_array=$(printf '%s' "$normalizer_clean" | jq -c '
+      if type == "array" then .
+      elif type == "object" and (.findings | type == "array") then .findings
+      elif type == "object" and (.candidates | type == "array") then .candidates
+      else null end
     ')
+    if [[ "$normalizer_array" == "null" ]] || [[ -z "$normalizer_array" ]]; then
+        printf 'phase_1_codex_normalizer_not_array: normalizer returned non-array (no .findings/.candidates pluck possible); dropping internal candidates\n' \
+            >> "$trace_log_path"
+        internal_candidates="[]"
+    else
+        # Schema-guard repair for missing location info — schema requires
+        # file non-null and line_range as [int,int] with items >= 1.
+        internal_candidates=$(printf '%s' "$normalizer_array" | jq -c '
+          [ .[] | . + {
+              file:       (.file // "(unknown)"),
+              line_range: (.line_range // [1,1])
+            } ]
+        ')
+    fi
 fi
 ```
 
@@ -400,14 +418,18 @@ sentinel applied) so the user knows where the ambiguity came from.
 
 ### 1.5.2. Join + assign IDs + post-processing + batched add-findings
 
-Same shape as `fragments/01-detection.md` §1.5 join step:
+Same shape (and same ordering — IDs are assigned AFTER bad candidates
+are dropped, so no ID gaps remain in the artifact) as
+`fragments/01-detection.md` §1.5 join step:
 
-1. Pass `$internal_candidates` through `assign-finding-ids.sh` to assign
-   monotonic `F0NN` IDs.
-2. Pass through `origin-crosscheck.sh` to blame-correct each candidate's
-   `origin` / `origin_confidence` per §13.11.
-3. Pass through `line-range-check.sh` to drop any line-range
-   hallucinations exceeding the file at `$reviewed_sha`.
+1. Pass `$internal_candidates` through `line-range-check.sh` to drop
+   any line-range hallucinations exceeding the file at `$reviewed_sha`,
+   and any candidates citing files missing in the reviewed tree. Done
+   FIRST so dropped candidates don't consume monotonic IDs.
+2. Pass through `assign-finding-ids.sh` to assign monotonic `F0NN`
+   IDs to the surviving candidates.
+3. Pass through `origin-crosscheck.sh` to blame-correct each
+   candidate's `origin` / `origin_confidence` per §13.11.
 4. Commit via one batched `artifact-patch.py --add-findings <array>`
    call (atomic write across the whole accepted batch).
 
