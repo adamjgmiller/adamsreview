@@ -6,7 +6,7 @@ Read this first on a fresh session. It's procedural (how to work in the repo) pl
 
 ## What this repo is
 
-Build repo for five personal Claude Code slash commands, packaged as a plugin (`adamsreview`) distributable via `/plugin marketplace add`:
+Build repo for six personal Claude Code slash commands, packaged as a plugin (`adamsreview`) distributable via `/plugin marketplace add`:
 
 - **`/adamsreview:review`** — multi-lens code review of a branch or PR (Phases 0–6). Claude sub-agent lenses + Opus deep validators.
 - **`/adamsreview:codex-review`** — Codex-driven counterpart to `:review`. Phases 0/2/3/6 reuse the same fragments; Phase 1 detection runs 7 parallel Codex jobs (L1–L7) feeding one Sonnet normalizer; Phase 4a deep validation runs one Codex per finding + per-finding Sonnet shape-fixer; Phase 4b light is chunked-batch Codex + per-chunk Sonnet shape-fixer; Phase 5 is one Codex pass + one Sonnet shape-fixer. Same artifact schema (`reviewer_sources: ["internal-codex"]`); drop-in for `:fix`, `:add`, `:walkthrough`, `:promote`. No `--ensemble` (purpose-built for Codex purity). Effort tunable via `--effort <low|medium|high|xhigh>` (default `high`). Adaptive retry-with-orchestrator-judgment on Codex job failures; user-prompt escalation when degraded.
@@ -15,7 +15,7 @@ Build repo for five personal Claude Code slash commands, packaged as a plugin (`
 - **`/adamsreview:fix [threshold] [--granular-commits]`** — automated fix loop for auto-fixable findings (Phases 7–9). `--granular-commits` emits one commit per surviving fix group instead of the default single combined commit.
 - **`/adamsreview:promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adamsreview:fix` afterwards to apply. Used internally by `/adamsreview:walkthrough` via `fragments/promote-core.md` + `--defer-publish`.
 
-All five commands are in production. Forward-looking work lives in `plans/backlog.md`; per-stage plans and execution journals live in `plans/` (consult for historical rationale).
+All six commands are in production (`:codex-review` newest — added in v0.3.0). Forward-looking work lives in `plans/backlog.md`; per-stage plans and execution journals live in `plans/` (consult for historical rationale).
 
 **Recommended flow on a non-trivial PR:** `/adamsreview:review` (or `/adamsreview:codex-review` for a Codex-driven peer review) → (optional) `/adamsreview:add` to inject parallel-review findings → `/adamsreview:walkthrough` (optional) → `/adamsreview:fix`. Each command is independent; `/adamsreview:promote` remains useful for one-off manual promotions outside the walkthrough. `:review` and `:codex-review` are peer entrypoints producing the same artifact shape (distinguished by `reviewer_sources`) — pick one per review session.
 

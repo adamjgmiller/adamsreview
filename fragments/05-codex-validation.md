@@ -81,12 +81,13 @@ Steps:
    grep/read commands), `edge_cases_to_preserve`,
    `what_would_break_if_incomplete`.
 6. **Re-score 0-100** using the §20 rubric — based on what you found.
-7. **Related candidates — sweep actively.** Same-block (±10 lines
-   around the confirmed site) and elsewhere in the traced code path.
-   List in `related_candidates_to_investigate[]`. Do NOT investigate
-   them yourself — the orchestrator handles that separately (codex-
-   review currently does NOT run a Wave 2 chain — these surface as
-   audit-trail context only).
+7. **Skip the related-candidate sweep for codex-review.** Codex-review
+   has no Wave 2 chain (§4.5), and the apply-decisions tuple shape
+   does not carry `related_candidates_to_investigate`. Don't emit
+   that field. If you notice an adjacent bug that's NOT a separate
+   finding already, mention it inside `validation_result.evidence[]`
+   or `validation_result.blast_radius.parallel_paths[]` — those keys
+   ARE persisted on the artifact and surface in the rendered report.
 
 **Candidate (full stored finding):**
 
@@ -132,15 +133,15 @@ output reduces shape-fixer drift):
   },
   "score_phase4": <0-100>,
   "decision": "confirmed" | "disproven" | "uncertain",
-  "actionability": "auto_fixable" | "manual" | "report_only",
-  "related_candidates_to_investigate": [
-    {"claim": "...", "file": "...", "line_range": [start, end], "rationale": "..."}
-  ]
+  "actionability": "auto_fixable" | "manual" | "report_only"
 }
 ```
 
-If `decision` is `disproven` or `uncertain`, set `validation_result`
-to `null`. Empty arrays ARE acceptable; missing keys are not.
+Do NOT emit a top-level `related_candidates_to_investigate` —
+codex-review has no Wave 2 (§4.5) and the apply-decisions tuple
+schema rejects unknown keys. If `decision` is `disproven` or
+`uncertain`, set `validation_result` to `null`. Empty arrays ARE
+acceptable; missing keys are not.
 PROMPT
 ```
 
@@ -289,14 +290,20 @@ chunk_json=$(jq -nc --argjson cands "$chunk_candidates" '$cands')
 
 prompt_file="/tmp/adams-review-codex-${review_id}-LB-chunk${chunk_n}.md"
 
-cat > "$prompt_file" <<'PROMPT'
+# Use an UNQUOTED heredoc so $trivial_mode expands to its actual value
+# at write time. (A quoted heredoc would emit the literal text
+# "<true|false>" — Codex would not know which trivial_mode posture to
+# enforce, and could emit `auto_fixable` despite the §13.9 contract.)
+# $trivial_mode and $chunk_n are the only orchestrator-context bash
+# variables this heredoc references; everything else is literal.
+cat > "$prompt_file" <<PROMPT
 You are a light confirmation validator. You will return one tuple per
 candidate.
 
-**trivial_mode:** <true|false> (when true, do NOT emit `actionability:
-auto_fixable` for ANY candidate — only `manual` or `report_only`).
+**trivial_mode:** $trivial_mode (when true, do NOT emit \`actionability:
+auto_fixable\` for ANY candidate — only \`manual\` or \`report_only\`).
 
-**Read-only.** Describe any needed change in each candidate's `note`
+**Read-only.** Describe any needed change in each candidate's \`note\`
 field — the fix-application phase later may pick it up. Do NOT write
 to the working tree.
 
@@ -304,9 +311,9 @@ Verify each finding's accuracy: does the CLAUDE.md really contain this
 rule? Does the adjacent comment really conflict? Adjust the per-
 candidate score accordingly.
 
-`actionability: auto_fixable` only for very mechanical rules (import
-ordering, specific constant naming). Judgment calls → `manual`.
-Architecture findings default to `report_only`.
+\`actionability: auto_fixable\` only for very mechanical rules (import
+ordering, specific constant naming). Judgment calls → \`manual\`.
+Architecture findings default to \`report_only\`.
 
 **Use the full 0-100 range.** Do not snap to anchors at 45/60/75 —
 emit values like 65 or 70 between anchors when warranted. Compressed
@@ -474,30 +481,53 @@ to the batch.** `parse-validator-result.py`'s canonical output includes
 and `confirmed_strength` at the top level — all three are NOT in
 `artifact-patch.py --apply-decisions`'s `ALLOWED_DECISION_TUPLE_KEYS`,
 and feeding them through unchanged halts the batch with an unknown-key
-error. Project explicitly:
+error.
+
+There's also a subtlety with `reason`: `apply-decisions` checks
+`if "reason" in tup` (NOT truthiness) — so `reason: ""` short-circuits
+the disposition-appropriate default reason ("disproven by Phase 4",
+"uncertain (Phase 4 inconclusive)"). Only include the key when there's
+actual content. Light lane has an additional preservation step: the
+shape-fixer's prompt asks for `note` (rationale), but
+`parse-validator-result.py` does not preserve raw `note` — its
+canonical `notes` is the parser's own audit trail. Pull `note` from
+the raw shape-fixer output as a fallback.
 
 ```bash
+# Deep lane: $raw is the shape-fixer's single-tuple output; $canon is
+# parse-validator-result.py's canonicalized object.
+# Light lane: $raw is ONE element of the chunk-fixer's array (iterate
+# the array first); $canon is parse-validator-result.py's canonical
+# object for that one element.
 tuple=$(jq -nc \
     --arg id "$finding_id" \
-    --argjson canon "$canon" '
-  {
-    id: $id,
-    score_phase4:        $canon.score_phase4,
-    decision:            $canon.decision,
-    actionability:       $canon.actionability,
-    validation_result:   $canon.validation_result,
-    reason:              ($canon.notes // null)   # canonical "notes" -> tuple "reason"
-  }
+    --argjson canon "$canon" \
+    --argjson raw "$raw" '
+  # Pick the best non-empty rationale: validator-supplied note (light
+  # lane), then parser audit trail (deep + light), else null.
+  ($raw.note // $canon.notes // null) as $rationale
+  | {
+      id: $id,
+      score_phase4:      $canon.score_phase4,
+      decision:          $canon.decision,
+      actionability:     $canon.actionability,
+      validation_result: $canon.validation_result
+    }
+  | if ($rationale | type == "string") and ($rationale | length > 0)
+    then . + {reason: $rationale}
+    else .   # omit reason — let apply-decisions fill the default
+    end
 ')
 ```
 
-The mapping `notes -> reason` follows `fragments/05-validation.md`
-§4.4 ("The helper's `notes` field flows into the tuple's `reason`
-when the validator didn't supply one — preserving the scale-inference
-audit trail in the persisted finding"). `confirmed_strength` is dropped
+The mapping pattern follows `fragments/05-validation.md` §4.4 ("The
+helper's `notes` field flows into the tuple's `reason` when the
+validator didn't supply one — preserving the scale-inference audit
+trail in the persisted finding"). `confirmed_strength` is dropped
 because `--apply-decisions` derives it from score; passing it through
-would conflict with the helper's derivation. `related_candidates_to_investigate`
-is dropped per Wave 2 being disabled in codex-review (§4.5).
+would conflict with the helper's derivation.
+`related_candidates_to_investigate` is dropped per Wave 2 being
+disabled in codex-review (§4.5).
 
 Recovery paths for `--apply-decisions` non-zero exit codes (6 expected-
 mismatch, 1 per-tuple validation, etc.) are identical to
@@ -525,11 +555,14 @@ fi
 ### 4.5. Wave 2 — DISABLED in codex-review
 
 Plan §2 explicitly disables Wave 2 chain-retry on Codex. Skip this
-section entirely — the `related_candidates_to_investigate` arrays
-returned by the deep-lane shape-fixers are preserved on the artifact
-(under `findings[].validation_result.related_candidates_to_investigate`,
-or in the shape-fixer tuple for non-confirmed findings) for audit-trail
-purposes but no follow-up dispatch happens.
+section entirely — there is NO consumer for
+`related_candidates_to_investigate`, and the apply-decisions tuple
+schema does not carry that key. Per §4.2.1 step 7, validators are
+told NOT to emit it; per §4.4's projection, the field is dropped if
+it slips through anyway. Adjacent-bug observations belong inside
+`validation_result.evidence[]` or
+`validation_result.blast_radius.parallel_paths[]`, both of which DO
+land on the artifact.
 
 Log one line:
 
