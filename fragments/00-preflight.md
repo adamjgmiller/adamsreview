@@ -17,8 +17,20 @@ your working context — later phases will reference them by name ("the
 ### 0.1. Resolve argument flags
 
 Parse `$ARGUMENTS` for `--ensemble` and `--full`. Set `ensemble_mode=true/false`
-and `force_full=true/false` in your context. Anything else on the command line
-is unexpected — stop and ask the user to clarify.
+and `force_full=true/false` in your context.
+
+If the top-level command already parsed top-level-only flags into your
+working context BEFORE invoking this fragment (e.g., `effort` from
+`/adamsreview:codex-review --effort high`), trust those values and
+ignore the corresponding tokens in `$ARGUMENTS`. Recognized
+top-level-only flags whose value tokens this step skips silently:
+
+- `--effort <value>` — owned by `/adamsreview:codex-review`'s argument
+  handler; the value is in working-context `effort`.
+
+Any token not recognized as `--ensemble`, `--full`, a top-level-only
+flag (above), or a value following a top-level-only flag is unexpected
+— stop and ask the user to clarify.
 
 ### 0.2. Resolve branch, base, and repo root
 

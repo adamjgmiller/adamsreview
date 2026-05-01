@@ -182,7 +182,9 @@ Shape-fixer prompt essence:
 > <contents of /tmp/.../V-<finding_id>.out.json's `.output` field>
 > ```
 >
-> Emit a single JSON object matching this exact shape:
+> Emit a single JSON object matching this exact shape (these are the
+> ONLY keys the orchestrator's `artifact-patch.py --apply-decisions`
+> accepts — emitting any other top-level key halts the batch):
 >
 > ```
 > {
@@ -190,10 +192,14 @@ Shape-fixer prompt essence:
 >   "score_phase4": <0-100 integer>,
 >   "decision": "confirmed" | "disproven" | "uncertain",
 >   "actionability": "auto_fixable" | "manual" | "report_only",
->   "validation_result": <the structured object below, or null if decision != confirmed>,
->   "related_candidates_to_investigate": [<array of {claim, file, line_range, rationale}>]
+>   "validation_result": <the structured object below, or null if decision != confirmed>
 > }
 > ```
+>
+> Codex-review explicitly disables Wave 2 chain-retry (§4.5), so do
+> NOT emit `related_candidates_to_investigate` — there's no consumer
+> for it and the apply-decisions helper rejects it as an unknown key.
+> Discard any "related candidates" prose from the Codex output.
 >
 > When `decision == "confirmed"`, `validation_result` MUST be the full
 > structured object with these keys (verbatim — `additionalProperties:
@@ -237,8 +243,7 @@ tuple for it:
   "decision": "uncertain",
   "actionability": null,
   "validation_result": null,
-  "reason": "Phase 4a Codex unrecoverable — manual review",
-  "related_candidates_to_investigate": []
+  "reason": "Phase 4a Codex unrecoverable — manual review"
 }
 ```
 

@@ -1,5 +1,16 @@
 ## Phase 1 — Codex detection (codex-review)
 
+Capture `phase_1_start_epoch=$(date +%s)` as the FIRST action of this
+phase (step 1.6 logs the elapsed time). Initialize the tracking
+variables Phase 1's summary will reference:
+
+- `lenses_run=""` — comma-separated list of lens IDs that successfully
+  produced output (filled in across §1.4).
+- `lenses_dropped=""` — comma-separated list of lenses that hit the
+  unrecoverable retry path.
+- `candidate_count=0` — total candidates the normalizer emitted, set
+  after §1.5.2's batched `--add-findings` returns.
+
 This fragment is the codex-review counterpart to `fragments/01-detection.md`.
 Where the canonical fragment dispatches 6–7 Claude `Agent` blocks (one per
 lens), this fragment dispatches 7 parallel **Codex jobs** via the
@@ -101,51 +112,73 @@ On helper non-zero exit, fall back to `[]`.
 
 ### 1.2c. Build the Codex prompt files
 
-For each lens that runs (per step 1.1's selection), construct a prompt
-file at `/tmp/adams-review-codex-<review_id>-L<N>.md`:
+For each lens that runs (per step 1.1's selection), the orchestrator
+assembles a prompt file at `/tmp/adams-review-codex-<review_id>-L<N>.md`.
+Codex's `task --background --prompt-file <path>` reads the file at
+launch time, so it must be on disk before §1.3.
 
-```bash
-shared_invariants=$(cat "$REPO_ROOT/fragments/lens-prompts/_shared-invariants.md")
-lens_body=$(cat "$REPO_ROOT/fragments/lens-prompts/L<N>.md")
-```
+The lens-prompt source files (`fragments/lens-prompts/L<N>.md`,
+`fragments/lens-prompts/_shared-invariants.md`) live in the plugin's
+install directory — NOT in the reviewed repository. Use the **Read
+tool** to load them (it resolves plugin-relative paths the same way
+`Read fragments/01-codex-detection.md` resolved this fragment when the
+top-level command kicked it off). Do NOT use bash `cat` with a
+relative path — bash's cwd is the reviewed repo, so a relative path
+points at the wrong tree, and there's no canonical `$PLUGIN_ROOT`
+shell variable.
 
-(`$REPO_ROOT` is the plugin's worktree root, captured in Phase 0 / from
-`repo-slug.sh`'s sister logic; the orchestrator knows its install path.)
+Per lens that runs, the orchestrator does:
 
-Substitute placeholders in `$lens_body`. Use bash's literal pattern
-substitution `${var//pattern/replacement}` — it does NOT interpret
-special characters in the replacement (unlike `awk gsub` or `sed`,
-which both have escape rules for `&` / `\1` / etc., dangerous when
-the replacement contains commit subjects or arbitrary JSON):
+1. **Read** `fragments/lens-prompts/_shared-invariants.md` once and
+   capture its content as `shared_invariants_body`.
+2. **Read** `fragments/lens-prompts/L<N>.md` and capture as
+   `lens_body_L<N>`.
+3. **Substitute placeholders** in both `shared_invariants_body` and
+   `lens_body_L<N>` against working-context values from Phase 0 + 1.2b.
+   Substitution is literal pattern replacement (no regex; no `&`
+   escape semantics).
 
-- **L2**: replace `$prior_fix_suspects` literal with the JSON array
-  from step 1.2b:
+   In `shared_invariants_body`:
 
-  ```bash
-  lens_body="${lens_body//\$prior_fix_suspects/$prior_fix_suspects}"
-  ```
+   - `$comparison_ref` → working-context `comparison_ref` (Phase 0 step 0.2a).
+   - `$reviewed_sha` → working-context `reviewed_sha` (Phase 0 step 0.10).
 
-- **L3** and **L5**: replace `$claude_md_paths` literal with the
-  newline-joined list from Phase 0 step 0.7:
+   In `lens_body_L<N>`:
 
-  ```bash
-  lens_body="${lens_body//\$claude_md_paths/$claude_md_paths}"
-  ```
+   - **L2 only**: `$prior_fix_suspects` → JSON array from step 1.2b.
+   - **L3, L5 only**: `$claude_md_paths` → newline-joined list from
+     Phase 0 step 0.7.
+   - L1, L4, L6, L7: no per-lens placeholders.
 
-- **L1, L4, L6, L7**: no placeholders to substitute.
+   The orchestrator can perform these substitutions in-context (string
+   replace) before writing — no shell needed. If you DO want a shell
+   one-liner, bash literal substitution is safe (immune to `&` /
+   backreferences, unlike `awk gsub` / `sed`):
 
-Note: the `\$` in the search pattern escapes bash's own `$` expansion
-(we want a literal dollar in the matched string, since the placeholder
-in the file is `$prior_fix_suspects` literally). The replacement side
-is literal — bash doesn't interpret `&` or backreferences there.
+   ```bash
+   shared_invariants_body="${shared_invariants_body//\$comparison_ref/$comparison_ref}"
+   shared_invariants_body="${shared_invariants_body//\$reviewed_sha/$reviewed_sha}"
+   lens_body="${lens_body//\$prior_fix_suspects/$prior_fix_suspects}"  # L2
+   lens_body="${lens_body//\$claude_md_paths/$claude_md_paths}"        # L3, L5
+   ```
 
-Concatenate `<shared invariants>\n\n<substituted lens body>` and write to
-the per-lens prompt file:
+   The `\$` in the search pattern escapes bash's own `$` expansion —
+   the placeholder in the file is the literal four characters `$comparison_ref`.
 
-```bash
-prompt_file="/tmp/adams-review-codex-${review_id}-L${N}.md"
-{ printf '%s\n\n' "$shared_invariants"; printf '%s\n' "$lens_body"; } > "$prompt_file"
-```
+4. **Write** the assembled prompt to
+   `/tmp/adams-review-codex-${review_id}-L<N>.md`. Use the Write tool
+   (orchestrator-side) with the assembled string as `<shared invariants>\n\n<substituted lens body>`,
+   OR use the bash heredoc / printf pattern below:
+
+   ```bash
+   prompt_file="/tmp/adams-review-codex-${review_id}-L${N}.md"
+   { printf '%s\n\n' "$shared_invariants_body"; \
+     printf '%s\n'   "$lens_body"; } > "$prompt_file"
+   ```
+
+   The Write-tool path is preferable — keeps the orchestrator's
+   working-context strings out of bash variable space (no quoting
+   surprises with embedded backslashes, dollar signs, backticks).
 
 ### 1.3. Dispatch the Codex jobs (one orchestrator turn)
 
@@ -175,6 +208,11 @@ itself (codex-companion exit != 0) are logged to `trace.md` with tag
 `phase_1_codex_launch_failed:L<N>` and dropped from the map; they
 proceed to the §1.4 retry-or-escalate path with a synthetic "launch
 failed" status.
+
+**Tracking**: every lens that successfully receives a `job_id` joins
+the `codex_job_ids` map; this is the working-context source of truth
+for what's in flight. The §1.6 summary's `lenses_run` and
+`lenses_dropped` lists are filled in across §1.4 as jobs resolve.
 
 ### 1.4. Poll the Codex jobs (subsequent orchestrator turns)
 
@@ -233,6 +271,16 @@ Options:
 
 If 0 lenses survive, abort automatically (no point asking). On Continue,
 log `phase_1_codex_user_continued: surviving=L1,L3,L4` and proceed.
+
+**Tracking finalize (end of §1.4)**: after all jobs have either
+resolved successfully or been dropped, set:
+
+- `lenses_run` = comma-separated lens IDs whose Codex output was
+  successfully fetched (e.g. `L1,L3,L4,L5,L6,L7`).
+- `lenses_dropped` = comma-separated lens IDs that hit the unrecoverable
+  retry path (e.g. `L2`). Empty string if none.
+
+These feed §1.6's summary line.
 
 ### 1.5. Normalize Codex outputs (single Sonnet sub-agent)
 
@@ -369,6 +417,19 @@ the same join step. The only difference is the candidate origin: instead
 of being pooled from per-lens `Agent` outputs, they come from the
 single combined Sonnet normalizer above. The post-processing chain is
 identical.
+
+**Capture `candidate_count`** after `--add-findings` returns so §1.6's
+log line and `phases.jsonl` record have the right number:
+
+```bash
+candidate_count=$(artifact-read.sh \
+  --path "$artifact_path" \
+  --filter '.findings | length')
+```
+
+(Reads the post-`--add-findings` count rather than the pre-batched
+candidate count, so rejected entries — preflight drops, dedup
+collisions — are excluded.)
 
 ### 1.5.3. Clean up Codex prompt files
 

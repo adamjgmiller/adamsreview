@@ -56,21 +56,35 @@ at least one candidate. Compute it from `findings[].sources[]`:
 
 - `internal` — present when any lens produced a candidate (any
   `sources[]` entry matches `L[0-9]+-.*` — L1–L7 today, forward-compat for future lenses).
+- `internal-codex` — same `L<N>-` lens-tag pattern, but emitted by
+  `/adamsreview:codex-review` rather than `/adamsreview:review`. The
+  seeded artifact (Phase 0 step 0.15) carries this label when the
+  top-level command set `reviewer_sources_label=internal-codex`;
+  preserve it here instead of mapping back to `internal`.
 - adapter names (`codex`, `coderabbit`) — present when any entry
   matches exactly.
 - `external-pr:<bot-login>` — present when any entry starts with
   `external-pr:`.
 
+The L-tag mapping picks `internal` vs `internal-codex` based on the
+seeded value (so codex-review's marker survives the recompute):
+
 ```bash
-reviewer_sources=$(jq -c '
+internal_label=$(jq -r '
+  if (.reviewer_sources // []) | any(. == "internal-codex") then "internal-codex"
+  else "internal" end
+' "$artifact_path")
+
+reviewer_sources=$(jq -c --arg internal "$internal_label" '
   [.findings[] | .sources[]]
   | map(
       # Internal lens tags: L1..L7 today (L7 is the ensemble-gated
       # holistic lens, Stage 2.9.D). Regex is [0-9]+ for forward-
       # compatibility — new L-N lenses slot in without this needing
-      # an update. Any entry that doesn't match falls through to
+      # an update. Map to whichever internal label the seed indicated
+      # ($internal). Any entry that doesn't match falls through to
       # `empty` and gets dropped from the union.
-      if test("^L[0-9]+-") then "internal"
+      if test("^L[0-9]+-") then $internal
       elif . == "codex" or . == "coderabbit" then .
       elif startswith("external-pr:") then .
       else empty end
