@@ -494,15 +494,30 @@ canonical `notes` is the parser's own audit trail. Pull `note` from
 the raw shape-fixer output as a fallback.
 
 ```bash
-# Deep lane: $raw is the shape-fixer's single-tuple output; $canon is
-# parse-validator-result.py's canonicalized object.
-# Light lane: $raw is ONE element of the chunk-fixer's array (iterate
-# the array first); $canon is parse-validator-result.py's canonical
-# object for that one element.
+# $canon is parse-validator-result.py's canonicalized object (already
+# strict JSON). $raw is the shape-fixer's pre-canonicalization output
+# — it may be fenced, prose-wrapped, or otherwise repairable-but-not-
+# strict, so feeding it to jq's --argjson directly would crash the
+# projection (and bypass the per-finding/per-chunk atomicity contract).
+# Repair $raw to strict JSON first; fall back to {} if even repair
+# fails. parse-with-repair.py is the same front-stop
+# parse-validator-result.py uses internally — symmetric handling.
+raw_repaired=$(printf '%s' "$raw" | parse-with-repair.py 2>/dev/null) \
+    || raw_repaired='{}'
+
+# Per-tuple `id`: for the deep lane, $finding_id is the orchestrator-
+# captured id of the single finding this Codex job validated. For the
+# light lane, iterate the chunk array element-by-element FIRST and set
+# `finding_id="$(printf '%s' "$raw_repaired" | jq -r '.id // empty')"`
+# per iteration BEFORE this projection runs — using a stale or
+# orchestrator-fixed $finding_id across chunk elements would
+# duplicate ids and trip apply-decisions's duplicate-id guard. Drop
+# the tuple if `.id` is missing or not in the chunk's expected id set.
+
 tuple=$(jq -nc \
     --arg id "$finding_id" \
     --argjson canon "$canon" \
-    --argjson raw "$raw" '
+    --argjson raw "$raw_repaired" '
   # Pick the best non-empty rationale: validator-supplied note (light
   # lane), then parser audit trail (deep + light), else null.
   ($raw.note // $canon.notes // null) as $rationale

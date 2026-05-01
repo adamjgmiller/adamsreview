@@ -166,9 +166,11 @@ Per lens that runs, the orchestrator does:
    the placeholder in the file is the literal four characters `$comparison_ref`.
 
 4. **Write** the assembled prompt to
-   `/tmp/adams-review-codex-${review_id}-L<N>.md`. Use the Write tool
-   (orchestrator-side) with the assembled string as `<shared invariants>\n\n<substituted lens body>`,
-   OR use the bash heredoc / printf pattern below:
+   `/tmp/adams-review-codex-${review_id}-L<N>.md`. Use the bash
+   `printf` pattern (the Write tool is NOT in
+   `commands/codex-review.md`'s `allowed-tools` grant — recommending
+   it would trip the runtime's tool-permission check before any Codex
+   job launches):
 
    ```bash
    prompt_file="/tmp/adams-review-codex-${review_id}-L${N}.md"
@@ -176,9 +178,10 @@ Per lens that runs, the orchestrator does:
      printf '%s\n'   "$lens_body"; } > "$prompt_file"
    ```
 
-   The Write-tool path is preferable — keeps the orchestrator's
-   working-context strings out of bash variable space (no quoting
-   surprises with embedded backslashes, dollar signs, backticks).
+   `printf '%s'` (NOT `echo`) is required when the body content may
+   contain backslashes — `echo` collapses them under zsh / dash /
+   `xpg_echo`, mangling JSON escape sequences embedded in the prompt
+   (CLAUDE.md operational rule 12).
 
 ### 1.3. Dispatch the Codex jobs (one orchestrator turn)
 

@@ -92,7 +92,7 @@ reviewer_sources=$(jq -c --arg internal "$internal_label" '
   | unique
 ' "$artifact_path")
 
-echo "$reviewer_sources" > "/tmp/adams-review-rs-$review_id.json"
+printf '%s\n' "$reviewer_sources" > "/tmp/adams-review-rs-$review_id.json"
 artifact-patch.py \
   --path "$artifact_path" \
   --set-json "reviewer_sources=@/tmp/adams-review-rs-$review_id.json"
