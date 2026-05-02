@@ -574,19 +574,26 @@ findings; do NOT lower `--expected`.
 
 ### 4.4.5. Tree-cleanliness sweep
 
-Identical to `fragments/05-validation.md` §4.4.5. Codex jobs are
+Identical to `fragments/05-validation.md` §4.4.5 — including the
+`pre_validator_clean` gate that protects user-included uncommitted
+work when Phase 0 step 0.8 option 2 was chosen. Codex jobs are
 launched read-only by virtue of their prompt; this sweep is the
 belt-and-braces guard. Run after `--apply-decisions` returns:
 
 ```bash
-dirty=$(git -C "$repo_root" status --porcelain -- . ':!.claude/' 2>/dev/null)
-if [[ -n "$dirty" ]]; then
-    printf 'phase_4_tree_dirty_reverted: %s\n' \
-        "$(printf '%s\n' "$dirty" | awk '{print $2}' | paste -sd, -)" \
+if [[ "$pre_validator_clean" == "true" ]]; then
+    dirty=$(git -C "$repo_root" status --porcelain -- . ':!.claude/' 2>/dev/null)
+    if [[ -n "$dirty" ]]; then
+        printf 'phase_4_tree_dirty_reverted: %s\n' \
+            "$(printf '%s\n' "$dirty" | awk '{print $2}' | paste -sd, -)" \
+            >> "$trace_log_path"
+        git -C "$repo_root" checkout -- . ':!.claude/' 2>/dev/null || true
+        printf '%s\n' "$dirty" | awk '/^\?\?/ {print $2}' \
+            | while IFS= read -r p; do rm -f "$repo_root/$p"; done
+    fi
+else
+    printf 'phase_4_tree_dirty_sweep_skipped: pre-existing dirty tree (user opted to include uncommitted; preserved)\n' \
         >> "$trace_log_path"
-    git -C "$repo_root" checkout -- . ':!.claude/' 2>/dev/null || true
-    printf '%s\n' "$dirty" | awk '/^\?\?/ {print $2}' \
-        | while IFS= read -r p; do rm -f "$repo_root/$p"; done
 fi
 ```
 

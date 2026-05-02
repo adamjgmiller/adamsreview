@@ -5511,6 +5511,27 @@ else
     fail "CR-7: 05-codex-validation.md missing 'Wave 2 — DISABLED' marker"
 fi
 
+# CR-PVC-1: both Phase 4 fragments gate the tree-cleanliness sweep
+# on `pre_validator_clean == true` so a user who chose Phase 0 step
+# 0.8 option 2 ("include uncommitted changes") doesn't get their
+# work clobbered by `git checkout -- .`. The pre_validator_clean
+# capture lives in 00-preflight.md step 0.8; both validation
+# fragments must consult it before sweeping. Same pattern
+# commands/add.md uses.
+PVC_PREFLIGHT="$REPO/fragments/00-preflight.md"
+PVC_REVIEW="$REPO/fragments/05-validation.md"
+PVC_CODEX="$REPO/fragments/05-codex-validation.md"
+if grep -qF 'pre_validator_clean=true' "$PVC_PREFLIGHT" \
+    && grep -qF 'pre_validator_clean=false' "$PVC_PREFLIGHT" \
+    && grep -qF 'if [[ "$pre_validator_clean" == "true" ]]; then' "$PVC_REVIEW" \
+    && grep -qF 'phase_4_tree_dirty_sweep_skipped' "$PVC_REVIEW" \
+    && grep -qF 'if [[ "$pre_validator_clean" == "true" ]]; then' "$PVC_CODEX" \
+    && grep -qF 'phase_4_tree_dirty_sweep_skipped' "$PVC_CODEX"; then
+    pass "CR-PVC-1: 00-preflight captures pre_validator_clean; both Phase 4 fragments gate tree-cleanliness sweep on it (preserves user work when Phase 0 step 0.8 option 2 chosen)"
+else
+    fail "CR-PVC-1: pre_validator_clean wiring incomplete — preflight capture or Phase 4 gate missing"
+fi
+
 # CR-8: plugin.json version bumped to 0.3.0 for the new command.
 # CLAUDE.md "How to work on new changes" requires a version bump on
 # user-visible changes; minor bump for new command per precedent.

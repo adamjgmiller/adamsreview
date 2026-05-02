@@ -444,26 +444,46 @@ already forbid it. This catches a prompt-override and restores the
 tree before Phase 5 so a misbehaving validator cannot poison the
 commit `/adamsreview:fix` will later produce.
 
+**Gate on `pre_validator_clean`** (captured in Phase 0 step 0.8 after
+the dirty-tree gate resolves). When the user chose option 2
+("Include uncommitted changes in the review"), the entry tree carries
+their uncommitted work and a blind sweep would clobber it — so skip
+the sweep with an audit trace. When `pre_validator_clean == true`
+(stash chosen, or tree clean from the start), the sweep runs safely.
+Mirrors `commands/add.md` step 7.5.
+
 The `:!.claude/` pathspec excludes the worktree's `.claude/` directory
 from the sweep. Claude Code's own infrastructure (ScheduleWakeup locks,
 session state) writes there during a run — flagging those is a false
 positive, since `.claude/` is never substantive to a code review.
 
 ```bash
-dirty=$(git -C "$repo_root" status --porcelain -- . ':!.claude/' 2>/dev/null)
-if [[ -n "$dirty" ]]; then
-    printf 'phase_4_tree_dirty_reverted: %s\n' \
-        "$(printf '%s\n' "$dirty" | awk '{print $2}' | paste -sd, -)" \
+if [[ "$pre_validator_clean" == "true" ]]; then
+    dirty=$(git -C "$repo_root" status --porcelain -- . ':!.claude/' 2>/dev/null)
+    if [[ -n "$dirty" ]]; then
+        printf 'phase_4_tree_dirty_reverted: %s\n' \
+            "$(printf '%s\n' "$dirty" | awk '{print $2}' | paste -sd, -)" \
+            >> "$trace_log_path"
+        # Restore tracked-file modifications (respect the .claude/ exclusion).
+        git -C "$repo_root" checkout -- . ':!.claude/' 2>/dev/null || true
+        # Remove anything the sub-agent created that git doesn't know about.
+        printf '%s\n' "$dirty" | awk '/^\?\?/ {print $2}' \
+            | while IFS= read -r p; do rm -f "$repo_root/$p"; done
+    fi
+else
+    printf 'phase_4_tree_dirty_sweep_skipped: pre-existing dirty tree (user opted to include uncommitted; preserved)\n' \
         >> "$trace_log_path"
-    # Restore tracked-file modifications (respect the .claude/ exclusion).
-    git -C "$repo_root" checkout -- . ':!.claude/' 2>/dev/null || true
-    # Remove anything the sub-agent created that git doesn't know about.
-    printf '%s\n' "$dirty" | awk '/^\?\?/ {print $2}' \
-        | while IFS= read -r p; do rm -f "$repo_root/$p"; done
 fi
 ```
 
-**Invariant:** Phase 0's dirty-tree gate clears the tree before Phase 1, and Phases 1–5 are tree-read-only (artifact writes go to `$review_dir`, not the working tree). Any uncommitted change discovered post-validation is therefore validator-sourced and safely revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the incident for post-mortem.
+**Invariant:** when `pre_validator_clean=true`, the entry tree is
+clean and Phases 1–5 are tree-read-only (artifact writes go to
+`$review_dir`, not the working tree). Any uncommitted change
+discovered post-validation is therefore validator-sourced and safely
+revertable; the trace tag `phase_4_tree_dirty_reverted:` surfaces the
+incident for post-mortem. When `pre_validator_clean=false`, that
+invariant doesn't hold and skipping the sweep is the correct
+trade-off.
 
 ### 4.5. Wave 2 (chain retry — optional)
 

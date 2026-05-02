@@ -255,6 +255,26 @@ do NOT dump the diff). Then use `AskUserQuestion` once with three options:
 
 If the tree is clean, no prompt. Record `stash_taken=false`.
 
+**Capture `pre_validator_clean`** as the final action of this step.
+This is the baseline Phase 4's tree-cleanliness sweep gates on — the
+`git status --porcelain` check is done AFTER the user's choice has
+applied (post-stash, or post-confirm-to-include). Mirrors the
+pattern in `commands/add.md` step 7.0 (see `commands/add.md:574-578`).
+
+```bash
+pre_validator_clean=true
+if [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+    pre_validator_clean=false
+fi
+```
+
+When the user picked **Stash** or the tree was clean to begin with,
+`pre_validator_clean=true` — Phase 4's sweep can safely revert any
+dirt as validator-sourced. When the user picked **Include
+uncommitted changes in the review**, `pre_validator_clean=false` —
+Phase 4 must skip the sweep, since a blind revert would clobber the
+very changes the user asked to include.
+
 ### 0.9. Push unpushed commits (PR mode only)
 
 If `mode=pr`, run `git rev-list --count @{upstream}..HEAD`. If the count is
