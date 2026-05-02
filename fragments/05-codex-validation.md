@@ -529,6 +529,18 @@ the raw shape-fixer output as a fallback.
 raw_repaired=$(printf '%s' "$raw" | parse-with-repair.py 2>/dev/null) \
     || raw_repaired='{}'
 
+# Type guard: parse-with-repair.py exits 0 on any salvageable JSON,
+# including arrays/strings — e.g. a shape-fixer that wrapped its
+# object in `[{...}]`, or one whose output got salvaged into
+# `["not json"]`. The downstream projection accesses $raw.note (and
+# the light-lane id extraction below does `$raw_repaired | .id`),
+# both of which crash with "Cannot index array/string with string"
+# on non-object input — bypassing the per-finding/per-chunk atomicity
+# contract. Force {} when the repair landed on the wrong root type.
+raw_repaired=$(printf '%s' "$raw_repaired" \
+    | jq -c 'if type=="object" then . else {} end' 2>/dev/null) \
+    || raw_repaired='{}'
+
 # Per-tuple `id`: for the deep lane, $finding_id is the orchestrator-
 # captured id of the single finding this Codex job validated. For the
 # light lane, iterate the chunk array element-by-element FIRST and set

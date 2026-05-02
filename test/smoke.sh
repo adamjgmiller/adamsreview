@@ -5577,6 +5577,36 @@ else
     fail "CR-9: Codex rawOutput pluck contract violated:$cr9_violations"
 fi
 
+# CR-10: Phase 4 codex-validation type-guards $raw_repaired to an object
+# before the apply-decisions projection. parse-with-repair.py returns 0
+# for arrays/strings/etc. when a shape-fixer's output is parseable but
+# wrong-shape (e.g. wrapped its object in a single-element array, or
+# repair salvaged garbage into a string). The downstream projection's
+# $raw.note access and light-lane .id extraction both crash on non-
+# object input — halting the apply-decisions batch via first-fail
+# instead of degrading just that finding to `uncertain`. Guard requires
+# a `jq -c 'if type=="object" then . else {} end'` filter between the
+# parse-with-repair line and the projection.
+if grep -qE 'jq -c .*if type==\"object\"' "$REPO/fragments/05-codex-validation.md"; then
+    pass "CR-10: 05-codex-validation.md type-guards \$raw_repaired to object before projection (regression guard for non-object shape-fixer output)"
+else
+    fail "CR-10: 05-codex-validation.md missing jq type==\"object\" guard between parse-with-repair and the apply-decisions projection"
+fi
+
+# CR-11: Phase 1 codex-normalizer §1.5.1 filters non-object elements out
+# of the normalizer array before the schema-guard `. + {file, line_range}`
+# projection. Without `select(type == "object")`, a normalizer that
+# returned a parseable array containing non-object elements (e.g.
+# `["no findings"]` or `[{...}, "extra prose"]`) would crash jq with
+# "string and object cannot be added", killing all Phase 1 candidates.
+# Mirrors CR-10's defensive type-guard discipline (same bug class, found
+# in two different fragments by sequential xhigh-effort Codex reviews).
+if grep -qE 'select\(type == "object"\)' "$REPO/fragments/01-codex-detection.md"; then
+    pass "CR-11: 01-codex-detection.md guards normalizer iteration with select(type == \"object\") (regression guard for non-object element crash)"
+else
+    fail "CR-11: 01-codex-detection.md missing select(type == \"object\") guard in §1.5.1 normalizer-array projection"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

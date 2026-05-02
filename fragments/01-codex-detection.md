@@ -427,12 +427,27 @@ else
     else
         # Schema-guard repair for missing location info — schema requires
         # file non-null and line_range as [int,int] with items >= 1.
+        # Drop non-object array elements first: a normalizer that returned
+        # `["no findings"]` or `[{...}, "extra prose"]` would otherwise
+        # reach the `. + {file: ...}` projection and crash jq with "string
+        # and object cannot be added", killing the entire phase. Count
+        # drops for trace + §1.6 summary visibility.
+        _norm_in_count=$(printf '%s' "$normalizer_array" | jq 'length')
         internal_candidates=$(printf '%s' "$normalizer_array" | jq -c '
-          [ .[] | . + {
-              file:       (.file // "(unknown)"),
-              line_range: (.line_range // [1,1])
-            } ]
+          [ .[]
+            | select(type == "object")
+            | . + {
+                file:       (.file // "(unknown)"),
+                line_range: (.line_range // [1,1])
+              }
+          ]
         ')
+        _norm_out_count=$(printf '%s' "$internal_candidates" | jq 'length')
+        if (( _norm_out_count < _norm_in_count )); then
+            printf 'phase_1_codex_normalizer_non_object_dropped: input=%d kept=%d dropped=%d\n' \
+                "$_norm_in_count" "$_norm_out_count" "$((_norm_in_count - _norm_out_count))" \
+                >> "$trace_log_path"
+        fi
     fi
 fi
 ```
@@ -493,10 +508,15 @@ path drops affected lenses cleanly so this cleanup runs on success.
 ```bash
 phase_1_elapsed=$(( $(date +%s) - phase_1_start_epoch ))
 
+# Surface the §1.5.1 normalizer drop count so a non-object array element
+# (parseable but wrong-shape) shows up in the rendered phase summary
+# rather than only in trace.md. Zero on a healthy run.
+normalizer_non_object_dropped=$(grep -c '^phase_1_codex_normalizer_non_object_dropped:' "$trace_log_path" 2>/dev/null || true)
+
 log-phase.sh \
   --review-dir "$review_dir" --phase 1 --name codex-detection \
   --elapsed "$phase_1_elapsed" \
-  --summary "lenses_run=$lenses_run; lenses_dropped=$lenses_dropped; candidates=$candidate_count"
+  --summary "lenses_run=$lenses_run; lenses_dropped=$lenses_dropped; candidates=$candidate_count; normalizer_non_object_dropped=$normalizer_non_object_dropped"
 
 log-phase.sh \
   --review-dir "$review_dir" --phase 1 --record "$(jq -nc \
