@@ -130,7 +130,7 @@ node "$CODEX_COMPANION" result "$xc_job_id" --json \
     > "/tmp/adams-review-codex-${review_id}-XC.out.json"
 
 xc_codex_output=$(jq -r '
-    .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
+    .storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
 ' "/tmp/adams-review-codex-${review_id}-XC.out.json")
 ```
 

@@ -254,16 +254,16 @@ node "$CODEX_COMPANION" result "$job_id" --json \
     > "/tmp/adams-review-codex-${review_id}-L${N}.out.json"
 
 codex_output_L<N>=$(jq -r '
-    .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
+    .storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
 ' "/tmp/adams-review-codex-${review_id}-L${N}.out.json")
 ```
 
 The companion's task-mode result emits `{job, storedJob}`; the
 freeform Codex stdout (the review text) lives at
-`.storedJob.payload.rawOutput`. The `// .storedJob.rawOutput //
-""` fallback handles the partial-failure record where the payload
-sub-object isn't populated (Codex erred mid-task). Capture as
-`codex_output_L<N>`.
+`.storedJob.result.rawOutput`. The `// .storedJob.payload.rawOutput
+// .storedJob.rawOutput // ""` fallback chain handles older companion
+shapes and the partial-failure record where the result sub-object
+isn't populated (Codex erred mid-task). Capture as `codex_output_L<N>`.
 
 #### Retry-with-orchestrator-judgment (per plan §3.7)
 

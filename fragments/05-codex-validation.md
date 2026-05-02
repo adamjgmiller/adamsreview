@@ -169,14 +169,14 @@ job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
 Once all deep-lane Codex jobs are terminal (poll via `node
 "$CODEX_COMPANION" status <job_id> --json | jq -r '.job.status'`),
 fetch each output and pluck the freeform stdout from
-`.storedJob.payload.rawOutput`:
+`.storedJob.result.rawOutput`:
 
 ```bash
 node "$CODEX_COMPANION" result "$job_id" --json \
     > "/tmp/adams-review-codex-${review_id}-V-${finding_id}.out.json"
 
 codex_output=$(jq -r '
-    .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
+    .storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
 ' "/tmp/adams-review-codex-${review_id}-V-${finding_id}.out.json")
 ```
 
@@ -383,8 +383,9 @@ job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
 Poll all in one orchestrator turn via
 `node "$CODEX_COMPANION" status <job_id> --json | jq -r '.job.status'`
 until terminal. Then fetch each chunk's output the same way Phase 4a
-does: pluck `.storedJob.payload.rawOutput` (with `// .storedJob.rawOutput`
-fallback) into a `codex_chunk_output_<N>` shell variable.
+does: pluck `.storedJob.result.rawOutput` (with
+`// .storedJob.payload.rawOutput // .storedJob.rawOutput` fallbacks)
+into a `codex_chunk_output_<N>` shell variable.
 
 Dispatch ONE Sonnet shape-fixer per chunk:
 

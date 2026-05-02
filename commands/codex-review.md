@@ -82,9 +82,10 @@ with `jq -r '.jobId'`). Poll via `node "$CODEX_COMPANION" status
 <jobId> --json` and read the terminal state from `.job.status`
 (values: `queued` | `running` | `completed` | `failed` | `cancelled`).
 Fetch the freeform output via `node "$CODEX_COMPANION" result <jobId>
---json` and read it from `.storedJob.payload.rawOutput`
-(fallback to `.storedJob.rawOutput` if the payload object isn't
-populated, e.g. on a partial-failure record). Launch ALL jobs in a
+--json` and read it from `.storedJob.result.rawOutput` (with
+`// .storedJob.payload.rawOutput // .storedJob.rawOutput // ""` as
+fallbacks for older companion shapes and partial-failure records
+where the result sub-object isn't populated). Launch ALL jobs in a
 phase within a SINGLE orchestrator turn so they run concurrently;
 polling happens on subsequent turns.
 

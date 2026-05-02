@@ -5545,6 +5545,38 @@ case "$PV" in
         ;;
 esac
 
+# CR-9: every Codex result-pluck site leads with .storedJob.result.rawOutput.
+# codex-companion stores task output at .storedJob.result.rawOutput
+# (lib/job-control.mjs sets `result: execution.payload`); the original
+# implementation plucked from .storedJob.payload.rawOutput, so every
+# Codex job extracted empty string and hit the §3.7 retry fallback.
+# Two checks:
+#   a. no line in the 4 Codex docs begins (after whitespace) with
+#      `.storedJob.payload.rawOutput //` — the original bug pattern.
+#   b. every Codex doc references `.storedJob.result.rawOutput` —
+#      catches accidental removal of the canonical key.
+CR_PLUCK_DOCS=(
+    "commands/codex-review.md"
+    "fragments/01-codex-detection.md"
+    "fragments/05-codex-validation.md"
+    "fragments/06-codex-cross-cutting.md"
+)
+cr9_violations=""
+for f in "${CR_PLUCK_DOCS[@]}"; do
+    p="$REPO/$f"
+    if grep -nE '^[[:space:]]*\.storedJob\.payload\.rawOutput[[:space:]]*//' "$p" >/dev/null 2>&1; then
+        cr9_violations="$cr9_violations $f(leads-with-payload)"
+    fi
+    if ! grep -qF '.storedJob.result.rawOutput' "$p"; then
+        cr9_violations="$cr9_violations $f(missing-result-key)"
+    fi
+done
+if [[ -z "$cr9_violations" ]]; then
+    pass "CR-9: every Codex pluck-site leads with .storedJob.result.rawOutput (regression guard for path-mismatch bug)"
+else
+    fail "CR-9: Codex rawOutput pluck contract violated:$cr9_violations"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
