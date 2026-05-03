@@ -638,10 +638,10 @@ adding the closing subsection.
 
 **File:** `.claude-plugin/plugin.json`
 
-Bump `version` from `0.3.1` to `0.3.2`. Patch bump per CLAUDE.md
-(plan was drafted when 0.3.0 was current; the codex-review feature
-ship at PR #23 took live to 0.3.1 before this fix landed).
-release discipline — this is a behavior correction (Phase 1 actually
+Bump `version` from `0.3.1` to `0.3.2` (plan was drafted when 0.3.0
+was current; the codex-review feature ship at PR #23 took live to
+0.3.1 before this fix landed). Patch bump per CLAUDE.md release
+discipline — this is a behavior correction (Phase 1 actually
 parallelizes now), not a docs-only change.
 
 ---
