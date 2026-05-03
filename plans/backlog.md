@@ -142,6 +142,18 @@ Update both helpers' exit-code references; remove the inline `# also used by …
 - **Risk:** None known. The reuse works correctly today because each helper's callers know which helper they're calling. Switching to fresh codes is purely a hardening exercise.
 - **Trigger:** opportunistic — bundle into the next session that touches `bin/_common.py` for an unrelated reason. Or fires sooner if a new helper needs an additional exit-code class and the 2/3 overloading gets in the way.
 
+### FU-5 — `/adamsreview:codex-review` poll-loop watchdog
+
+**Source:** real failure on 2026-05-03 01:55 UTC during a `/adamsreview:codex-review --effort high` run on `beta-briefing/onboard-page`. All 7 lens jobs went silent within a 7-second window after issuing initial git diff commands; broker reported `running` for 26 minutes; user aborted. Investigation (this session) confirmed: codex CLI processes still alive 80 min later but wedged on a network wait; `interruptAppServerTurn` returned `"thread not found"` for all 7 (codex CLI's *internal* app-server idle-GC'd the threads); fresh single + 7-parallel codex jobs at 03:13 UTC completed cleanly — bug is transient, best-fit hypothesis is an OpenAI-backend stream stall correlated across 7 simultaneous high-effort streams. Codex CLI has no client-side stream-stall detection; codex-companion's broker has no SIGCHLD handler on detached task-workers — both root-cause fixes live upstream in `openai/codex` and we're skipping the upstream issue.
+
+**Direction:** consumer-side watchdog. New shared helper `bin/codex-poll.sh` wraps `node "$CODEX_COMPANION" status <jobId> --json` plus a two-signal liveness check (logFile mtime staleness + `result --json` reporting `"No job found"` confirms broker desync) plus a hard wall-clock ceiling per effort level. Replaces the four raw `status --json` poll sites in codex-only fragments (`01-codex-detection.md` §1.4, `05-codex-validation.md` §4.2.3 + §4.3.2, `06-codex-cross-cutting.md` §5.2.2). On stall detection, `cancel` + route to existing §3.7 retry-with-orchestrator-judgment policy; after 3 failed retries, the existing `AskUserQuestion` escalation fires. Smoke `CR-13` regression guard (mirror CR-9/10/11 discipline — every poll site invokes the helper, no fragment calls raw status anymore).
+
+Full plan with diagnostic write-up, helper algorithm, per-site ceiling values, error contracts, and manual reproducer at `plans/codex-watchdog.md`.
+
+- **Effort:** M. One ~80-line bash helper + four fragment edits (mechanical: replace one bash block per site) + one smoke assertion + version bump (0.3.0 → 0.3.1) + CLAUDE.md helper-index row.
+- **Trigger:** approve and execute; this is the right defense regardless of whether the upstream issue gets filed/fixed. No data dependency.
+- **Out of scope (filed and skipped):** filing the upstream codex CLI issue. Watchdog is enough defense without it.
+
 ### P2 — Post-fix robustness lens (from GH #2)
 
 **Source:** GH issue #2 (filed 2026-04-20 off the 2026-04-19 ray-finance `feat/import-apple` run). Motivating case: ultrareview's `bug_004` — unwrapped `mkdirSync` / `writeFileSync` at `src/cli/commands.ts:930-935` that can throw *after* the DB transaction commits. The block was added by a prior fixrun (F020 → commit `031e04d`); nothing in the pipeline currently re-audits fix-added code beyond the headline finding's claim. Observed twice on ray-finance (F002→F027/F028 access_token over-fetch; F020→`bug_004` unwrapped fs calls).
