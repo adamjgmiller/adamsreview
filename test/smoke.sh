@@ -5682,21 +5682,28 @@ else
     fail "CR-13b: codex-poll.sh wiring incomplete:$cr13b_missing v05_count=$v05_count (expected ≥2 in 05-codex-validation.md)"
 fi
 
-# CR-13c — no fragment file calls `node "$CODEX_COMPANION" status` directly
+# CR-13c — no fragment file calls `node "$CODEX_COMPANION" status` or
+# `result` directly. Both subcommands must go through codex-poll.sh:
+# `status` is the liveness signal the watchdog wraps; `result` is the
+# raw_output pluck path the helper's `completed` short-circuit owns
+# (with the documented .storedJob.result.rawOutput // .storedJob.payload.rawOutput
+# // .storedJob.rawOutput // "" fallback chain). A direct call to either
+# bypasses the watchdog and reintroduces the indefinite-`running` failure
+# mode this branch was built to fix. Whitespace-tolerant so spacing
+# variants (`node  "$CODEX_COMPANION"   status`) can't sneak past.
+CR13_BYPASS_RE='node[[:space:]]+"\$CODEX_COMPANION"[[:space:]]+(status|result)'
 cr13c_violations=""
 for f in "${CR13_FRAGMENTS[@]}"; do
     p="$REPO/$f"
-    if grep -nE 'node "\$CODEX_COMPANION" status' "$p" >/dev/null 2>&1; then
+    if grep -nE "$CR13_BYPASS_RE" "$p" >/dev/null 2>&1; then
         # Allow inside `forbidden in this fragment` prose bands — those
-        # mention the literal pattern as the rule being enforced. Any
-        # such mention must appear inside a quoted-prose bullet (the
-        # `direct calls to .* are forbidden` phrase) and not as a bash
-        # invocation. Use awk to filter: lines starting with whitespace
-        # then `node "$CODEX_COMPANION" status` (a bash call), with no
-        # surrounding "forbidden" prose.
+        # mention the literal pattern as the rule being enforced. Use awk
+        # to filter: lines starting with whitespace then `node "$CODEX_COMPANION"
+        # status` or `result` (a bash invocation), with no surrounding
+        # "forbidden" prose.
         offending=$(awk '
             /forbidden in this fragment/ { next }
-            /^[[:space:]]*node "\$CODEX_COMPANION" status/ { print NR ": " $0 }
+            /^[[:space:]]*node[[:space:]]+"\$CODEX_COMPANION"[[:space:]]+(status|result)/ { print NR ": " $0 }
         ' "$p")
         if [[ -n "$offending" ]]; then
             cr13c_violations="$cr13c_violations $f($(echo "$offending" | tr '\n' ';'))"
@@ -5704,9 +5711,9 @@ for f in "${CR13_FRAGMENTS[@]}"; do
     fi
 done
 if [[ -z "$cr13c_violations" ]]; then
-    pass "CR-13c: no codex fragment calls 'node \"\$CODEX_COMPANION\" status' directly — all poll sites go through codex-poll.sh"
+    pass "CR-13c: no codex fragment calls 'node \"\$CODEX_COMPANION\" status|result' directly — all poll/fetch sites go through codex-poll.sh"
 else
-    fail "CR-13c: direct status-poll calls found:$cr13c_violations"
+    fail "CR-13c: direct status/result-poll calls found:$cr13c_violations"
 fi
 
 # CR-13d — codex-poll.sh handles broker "No job found" status path gracefully.
@@ -5741,28 +5748,29 @@ else
 fi
 
 # CR-13f — commands/codex-review.md must not teach a raw `node "$CODEX_COMPANION"
-# status` poll recipe in its prose. The command body is read by the orchestrator
-# as executable instruction — a stale recipe there bypasses codex-poll.sh and
-# reintroduces the indefinite-`running` failure mode. CR-13c covers fragments;
-# this one covers the command file. Allowed: forbidden-prose mentions
-# (the rule itself being stated), and references to fragment paths or the
-# helper's own internals. Disallowed: any `node "$CODEX_COMPANION" status`
-# line that reads as bash invocation guidance.
+# status` or `result` poll recipe in its prose. The command body is read by
+# the orchestrator as executable instruction — a stale recipe there bypasses
+# codex-poll.sh and reintroduces the indefinite-`running` failure mode (status
+# path) or loses the result-pluck fallback chain (result path). CR-13c covers
+# fragments; this one covers the command file. Same whitespace-tolerant
+# regex (CR13_BYPASS_RE) and same dual-subcommand coverage. Allowed:
+# forbidden-prose mentions and the explicit Do-NOT-call directive that
+# states the rule.
 CR13F_COMMAND="$REPO/commands/codex-review.md"
 cr13f_violations=""
-if grep -nE 'node "\$CODEX_COMPANION" status' "$CR13F_COMMAND" >/dev/null 2>&1; then
+if grep -nE "$CR13_BYPASS_RE" "$CR13F_COMMAND" >/dev/null 2>&1; then
     offending=$(awk '
         /forbidden|do NOT call|Do NOT call/ { next }
-        /^[[:space:]]*node "\$CODEX_COMPANION" status/ { print NR ": " $0 }
+        /^[[:space:]]*node[[:space:]]+"\$CODEX_COMPANION"[[:space:]]+(status|result)/ { print NR ": " $0 }
     ' "$CR13F_COMMAND")
     if [[ -n "$offending" ]]; then
         cr13f_violations=" commands/codex-review.md($(echo "$offending" | tr '\n' ';'))"
     fi
 fi
 if [[ -z "$cr13f_violations" ]]; then
-    pass "CR-13f: commands/codex-review.md does not teach a raw 'node \"\$CODEX_COMPANION\" status' poll recipe — orchestrator routed through codex-poll.sh"
+    pass "CR-13f: commands/codex-review.md does not teach a raw 'node \"\$CODEX_COMPANION\" status|result' poll/fetch recipe — orchestrator routed through codex-poll.sh"
 else
-    fail "CR-13f: commands/codex-review.md teaches raw status-poll recipe (bypasses watchdog):$cr13f_violations"
+    fail "CR-13f: commands/codex-review.md teaches raw status/result-poll recipe (bypasses watchdog):$cr13f_violations"
 fi
 
 # CR-14 — fragments/00-preflight.md gates the --effort skip on working-context
