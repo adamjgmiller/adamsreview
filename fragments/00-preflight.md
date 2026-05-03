@@ -17,8 +17,28 @@ your working context — later phases will reference them by name ("the
 ### 0.1. Resolve argument flags
 
 Parse `$ARGUMENTS` for `--ensemble` and `--full`. Set `ensemble_mode=true/false`
-and `force_full=true/false` in your context. Anything else on the command line
-is unexpected — stop and ask the user to clarify.
+and `force_full=true/false` in your context.
+
+If the top-level command already parsed top-level-only flags into your
+working context BEFORE invoking this fragment (e.g., `effort` from
+`/adamsreview:codex-review --effort high`), trust those values and
+ignore the corresponding tokens in `$ARGUMENTS`. Recognized
+top-level-only flags whose value tokens this step skips silently
+**only when the upstream parser actually owns the flag** (i.e., the
+corresponding working-context value is set):
+
+- `--effort <value>` — owned by `/adamsreview:codex-review`'s argument
+  handler. Skip the flag and its value token only when working-context
+  `effort` is set. If `effort` is unset (e.g., `/adamsreview:review
+  --effort high` — `:review` has no `--effort` parser), `--effort` is
+  an unexpected token and falls through to the clarify path below.
+  Working-context `effort` being set is the proof that an upstream
+  command owns this flag; absence of the value means no upstream owner
+  exists.
+
+Any token not recognized as `--ensemble`, `--full`, a top-level-only
+flag whose owner is proven present (above), or a value following such a
+flag is unexpected — stop and ask the user to clarify.
 
 ### 0.2. Resolve branch, base, and repo root
 
@@ -243,6 +263,26 @@ do NOT dump the diff). Then use `AskUserQuestion` once with three options:
 
 If the tree is clean, no prompt. Record `stash_taken=false`.
 
+**Capture `pre_validator_clean`** as the final action of this step.
+This is the baseline Phase 4's tree-cleanliness sweep gates on — the
+`git status --porcelain` check is done AFTER the user's choice has
+applied (post-stash, or post-confirm-to-include). Mirrors the
+pattern in `commands/add.md` step 7.0 (see `commands/add.md:574-578`).
+
+```bash
+pre_validator_clean=true
+if [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+    pre_validator_clean=false
+fi
+```
+
+When the user picked **Stash** or the tree was clean to begin with,
+`pre_validator_clean=true` — Phase 4's sweep can safely revert any
+dirt as validator-sourced. When the user picked **Include
+uncommitted changes in the review**, `pre_validator_clean=false` —
+Phase 4 must skip the sweep, since a blind revert would clobber the
+very changes the user asked to include.
+
 ### 0.9. Push unpushed commits (PR mode only)
 
 If `mode=pr`, run `git rev-list --count @{upstream}..HEAD`. If the count is
@@ -437,6 +477,7 @@ artifact-seed.sh \
   --reviewed-files-all "$reviewed_files_all" \
   --claude-md-paths "$claude_md_paths" \
   --files-changed "$num_files" --lines-changed "$lines_changed" \
+  --reviewer-sources "${reviewer_sources_label:-internal}" \
   | artifact-patch.py --init - --path "$artifact_path"
 ```
 

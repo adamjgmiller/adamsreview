@@ -1,20 +1,21 @@
 # adamsreview
 
-Five personal Claude Code slash commands packaged as a plugin (`adamsreview`) distributable via `/plugin marketplace add`:
+Six personal Claude Code slash commands packaged as a plugin (`adamsreview`) distributable via `/plugin marketplace add`:
 
-- **`/adamsreview:review`** — multi-lens code review of a branch or PR (phases 0–6).
+- **`/adamsreview:review`** — multi-lens code review of a branch or PR (phases 0–6). Claude sub-agent lenses + Opus deep validators.
+- **`/adamsreview:codex-review`** — Codex-driven counterpart to `:review`. Phase 1 detection runs 7 parallel Codex jobs (L1–L7) feeding one Sonnet normalizer; Phase 4a deep validation runs one Codex per finding + per-finding Sonnet shape-fixer; Phase 4b light is chunked-batch Codex + per-chunk Sonnet shape-fixer; Phase 5 is one Codex pass + one Sonnet shape-fixer. Same artifact schema as `:review` (`reviewer_sources: ["internal-codex"]`) so `:fix`, `:add`, `:walkthrough`, `:promote` work without changes. Effort tunable via `--effort <low|medium|high|xhigh>` (default `high`). No `--ensemble` (purpose-built for Codex purity).
 - **`/adamsreview:add`** — inject externally-sourced findings (Claude Code cloud `/ultrareview` paste, an Opus once-over, a teammate's note) into the most recent review's existing artifact. Free-form paste mode dispatches a Sonnet normalizer; structured `--file/--line/--claim` mode skips it. One Sonnet dedup pass against existing findings; Phase 4 validation lane-aware (no Wave 2); re-renders + re-publishes to the existing PR comment.
 - **`/adamsreview:walkthrough`** — interactive driver for findings `/adamsreview:fix` would skip; per-finding briefing + options + recommendation, batched re-render/re-publish, decisions-log PR comment (see DESIGN §28).
-- **`/adamsreview:fix`** — automated fix loop for auto-fixable findings surfaced by `/adamsreview:review` (phases 7–9).
+- **`/adamsreview:fix`** — automated fix loop for auto-fixable findings surfaced by `/adamsreview:review` or `/adamsreview:codex-review` (phases 7–9).
 - **`/adamsreview:promote`** — human override that promotes a single finding to auto-fixable (bypasses the Phase 8 impact_type lane filter and score threshold; see DESIGN §27).
 
-Command files live at bare-stem paths under `commands/` (`review.md`, `add.md`, `walkthrough.md`, `fix.md`, `promote.md`); shared phase fragments and the prompt references live under `fragments/`; helper scripts and the artifact schema live under `bin/`. The plugin runtime auto-adds `bin/` to `$PATH` on load — no symlinks, no install script.
+Command files live at bare-stem paths under `commands/` (`review.md`, `codex-review.md`, `add.md`, `walkthrough.md`, `fix.md`, `promote.md`); shared phase fragments and the prompt references live under `fragments/`; helper scripts and the artifact schema live under `bin/`. The plugin runtime auto-adds `bin/` to `$PATH` on load — no symlinks, no install script.
 
 ## Recommended flow
 
 Not required — each command is independent — but they work best in this order on a non-trivial PR:
 
-1. **Review.** `/adamsreview:review` — or `/adamsreview:review --ensemble` if you have the CodeRabbit + Codex CLIs installed and want a multi-source review at higher token cost.
+1. **Review.** `/adamsreview:review` — or `/adamsreview:review --ensemble` if you have the CodeRabbit + Codex CLIs installed and want a multi-source review at higher token cost. **Or** `/adamsreview:codex-review [--effort <level>]` for a Codex-driven peer review (drop-in for everything downstream; effort tunable; no `--ensemble`).
 2. **Add.** *(optional)* `/adamsreview:add <paste...>` — if you ran a parallel review (cloud `/ultrareview`, Opus once-over, manual scan, etc.) that surfaced bugs the original review missed, paste the result here. The findings are validated by Phase 4 and land in the same artifact, deduped against what's already there. Auto-eligible additions feed step 4; non-eligible ones surface in step 3.
 3. **Walkthrough.** *(optional)* `/adamsreview:walkthrough [threshold]` — step through findings the fix command would skip (deep-manual, deep-report, and the entire light lane including light `confirmed_mechanical`), restricted to those scoring at or above `$threshold` (default 60) so low-signal items don't pad the session. Each finding gets a briefing + options + recommendation; promote the ones you want auto-fixed with tailored fix-hints, skip the rest. Posts a decisions log to the PR for audit. Pass a lower threshold (e.g. `/adamsreview:walkthrough 30`) and pick the **Full** tier at the preflight prompt to audit Phase-3-demoted `below_gate` findings too.
 4. **Fix.** `/adamsreview:fix` — applies every auto-eligible finding (including whatever was added in step 2 and promoted in step 3). Default: one combined commit for all surviving fixes; pass `--granular-commits` for one commit per fix group. Per-group Phase-9 outcome lands in the commit message either way.
@@ -72,6 +73,7 @@ Both paths still require the runtime deps listed above (`uv`, `jq`, `gh`, `bash`
 All invocations are plugin-namespaced:
 
 - `/adamsreview:review [--ensemble] [--full]`
+- `/adamsreview:codex-review [--effort <low|medium|high|xhigh>] [--full]`
 - `/adamsreview:add [<paste...>] [--file <path> --line <N> --claim "..."]`
 - `/adamsreview:walkthrough [threshold]`
 - `/adamsreview:fix [threshold]`

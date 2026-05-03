@@ -63,50 +63,37 @@ candidate shapes don't diverge across lenses). Each lens's sub-section
 below restates **only lens-specific guidance**; the orchestrator
 prepends this shared block when assembling the dispatch prompt.
 
-The orchestrator dispatches `<shared invariants from 1.2.1> + <lens
-blockquote>` as the sub-agent prompt. Prose outside the blockquote in
-each lens sub-section (headings, annotations, commentary) is for the
-fragment reader, **NOT dispatched** — any directive the sub-agent must
-follow has to live inside the blockquote.
+The orchestrator dispatches `<shared invariants> + <lens body>` as the
+sub-agent prompt. The shared invariants and the lens body both live in
+files now (extracted per `plans/codex-review.md` §4.1 so
+`/adamsreview:codex-review` can consume the same source).
 
-> Read the diff between `$comparison_ref` and HEAD.
->
-> Return a JSON array of candidates. Each candidate:
->
-> ```
-> {
->   "file": "src/path/to/file.ts",
->   "line_range": [start, end],
->   "claim": "one-sentence description of the issue",
->   "evidence_snippet": "the exact code lines implicated",
->   "impact_type": "correctness" | "security" | "ux" | "policy" | "architecture",
->   "origin": "introduced_by_pr" | "pre_existing" | "unknown",
->   "origin_confidence": "high" | "medium" | "low",
->   "source_family": "<set by lens; see lens-specific guidance>"
-> }
-> ```
->
-> Each lens's section below specifies the `impact_type` and
-> `source_family` values to use. Other fields follow the shapes above.
->
-> `line_range` must be file-absolute. `line_range[0]` and `line_range[1]`
-> refer to actual line numbers in the reviewed file at `$reviewed_sha`,
-> counted from 1. Required: `line_range[0]` >= 1 and `line_range[1]` <=
-> the file's total line count. Do not copy the numbers inside unified-
-> diff hunk headers (`@@ -a,b +c,d @@`) — those describe hunk positions,
-> not where a finding lives. To cite a line, read the `+`-prefixed lines
-> in the hunk and count forward from the hunk's post-image start; do
-> not reuse `a` or `c` verbatim.
->
-> Default `origin: "introduced_by_pr"`, `origin_confidence: "high"`. Set
-> `origin: "pre_existing"` only when BOTH (1) the implicated code is
-> unchanged by this diff AND (2) the bug exists independently of this
-> PR — reverting this PR would not close the finding. If pre-existing-
-> looking code became wrong because of new code this PR adds elsewhere
-> (a stale diagram now contradicted by a new pipeline step; a function
-> missing a field a new caller needs; a doc bullet contradicted by a
-> new fallback path), keep `origin: "introduced_by_pr"` — the PR is
-> causally responsible, even though the cited lines are old.
+Shared invariants: Read `fragments/lens-prompts/_shared-invariants.md`
+— its content is the shared block prepended to every lens's prompt
+body. Prose outside the file (headings, annotations, commentary) is
+for the fragment reader, **NOT dispatched** — any directive the
+sub-agent must follow has to live inside the file.
+
+**Substitute orchestrator-context placeholders before dispatch.** The
+file content carries literal `$comparison_ref` (the diff range — set
+in Phase 0 step 0.2a) and `$reviewed_sha` (the reviewed file SHA — set
+in Phase 0 step 0.10) tokens that must resolve to their working-context
+values BEFORE the prompt reaches the sub-agent. (Pre-Round-1 the
+invariants were inlined here; the orchestrator's implicit
+working-context-variable substitution covered them. Post-extraction
+the file content is opaque, so the substitution must be explicit, the
+same way `fragments/01-codex-detection.md` §1.2c handles it.)
+
+```bash
+shared_invariants_body="${shared_invariants_body//\$comparison_ref/$comparison_ref}"
+shared_invariants_body="${shared_invariants_body//\$reviewed_sha/$reviewed_sha}"
+```
+
+The lens-body files (`fragments/lens-prompts/L<N>.md`) are read at
+each lens's dispatch step (1.3). L2's body carries `$prior_fix_suspects`,
+L3's and L5's bodies carry `$claude_md_paths` — substitute these the
+same way before dispatch (the lens dispatch sub-sections below remind
+you per-lens).
 
 Lens-specific extensions the shared block does **not** cover (keep
 inline in each lens sub-section):
@@ -308,18 +295,31 @@ the two `elapsed_sec` values naturally overlap in `phases.jsonl`.
 
 ### 1.3. Dispatch the lenses (one turn, one Agent call per applicable lens)
 
+**Parallel dispatch — load-bearing.** Read all applicable
+`fragments/lens-prompts/L<N>.md` files plus
+`fragments/lens-prompts/_shared-invariants.md` first (these `Read`
+tool-uses can run in parallel within one orchestrator turn). Then
+issue EVERY applicable lens's `Agent` tool-use in a SINGLE
+orchestrator turn so they run concurrently — alongside the ensemble
+fan-out's background `Bash` calls when `ensemble_mode == true` (see
+the "Ensemble fan-out" sub-section below). The per-lens sub-sections
+that follow give the prompt-body location and the per-lens
+substitution rules (`$prior_fix_suspects`, `$claude_md_paths`); their
+"Read `fragments/lens-prompts/L<N>.md` … and dispatch" phrasing is a
+*recipe per lens*, NOT an instruction to serialize one lens at a time
+across multiple turns. Doing the per-lens "Read L<N>.md then dispatch
+Agent" pairs serially defeats the parallelism this phase relies on:
+Phase 1 wall-clock latency goes from `max(lens_durations)` to
+`sum(lens_durations)`, and the ensemble fan-out's background CLIs
+lose their overlap window with the lens dispatches.
+
 #### L1 — diff-local scan (Sonnet)
 
 Launch one `Agent` tool-use with `model: sonnet`, `subagent_type: general-purpose`.
-Prompt essence (prepended with the shared invariants from step 1.2.1):
 
-> Read **ONLY** the diff. Do not open other files or grep the repo. Flag
-> off-by-one errors, inverted conditions, typos in identifiers, dead
-> branches, obvious null-deref patterns, and mismatched quotes or parens.
-> **Over-flag — Phase 3 will filter.** Ignore style issues; ignore
-> anything a linter would catch.
->
-> Set `impact_type: "correctness"`, `source_family: "diff-family"`.
+Prompt body: Read `fragments/lens-prompts/L1.md` — its content is the L1
+prompt body verbatim. Prepend the shared invariants from step 1.2.1 and
+dispatch.
 
 #### L2 — structural / blast-radius (Opus; skipped if `trivial_mode`)
 
@@ -327,331 +327,52 @@ Launch one `Agent` tool-use with `model: opus`, `subagent_type: general-purpose`
 with `Read` and `Bash(git:*)` + `Bash(grep:*)` permissions (the sub-agent
 inherits the parent command's grants — this already covers it).
 
-Prompt essence (prepended with the shared invariants from step 1.2.1; L2
-additionally reads surrounding files and uses `git blame` / `git log`):
+L2 additionally reads surrounding files and uses `git blame` / `git log`.
 
-> Read like a careful human reviewer who's been handed this PR. Your
-> job is to find bugs a skilled reader would flag: the ones a linter
-> and the test suite don't catch but a careful read of the diff plus
-> surrounding code would. Over-flag; Phase 3 filters.
->
-> **Outer pass — cross-file blast-radius.** For every function, type,
-> field, or API the diff changes, trace into the rest of the repo:
-> - Who calls this? Are callers updated consistently?
-> - Who writes to this field? Enumerate the full range of values each
->   writer can produce (NULL, zero, negative, empty, duplicate-by-key).
-> - Is there a parallel code path (e.g. `foo()` and `fooAsync()`) that
->   should receive a matching change?
-> - What invariants does the surrounding code assume? Does the diff
->   preserve them?
-> - **Consumer-surface value trace.** For every column, field, API
->   response, template variable, LLM tool output, report line, or
->   other value the diff introduces or whose writer it modifies, walk
->   the full path from writer through storage to user-visible output.
->   If a writer can produce NULL, zero, empty string, or a default
->   value, trace what each consumer does with it: does a SQL reader
->   COALESCE it to a sentinel (e.g. `COALESCE(rate, 0)`), and is the
->   sentinel distinguishable from a legitimate zero; does a render
->   layer display the sentinel as a real value (`"0% APR"`, `"$0.00"`,
->   `"Manual account"`); does an LLM tool schema, prompt helper, or
->   insight generator feed the sentinel into an AI-generated
->   recommendation (dangerous — the pipeline may be storage-layer
->   correct but present-layer misleading; the model acts on `0%` as
->   if it were a real rate); does a downstream filter / ORDER BY /
->   conditional branch change behavior because the value is the
->   default rather than the original. Flag when the writer's NULL /
->   default can propagate to a user-facing output that reads as
->   honest (real 0%, real $0, real "Manual") but actually represents
->   missing data. This is the "semantic-layer correctness" cousin of
->   the mechanical "does the INSERT happen?" check — both matter.
-> - **Cross-provider / domain-scope check.** When the diff changes a
->   function that runs inside a specific data-path (`ray import-apple`,
->   `syncPlaid`, a payroll upload, a user-initiated flow), identify
->   which data entities the function's reads and writes touch. If the
->   function's query surface is broader than the data-path's intent —
->   e.g. a recategorization pass triggered by Apple-import that
->   re-evaluates *all* transactions, not just the newly-imported Apple
->   ones — flag it. The failure mode is subtle: the function is correct
->   in isolation, but its scope crosses a provider / domain boundary
->   the user did not consent to. Check whether the function filters by
->   source / provider / import-batch / user-initiated-id before reading
->   or writing; whether side effects stay scoped to the command's
->   intent; whether a shared helper called by multiple paths scopes its
->   work at the caller or the callee.
->
-> **Inner pass — small-radius careful read.** For each file the diff
-> touches, also run this checklist against the changed hunks and their
-> immediate neighbors:
->
-> 1. **Sibling parsers / validators in the same file.** If the diff
->    adds or modifies a parser, validator, or input-sanitizer (e.g.
->    `parseFoo`, `validateBar`, a regex `.test(…)` gate, an inquirer
->    `validate` callback), grep the same file/module for every other
->    parser/validator and diff their strictness. Flag asymmetry —
->    e.g. a strict anchored regex on one path while the sibling uses
->    `parseFloat`/`parseInt`/`Number(…)` (prefix parsers that silently
->    accept trailing junk); a date parser that round-trips through
->    `Date` while a sibling accepts `\d{2}/\d{2}/\d{4}` without
->    range-checking month/day; one branch throws on unknown keys while
->    the sibling ignores them.
->
-> 2. **Catch scope around state-changing operations.** When the diff
->    introduces or modifies a `try/catch` (or equivalent), identify
->    which statements inside the `try` commit state — DB commit, file
->    rename, UPSERT, network publish, `process.exit(0)`. If a
->    post-commit throw would land in the same `catch` as a pre-commit
->    throw, flag the user-facing misleading error: the operation
->    succeeded but the user sees "failed" and retries, double-applying.
->
-> 3. **Hand-rolled parser EOF invariants.** For any state machine,
->    tokenizer, or CSV/JSON/form/query parser the diff adds or touches,
->    check end-of-input handling: does the terminal state represent a
->    completed parse, or can the parser silently accept truncated input
->    as if it were valid (e.g. `inQuotes==true` at EOF, brace depth
->    nonzero, expected-next-token nonempty)?
->
-> 4. **Filter-predicate / COALESCE / NULLIF sweeps.** For any SQL,
->    regex, or COALESCE/NULLIF chain the diff adds or modifies,
->    enumerate every value each upstream writer can produce (use the
->    outer-pass writer list) and verify each is handled consistently.
->    Negative numbers, zero, NULL, empty string, duplicate rows from
->    UNIQUE constraints that permit multiple types per key — each one
->    is a candidate bug.
->
-> 5. **SQL JOIN join-key vs. target-table UNIQUE-constraint
->    cardinality.** For any SQL JOIN the diff adds, modifies, or reads
->    from, identify the JOIN's join-key column(s), then find the target
->    table's UNIQUE / PRIMARY KEY constraint in the schema (grep
->    migrations / `CREATE TABLE` / `ALTER TABLE`). If the JOIN's join-
->    key is NOT the uniqueness key, the JOIN can fan out when the
->    target table legitimately holds multiple rows per join-key value —
->    especially likely when an UPSERT on the target uses
->    `ON CONFLICT(a, b)` (multiple rows per `a` permitted, one per `b`)
->    while the JOIN only keys on `a`. Example: if `liabilities` has
->    `UNIQUE(account_id, type)` and a query `JOIN liabilities ON
->    a.account_id = l.account_id`, a single account with both
->    `credit_card` and `mortgage` types produces two rows — and any
->    downstream `SUM` / `COUNT` / `ORDER BY` silently double-counts.
->    Flag.
->
-> 6. **Same-block adjacency.** Once you've found one bug in a block,
->    reread the ±10 lines around it before moving on. List any other
->    candidate bugs in that neighborhood as separate entries — even
->    half-confident ones. Phase 3 filters weak candidates; a bug
->    co-located with a known bug usually shares a fix and is cheapest
->    to surface now.
->
-> **Prior-fix reversion check (§13.11b).** The following prior commits
-> (subject matches fix-intent patterns, reachable from the comparison
-> ref — PR-internal commits already filtered out) touched lines that
-> this PR also modifies:
->
-> ```
-> $prior_fix_suspects
-> ```
->
-> (Empty array → nothing to check; skip this section.)
->
-> For each suspect, compare the current diff's changes at the overlapping
-> lines against what the prior fix commit did. Flag as a candidate when
-> the current diff appears to undo the prior fix — either by reverting
-> to the pre-fix line content, by introducing a parallel code path that
-> behaves like the pre-fix code, or by broadening a narrow condition the
-> prior fix specifically narrowed. Include the prior fix commit's short
-> SHA and subject in your `claim` so a reviewer can trace the history.
->
-> `impact_type` for a regression-of-prior-fix: `correctness`.
-> `source_family`: `structural-family` (L2's default — this is still a
-> structural observation, just with history awareness).
->
-> Read function BODIES, not just signatures. Flag contract changes,
-> nullability shifts, return-shape changes, concurrent-write assumption
-> violations, and missing matching updates in parallel paths. **This
-> lens exists specifically to catch incomplete fixes and narrow bugs a
-> careful reader would see — be thorough.**
->
-> Set `impact_type: "correctness"`, `source_family: "structural-family"`.
+Prompt body: Read `fragments/lens-prompts/L2.md` — its content is the L2
+prompt body verbatim. Substitute `$prior_fix_suspects` with the JSON array
+captured at step 1.2b. Prepend the shared invariants from step 1.2.1 and
+dispatch.
 
 #### L3 — CLAUDE.md compliance (Sonnet)
 
 Launch one `Agent` tool-use with `model: sonnet`.
 
-Prompt essence (prepended with the shared invariants from step 1.2.1):
-
-> Read each CLAUDE.md file in this list (absolute paths, root-first):
-> `$claude_md_paths`
->
-> For every rule in those files, check whether the diff violates it. For
-> each violation, cite the exact CLAUDE.md file and line number in
-> `evidence_snippet`.
->
-> **Tag each violation's `impact_type`:** `correctness` if the rule concerns
-> runtime behavior, error handling, invariants, or safety; `policy` if it
-> concerns style, conventions, preferences, or formatting.
->
-> Skip any violation that's silenced by an explicit ignore comment on the
-> relevant code.
->
-> Set `source_family: "policy-family"`.
+Prompt body: Read `fragments/lens-prompts/L3.md` — its content is the L3
+prompt body verbatim. Substitute `$claude_md_paths` with the newline-joined
+list from Phase 0 step 0.7. Prepend the shared invariants from step 1.2.1
+and dispatch.
 
 #### L4 — comment compliance (Sonnet)
 
 Launch one `Agent` tool-use with `model: sonnet`.
 
-Prompt essence (prepended with the shared invariants from step 1.2.1; L4
-additionally reads the current content of every modified file):
+L4 additionally reads the current content of every modified file.
 
-> Also read the current content of every modified file (not just diff
-> hunks) so you can see the full comment / doc-string context around
-> changed code.
->
-> Focus on comments and doc strings (JSDoc, TSDoc, Python docstrings,
-> Rust doc comments, etc.) adjacent to changed code.
->
-> Flag when the diff contradicts a comment's claim — e.g., a docstring says
-> "returns non-null" but the change now returns null; a function comment
-> says "idempotent" but the change introduces state mutation.
->
-> If the contradiction is runtime-impactful, set `impact_type: "correctness"`;
-> otherwise `"policy"`. Set `source_family: "policy-family"`.
+Prompt body: Read `fragments/lens-prompts/L4.md` — its content is the L4
+prompt body verbatim. Prepend the shared invariants from step 1.2.1 and
+dispatch.
 
 #### L5 — UX (Sonnet; skipped if `trivial_mode` or `user_facing == false`)
 
 Launch one `Agent` tool-use with `model: sonnet`.
 
-Prompt essence (prepended with the shared invariants from step 1.2.1):
-
-> UX reference:
->
-> # UX lens reference
->
-> You are reviewing whether this diff produces a good user experience —
-> distinct from whether it is technically correct.
->
-> ## What to check (when the diff is user-facing)
->
-> **Destructive actions.** Does confirmation match blast radius? A single-click
-> that irreversibly destroys user data is a finding. A heavyweight typed-confirm
-> on something fully reversible is also a finding (wrong direction).
->
-> **State coverage.** Are empty, loading, error, and in-progress states handled?
-> Missing empty states; generic "Loading..." with no progress on long operations;
-> errors that silently swallow; intermediate states the UI doesn't represent.
->
-> **Feedback.** When the user acts, is it visibly clear the action worked (or
-> clear why it failed)? Actions that complete with no visible change; errors
-> that disappear before the user can read them; async ops with no progress.
->
-> **Affordances.** Is it obvious what's interactive vs. static? Clickable things
-> that don't look clickable; non-clickable things that do; ambiguous icons
-> without labels; buttons whose label doesn't predict the action.
->
-> **Keyboard & accessibility.** Escape closes modals; Enter submits; focus lands
-> sensibly (not on the destructive button by default); tab order matches visual
-> order; ARIA labels for icon-only controls; sufficient color contrast.
->
-> **Copy.** Microcopy is clear, concise, and consistent with project voice.
-> Errors say what happened AND what the user can do. Button labels are verbs
-> describing the action, not generic "OK"/"Yes".
->
-> **Diagnostic message quality.** When the diff adds or modifies a warning,
-> error, or toast — especially ones triggered by parsing, validation, or
-> input rejection — check whether the message helps the user diagnose and
-> fix the problem:
->
-> - Does the message reveal the expected format when input is rejected?
->   A `parseDate` that only accepts `MM/DD/YYYY` should say so in the
->   warning, not "Invalid date."
-> - Does the message name the specific value that failed? "Invalid amount"
->   is weaker than `"'abc' is not a valid amount — expected a number like
->   42.50."`
-> - When upstream context is available (file path, row number, column name,
->   field name, source system), is it in the message? A parser error that
->   buries line number in debug logs while showing the user "Something went
->   wrong" is a diagnostic-quality gap.
-> - For batch / buffered operations (flush-after-N-errors, debounced save),
->   does an empty-buffer or mid-flush failure produce a generic message
->   when a specific one is cheap? "Save failed" on an empty buffer suggests
->   data loss the user didn't actually experience.
->
-> Flag as `impact_type: "ux"`. Fix proposals should include concrete message-
-> text suggestions.
->
-> **Visual consistency.** Uses the project's existing design tokens, CSS
-> variables, or utility classes rather than ad-hoc values. CLAUDE.md and the
-> existing codebase take precedence over generic examples above.
->
-> ## Scope guard
->
-> If the PR has no user-facing surface, return an empty list. Do not reach for
-> UX findings that don't apply.
->
-> Also read the CLAUDE.md files in `$claude_md_paths` (project-specific UX
-> conventions take precedence over the generic reference above).
->
-> Focus on behavioral gaps visible from the diff: missing loading / empty /
-> error states; inadequate confirmation on destructive actions; silent
-> failures; missing keyboard / accessibility affordances; copy that doesn't
-> match existing patterns in the codebase.
->
-> Set `impact_type: "ux"`, `source_family: "ux-family"`.
+Prompt body: Read `fragments/lens-prompts/L5.md` — its content is the L5
+prompt body verbatim (the inlined UX checklist is the canonical content;
+`fragments/lens-ux-reference.md` is a redundant duplicate kept for now to
+avoid scope creep). Substitute `$claude_md_paths` with the newline-joined
+list from Phase 0 step 0.7. Prepend the shared invariants from step 1.2.1
+and dispatch.
 
 #### L6 — lightweight security (Sonnet; skipped if `trivial_mode`)
 
 Launch one `Agent` tool-use with `model: sonnet`.
 
-Prompt essence (prepended with the shared invariants from step 1.2.1):
-
-> Security reference:
->
-> # Security lens reference
->
-> You are doing a **lightweight** security scan on this diff. This is not a
-> full audit — flag issues where the code change creates or worsens a security
-> risk. Over-flag; Phase 4 will filter.
->
-> ## Categories to check
->
-> **Authorization & authentication.**
-> - New routes, API endpoints, or mutations without an auth check
-> - New fields exposed through responses that shouldn't be (e.g. internal IDs,
->   credentials, PII)
-> - Permission checks that accept a broader role than intended
-> - Session handling changes (token lifetime, invalidation, refresh)
->
-> **Input validation & injection.**
-> - User-controlled input concatenated into SQL, shell commands, or HTML without
->   escaping/parameterization
-> - File paths built from user input without sanitization (path traversal)
-> - Regex or parser changes that accept previously-rejected malformed input
->
-> **Secrets & sensitive data.**
-> - Hardcoded API keys, tokens, passwords, or connection strings
-> - Sensitive values logged (passwords, tokens, PII, auth headers)
-> - Debug output or error messages that leak internal structure or secrets
->
-> **Cryptography.**
-> - New crypto primitives (if the project already has conventions, flag
->   deviation; do not recommend specific algorithms beyond that)
-> - Random values used where cryptographic randomness is required
->
-> **Cross-cutting security patterns.**
-> - Race conditions in access checks (TOCTOU)
-> - Error paths that bypass normal auth/validation flow
-> - New code that handles untrusted input and calls into a structural pattern
->   the rest of the code assumes is trusted (structural-family reasoning)
->
-> ## Scope guard
->
-> If the diff touches no security-adjacent surface (pure UI tweak, pure test
-> refactor, etc.), return an empty list. Do not reach for security findings
-> that don't apply.
->
-> If structural reasoning (similar to L2 — walking callers and writers)
-> suggests a security implication, flag it even when the immediate code
-> isn't obviously a security surface. **Over-flag.**
->
-> Set `impact_type: "security"`, `source_family: "security-family"`.
+Prompt body: Read `fragments/lens-prompts/L6.md` — its content is the L6
+prompt body verbatim (the inlined security checklist is the canonical
+content; `fragments/lens-security-reference.md` is a redundant duplicate
+kept for now to avoid scope creep). Prepend the shared invariants from
+step 1.2.1 and dispatch.
 
 #### L7 — holistic review (Opus; `ensemble_mode` only; skipped if `trivial_mode`)
 
@@ -666,68 +387,12 @@ senior reviewer with no checklist. Ensemble-gated because it costs roughly
 findings (unioning `source_families`) so duplicates become a strengthening
 signal via Phase 3's ≥2-families auto-graduate rule, not noise.
 
-Prompt essence (prepended with the shared invariants from step 1.2.1; L7
-additionally reads surrounding code and uses `git blame` / `git log`
-freely):
+L7 additionally reads surrounding code and uses `git blame` / `git log`
+freely.
 
-> Review this PR as a skeptical, careful senior engineer who was just
-> handed it and asked to find bugs the test suite and linter will miss.
-> Read surrounding code freely; use `git blame` / `git log` as needed.
->
-> **No checklist — scan for anything wrong.** Other agents are running
-> in parallel with narrower prompts (L1 diff-local, L2 structural, L3
-> CLAUDE.md, L4 comments, L5 UX, L6 security). Your job is to catch
-> things those miss: semantic correctness across layer boundaries,
-> misleading state visible to users or AI consumers, latent bugs a
-> careful human reader would notice, regressions of prior behavior,
-> multi-failure-mode issues at the same call site.
->
-> Places to look especially hard:
->
-> - **Cross-layer semantic value.** When a field can be NULL / default /
->   missing, follow every consumer and check whether the user-visible
->   or AI-visible output is honest. A NULL rate rendered as `"0% APR"`
->   in an LLM tool output is a real bug even when the SQL is correct.
->
-> - **Regression of prior behavior.** When the diff changes behavior in
->   an area that had a named fix commit, check whether the fix is being
->   undone. Use `git log -L <range>:<file>` filtered to "fix"/"bug"/
->   "regression" message patterns. A broadened SQL predicate or a
->   consolidated branch that re-introduces the pre-fix behavior is the
->   characteristic pattern.
->
-> - **Cross-provider / domain scope.** When a function runs inside a
->   path named for one data source (Apple import, Plaid sync, payroll),
->   check whether its queries and writes stay scoped to that source, or
->   whether it silently re-evaluates unrelated data.
->
-> - **Multi-failure-mode at the same call site.** When the diff
->   addresses one failure mode (e.g. wraps a throwing call in
->   try/catch), enumerate other ways the same call can go wrong:
->   inconsistent state, partial writes, stale cache, out-of-order side
->   effects. A "fix" that addresses one mode while leaving another live
->   is a partial fix worth flagging.
->
-> - **Misleading user / AI interfaces.** Outputs that look correct but
->   mislead — `"0% APR"` for a missing rate, `"Manual"` for a non-manual
->   account, silent failures rendered as successes, partial updates
->   reported as complete, generic error messages when specific context
->   was available.
->
-> - **Parallel paths whose invariants have diverged.** Two similar
->   functions/queries where only one got updated; one strict parser and
->   one lenient; a write-side that now allows NULL and a read-side that
->   assumes non-null.
->
-> - **Assumptions that don't hold.** Invariants the code assumes but
->   the diff breaks; ordering assumptions; concurrency; JOIN cardinality
->   against target-table UNIQUE constraints.
->
-> Over-flag; Phase 3 filters. Err toward sharing a half-confident bug.
->
-> `evidence_snippet` may be a multi-file trace when the finding spans
-> layers. Set `source_family: "holistic-family"`; `impact_type` may be
-> any of `correctness | security | ux | policy | architecture`.
+Prompt body: Read `fragments/lens-prompts/L7.md` — its content is the L7
+prompt body verbatim. Prepend the shared invariants from step 1.2.1 and
+dispatch.
 
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 

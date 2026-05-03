@@ -6,17 +6,18 @@ Read this first on a fresh session. It's procedural (how to work in the repo) pl
 
 ## What this repo is
 
-Build repo for five personal Claude Code slash commands, packaged as a plugin (`adamsreview`) distributable via `/plugin marketplace add`:
+Build repo for six personal Claude Code slash commands, packaged as a plugin (`adamsreview`) distributable via `/plugin marketplace add`:
 
-- **`/adamsreview:review`** — multi-lens code review of a branch or PR (Phases 0–6).
+- **`/adamsreview:review`** — multi-lens code review of a branch or PR (Phases 0–6). Claude sub-agent lenses + Opus deep validators.
+- **`/adamsreview:codex-review`** — Codex-driven counterpart to `:review`. Phases 0/2/3/6 reuse the same fragments; Phase 1 detection runs 7 parallel Codex jobs (L1–L7) feeding one Sonnet normalizer; Phase 4a deep validation runs one Codex per finding + per-finding Sonnet shape-fixer; Phase 4b light is chunked-batch Codex + per-chunk Sonnet shape-fixer; Phase 5 is one Codex pass + one Sonnet shape-fixer. Same artifact schema (`reviewer_sources: ["internal-codex"]`); drop-in for `:fix`, `:add`, `:walkthrough`, `:promote`. No `--ensemble` (purpose-built for Codex purity). Effort tunable via `--effort <low|medium|high|xhigh>` (default `high`). Adaptive retry-with-orchestrator-judgment on Codex job failures; user-prompt escalation when degraded.
 - **`/adamsreview:add`** — inject externally-sourced findings (cloud `/ultrareview` paste, Opus once-over, manual finds, etc.) into the most recent review's existing artifact. Free-form paste mode dispatches a Sonnet normalizer; structured `--file/--line/--claim` mode skips the normalizer; one Sonnet dedup pass against existing findings; Phase 4 validation lane-aware (Opus deep / Sonnet light) without Wave 2; re-renders + re-publishes to the existing PR comment.
 - **`/adamsreview:walkthrough [threshold]`** — interactive driver that walks the reviewer through findings `/adamsreview:fix` would skip, restricted to those with effective score (`COALESCE(score_phase4, score_phase3, -1)`) ≥ `$threshold` so low-signal findings don't pad the session. The threshold is a walkthrough-local score floor (default 60) and is decoupled from `/adamsreview:fix`'s threshold — promoted findings are picked up at any fix threshold via the `human_confirmation` bypass. Preflight offers a two-tier scope choice (default **Qualifying** — excludes Phase-3-demoted `below_gate`; **Full skip set** adds them back; note that `below_gate` findings only surface in Full when the threshold is low enough to admit their `score_phase3`). `pre_existing_report` findings are always excluded from both walk tiers and not score-floored; they are routed exclusively to the end-of-run issue-filing phase (one-by-one draft/confirm/edit flow that calls `gh issue create`). Per-finding Sonnet briefing with an "Edit the fix hint" override path; for `confirmed_manual` / `confirmed_report` the briefer proposes best-effort hints. Closes the light-lane `confirmed_mechanical` gap where the default Phase 8 lane filter skips mechanically-fixable ux/policy findings.
 - **`/adamsreview:fix [threshold] [--granular-commits]`** — automated fix loop for auto-fixable findings (Phases 7–9). `--granular-commits` emits one commit per surviving fix group instead of the default single combined commit.
 - **`/adamsreview:promote`** — human override that promotes a single finding to auto-fixable, bypassing the Phase 8 impact_type lane filter and score threshold. Metadata-only; run `/adamsreview:fix` afterwards to apply. Used internally by `/adamsreview:walkthrough` via `fragments/promote-core.md` + `--defer-publish`.
 
-All five commands are in production. Forward-looking work lives in `plans/backlog.md`; per-stage plans and execution journals live in `plans/` (consult for historical rationale).
+All six commands are in production (`:codex-review` newest — added in v0.3.0). Forward-looking work lives in `plans/backlog.md`; per-stage plans and execution journals live in `plans/` (consult for historical rationale).
 
-**Recommended flow on a non-trivial PR:** `/adamsreview:review` → (optional) `/adamsreview:add` to inject parallel-review findings → `/adamsreview:walkthrough` (optional) → `/adamsreview:fix`. Each command is independent; `/adamsreview:promote` remains useful for one-off manual promotions outside the walkthrough.
+**Recommended flow on a non-trivial PR:** `/adamsreview:review` (or `/adamsreview:codex-review` for a Codex-driven peer review) → (optional) `/adamsreview:add` to inject parallel-review findings → `/adamsreview:walkthrough` (optional) → `/adamsreview:fix`. Each command is independent; `/adamsreview:promote` remains useful for one-off manual promotions outside the walkthrough. `:review` and `:codex-review` are peer entrypoints producing the same artifact shape (distinguished by `reviewer_sources`) — pick one per review session.
 
 ## Pipeline shape
 
@@ -48,6 +49,48 @@ All five commands are in production. Forward-looking work lives in `plans/backlo
 └── Phase 6 — Finalize (phases.jsonl, tally-subagent-tokens.sh → subagent_tokens,
                orchestrator-tokens.sh → orchestrator_tokens, artifact write,
                render, PR comment POST)
+
+/adamsreview:codex-review [--effort <low|medium|high|xhigh>] [--full]
+├── Codex readiness gate (find codex-companion.mjs; `setup --json` ready?
+│     fail-fast — no Claude fallback; suggest /codex:setup on missing/not-ready)
+├── Phase 0 — Pre-flight (same fragment as :review; passes `--reviewer-sources
+│              internal-codex` to artifact-seed.sh so the seeded artifact
+│              carries reviewer_sources: ["internal-codex"])
+├── Phase 1 — Codex detection (7 parallel `node $CODEX_COMPANION task
+│              --background --effort $effort` jobs, one per lens L1–L7;
+│              prompt body = fragments/lens-prompts/_shared-invariants.md +
+│              fragments/lens-prompts/L<N>.md with $claude_md_paths and
+│              $prior_fix_suspects substituted; poll via codex-poll.sh
+│              [stall→cancel→§3.7 retry watchdog]; one combined Sonnet
+│              normalizer over all 7 outputs → parse-with-repair + schema-
+│              guard + assign-finding-ids + origin-crosscheck +
+│              line-range-check + batched --add-findings; adaptive
+│              retry-with-judgment policy; AskUserQuestion escalation on
+│              degraded coverage)
+├── Phase 1.5 — Skipped (codex-review has no --ensemble; no CodeRabbit,
+│              no PR-comment scrape — purpose-built for Codex purity)
+├── Phase 2 — Dedup (same fragment as :review)
+├── Phase 3 — Scoring gate (same fragment as :review)
+├── Phase 4 — Codex validation
+│   ├── Phase 4a deep — one parallel Codex per finding + per-finding Sonnet
+│   │     shape-fixer; per-finding atomicity (one bad output → uncertain
+│   │     for that finding only; rest of batch applies via --apply-decisions
+│   │     --expected $N); polled via codex-poll.sh [watchdog → sentinel
+│   │     uncertain on stall]
+│   ├── Phase 4b light — chunked-batch Codex (≤25 per chunk) + per-chunk
+│   │     Sonnet shape-fixer; per-chunk atomicity; polled via codex-poll.sh
+│   │     [watchdog → sentinel uncertain on stall]
+│   ├── Wave 2 — DISABLED (bounded scope per plan; mirrors :add policy)
+│   ├── Pre-existing override re-assertion — same as :review
+│   └── Tree-cleanliness sweep + summary — same as :review
+├── Phase 5 — Codex cross-cutting (one Codex pass over confirmed deep-lane
+│              actionable findings + one Sonnet shape-fixer; emits
+│              cross_cutting_groups; polled via codex-poll.sh [watchdog →
+│              skip Phase 5 on stall — observability, not correctness])
+└── Phase 6 — Finalize (same fragment as :review; tally-subagent-tokens.sh
+               rolls Sonnet shape-fixer + normalizer spend; Codex tokens
+               are NOT in tokens.jsonl — billed externally per Phase 1.5
+               precedent)
 
 /adamsreview:fix [threshold] [--granular-commits]
 ├── Phase 7 — Load artifact; leftover-attempted abort; clean-tree gate; staleness check; branch-behind-base advisory at 7.6a
@@ -270,16 +313,23 @@ adamsreview/
 │                                     chronological idea log + DONE markers live in
 │                                     `plans/post-conversion-ideas.md`.
 ├── commands/                       ← bare-stem command files (D18 namespacing)
-│   ├── review.md                   ← /adamsreview:review     (Phases 0–6)
-│   ├── add.md                      ← /adamsreview:add        (inject external findings)
-│   ├── walkthrough.md              ← /adamsreview:walkthrough (interactive)
-│   ├── fix.md                      ← /adamsreview:fix        (Phases 7–9)
-│   └── promote.md                  ← /adamsreview:promote    (metadata promote)
+│   ├── review.md                   ← /adamsreview:review        (Phases 0–6, Claude lenses)
+│   ├── codex-review.md             ← /adamsreview:codex-review  (Phases 0–6, Codex lenses + Sonnet shape-fixers)
+│   ├── add.md                      ← /adamsreview:add           (inject external findings)
+│   ├── walkthrough.md              ← /adamsreview:walkthrough   (interactive)
+│   ├── fix.md                      ← /adamsreview:fix           (Phases 7–9)
+│   └── promote.md                  ← /adamsreview:promote       (metadata promote)
 ├── fragments/                      ← shared phase fragments + prompt references
-│   ├── 00-preflight.md … 10-post-fix-and-commit.md   ← phase fragments
+│   ├── 00-preflight.md … 10-post-fix-and-commit.md   ← phase fragments (Claude path)
+│   ├── 01-codex-detection.md       ← Phase 1 Codex variant (codex-review)
+│   ├── 05-codex-validation.md      ← Phase 4 Codex variant (codex-review)
+│   ├── 06-codex-cross-cutting.md   ← Phase 5 Codex variant (codex-review)
 │   ├── _prelude-shared.md          ← shared startup rules loaded by every command (operational rules + error conventions)
 │   ├── promote-core.md             ← shared precondition + patch (promote + walkthrough)
-│   └── lens-{ux,security}-reference.md
+│   ├── lens-prompts/               ← extracted lens prompt bodies — single source of truth
+│   │   ├── _shared-invariants.md   ← prepended to every L1–L7 prompt (candidate schema, line-range rules, origin defaults)
+│   │   └── L{1..7}.md              ← per-lens prompt body (consumed by both :review and :codex-review)
+│   └── lens-{ux,security}-reference.md   ← legacy duplicates of L5/L6 content; kept for backward-compat smoke (UXT-1) — not consumed at runtime post-extraction
 ├── bin/                            ← helper scripts (auto-added to $PATH by plugin runtime)
 │   ├── include                     ← wrapper for `!include <fragment>.md` transclusion
 │   ├── schema-v1.json              ← artifact shape (source of truth)
@@ -391,6 +441,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 | `log-phase.sh` | Bash | Appends `trace.md` + `phases.jsonl`. Every phase fragment calls this. |
 | `log-tokens.sh` | Bash | Appends `tokens.jsonl`. Every sub-agent dispatch. |
 | `freshness-gate.sh` | Bash | Phase 0.2a base-branch freshness reconciliation. Detects remote, fetches (30s soft timeout), computes behind_count; emits JSON `{comparison_ref, base_freshness, remote_sha, behind_count, preflight_warnings[]}` with `base_freshness ∈ {fresh, fast_forwarded, used_remote_ref, proceeded_stale, no_remote, no_fetch, pending_user_gate}`. `pending_user_gate` signals the orchestrator to dispatch `AskUserQuestion` and re-invoke with `--after-choice <a|b|c>`; the helper then applies the chosen side-effect (fast-forward / used_remote_ref / proceeded_stale) and re-emits terminal JSON. Non-FF on (a) re-emits pending with `ff_available: false` so the orchestrator re-asks with only (b)/(c)/(d). |
+| `codex-poll.sh` | Bash | Phase 1 / 4 / 5 codex-job liveness watchdog (codex-review only). Wraps `node "$CODEX_COMPANION" status --json` with a two-signal stall check (logFile mtime > 90s + `result --json` "No job found" desync probe) and a per-effort wall-clock ceiling. Emits one JSON verdict per call: `alive` / `stalled_suspect` (keep polling) / `broker_desynced` / `wall_clock_exceeded` / `failed_terminal` (cancel + §3.7 retry) / `completed` (with plucked `raw_output`). Single source of truth — fragments must NOT call `node "$CODEX_COMPANION" status` directly (smoke `CR-13c` enforces). Defends against the bug class where the codex-companion broker reports `running` indefinitely after the underlying turn dies (real failure 2026-05-03; see `plans/codex-watchdog.md`). |
 | `tally-subagent-tokens.sh` | Bash | Rolls `tokens.jsonl` into `subagent_tokens` on the artifact. Pure readback, idempotent. Called at Phase 6 finalize and before each lifecycle command's final re-render so the published total stays cumulative across review → fix / add / walkthrough. |
 | `orchestrator-tokens.sh` | Bash | Rolls Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/` into `orchestrator_tokens`. Complements `tally-subagent-tokens.sh` by capturing the main-session per-turn spend that `subagent_tokens` deliberately excludes (§11). **Opt-in via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`** (default skip — the transcript scan trips the macOS Sequoia/Tahoe "access data from other apps" prompt because Claude Code marks transcripts with the `com.apple.provenance` xattr; opt-out exits 0 with a `skipped` stdout line and leaves the artifact untouched, preserving any prior opted-in value). Slug algorithm is `tr '/.' '-'` (both chars map to `-`). `--since` filters by assistant-line timestamp; when opted in, v1 accepts soft over-count modes from unrelated same-cwd sessions or intermission chat between lifecycle commands. |
 | `group-fixes.py` | Python | Phase 8 union-find over `files_planned` across eligible findings. Emits `[{id, finding_ids, files_planned}]`. |
