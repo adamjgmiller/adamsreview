@@ -3868,12 +3868,19 @@ fi
 # Post codex-review §4.1: the L2 prompt body now lives in
 # fragments/lens-prompts/L2.md; the substitution directive lives in
 # 01-detection.md §1.3 L2 dispatch. Both anchors must be present.
+# Post parallel-dispatch imperative-fix (v0.3.2): L2 sub-section is
+# declarative spec form ("Per-lens substitution: `$prior_fix_suspects`
+# → ..."); prior wording was "Substitute `$prior_fix_suspects` ...".
+# The new phrase wraps across lines in the fragment (70-char prose
+# wrap places "Per-lens" and "substitution: `$prior_fix_suspects`" on
+# adjacent lines), so flatten newlines before grep -qF.
+detection_flat=$(tr '\n' ' ' < "$DETECTION_MD")
 if grep -qF 'Prior-fix reversion check' "$L2_PROMPT" \
     && grep -qF '$prior_fix_suspects' "$L2_PROMPT" \
-    && grep -qF 'Substitute `$prior_fix_suspects`' "$DETECTION_MD"; then
+    && printf '%s' "$detection_flat" | grep -qF 'Per-lens substitution: `$prior_fix_suspects`'; then
     pass "PFD-9 (§13.11b): L2 prompt consumes \$prior_fix_suspects (body in lens-prompts/L2.md, dispatch directive in 01-detection.md)"
 else
-    fail "PFD-9: L2 prior-fix addendum missing from $L2_PROMPT or substitute directive missing from $DETECTION_MD"
+    fail "PFD-9: L2 prior-fix addendum missing from $L2_PROMPT or substitution directive missing from $DETECTION_MD"
 fi
 
 # PFD-7: Lookback cap — prior fix committed before the --lookback-days
@@ -5607,33 +5614,48 @@ else
     fail "CR-11: 01-codex-detection.md missing select(type == \"object\") guard in §1.5.1 normalizer-array projection"
 fi
 
-# CR-12: fragments/01-detection.md §1.3 carries an emphatic top-of-section
-# parallel-dispatch directive between the section header and the first L1
-# sub-section. The lens-prompt extraction (L1–L7 moved to
-# fragments/lens-prompts/) replaced inline blockquoted prompts in §1.3
-# with per-lens "Prompt body: Read fragments/lens-prompts/L<N>.md … and
-# dispatch" recipes. Each per-lens sub-section then reads as a self-
-# contained "Read X then dispatch Agent" pair, which an orchestrator
-# processing the fragment top-to-bottom can interpret as a serial
-# action — defeating the parallel dispatch this phase depends on
-# (Phase 1 wall-clock goes from max → sum). Mirrors the emphatic
-# "SINGLE orchestrator turn" directive in fragments/01-codex-detection.md
-# §1.3 (line ~188).
+# CR-12: fragments/01-detection.md §1.3 parallel-dispatch contract.
+# Two-part guard against the lens-prompt-extraction regression class
+# (PR #23 + the partial fix in 0466d04, then re-reproduced 2026-05-03
+# on beta-briefing/onboard-page despite the directive being live).
 #
-# Guard: the substring "SINGLE orchestrator turn" must appear inside §1.3
-# *between* the §1.3 header and the §1.3 first L1 sub-section ("#### L1").
-# An awk window keeps the assertion targeted: a SINGLE-turn mention
-# elsewhere in the fragment (e.g. a hypothetical §1.4) would not satisfy
-# the §1.3 placement contract.
-cr12_window=$(awk '
+# CR-12a: top-of-section "SINGLE orchestrator turn" directive present
+# between the §1.3 header and the first L1 sub-section.
+#
+# CR-12b: per-lens sub-sections (#### L1 through end of §1.3) contain
+# ZERO imperative dispatch phrases ("Launch one `Agent` tool-use" /
+# "and dispatch."). The directive's prose alone is not load-bearing
+# — local imperatives in the per-lens sub-sections override it
+# structurally. This guard fails if a future fragment edit
+# reintroduces imperative-shaped per-lens recipes.
+#
+# CR-12a window: between "### 1.3." and "#### L1 ".
+# CR-12b window: between "#### L1 " and "### 1.4." (catches all per-lens
+# sub-sections L1–L7 plus any closing dispatch sub-section before §1.4).
+
+cr12a_window=$(awk '
     /^### 1\.3\./        {in_window=1; next}
     /^#### L1 /          {if (in_window) in_window=0}
     in_window            {print}
 ' "$REPO/fragments/01-detection.md" | tr '\n' ' ')
-if printf '%s' "$cr12_window" | grep -qE 'SINGLE[[:space:]]+orchestrator[[:space:]]+turn'; then
-    pass "CR-12: fragments/01-detection.md §1.3 carries top-of-section SINGLE-turn parallel-dispatch directive (regression guard for lens-prompt extraction serializing dispatch)"
+if printf '%s' "$cr12a_window" | grep -qE 'SINGLE[[:space:]]+orchestrator[[:space:]]+turn'; then
+    pass "CR-12a: fragments/01-detection.md §1.3 carries top-of-section SINGLE-turn parallel-dispatch directive (regression guard for lens-prompt extraction serializing dispatch)"
 else
-    fail "CR-12: fragments/01-detection.md §1.3 missing top-of-section 'SINGLE orchestrator turn' directive between §1.3 header and the first L1 sub-section"
+    fail "CR-12a: fragments/01-detection.md §1.3 missing top-of-section 'SINGLE orchestrator turn' directive between §1.3 header and the first L1 sub-section"
+fi
+
+cr12b_window=$(awk '
+    /^#### L1 /     {in_window=1}
+    /^### 1\.4\./   {in_window=0}
+    in_window       {print}
+' "$REPO/fragments/01-detection.md")
+cr12b_imperatives=$(printf '%s\n' "$cr12b_window" \
+    | grep -cE '(Launch one `Agent` tool-use|and dispatch\.)' \
+    || true)
+if [[ "$cr12b_imperatives" == "0" ]]; then
+    pass "CR-12b: per-lens sub-sections in fragments/01-detection.md §1.3 contain no imperative dispatch phrases (regression guard for serial-dispatch reintroduction via per-lens recipes)"
+else
+    fail "CR-12b: $cr12b_imperatives imperative dispatch phrase(s) ('Launch one \`Agent\` tool-use' / 'and dispatch.') found in fragments/01-detection.md §1.3 per-lens sub-sections — these reintroduce serial dispatch despite the §1.3 top-of-section directive"
 fi
 
 # CR-13: codex-poll.sh watchdog wires up cleanly — single source of truth
