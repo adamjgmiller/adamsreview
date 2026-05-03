@@ -227,43 +227,76 @@ for what's in flight. The §1.6 summary's `lenses_run` and
 
 ### 1.4. Poll the Codex jobs (subsequent orchestrator turns)
 
-For each `jobId` in the map, poll via:
+For each `jobId` in the map, poll via the watchdog helper:
 
 ```bash
-node "$CODEX_COMPANION" status "$job_id" --json | jq -r '.job.status'
+case "$effort" in
+    low)    ceiling=300 ;;    # 5 min
+    medium) ceiling=480 ;;    # 8 min
+    high)   ceiling=900 ;;    # 15 min
+    xhigh)  ceiling=1500 ;;   # 25 min
+    *)      ceiling=900 ;;
+esac
+
+poll=$(codex-poll.sh \
+        --job "$job_id" \
+        --companion "$CODEX_COMPANION" \
+        --stall-threshold-sec 90 \
+        --wall-clock-ceiling-sec "$ceiling")
+verdict=$(printf '%s' "$poll" | jq -r '.verdict')
 ```
 
-Terminal states: `completed`, `failed`, `cancelled`. Non-terminal:
-`queued`, `running`. (The companion's status state field is
-`.job.status` on the snapshot — NOT a top-level `.state`. Verified
-against `~/.claude/plugins/.../scripts/codex-companion.mjs`'s
-`buildSingleJobSnapshot`.) Poll all jobs in one orchestrator turn
-(multiple Bash blocks, each polling a different job) until all are
-terminal.
+`codex-poll.sh` wraps `node "$CODEX_COMPANION" status --json` with a
+two-signal liveness check (logFile mtime + `result --json` desync
+probe) plus a wall-clock ceiling. See `bin/codex-poll.sh` and
+`plans/codex-watchdog.md` for the bug class — direct calls to
+`node "$CODEX_COMPANION" status` are forbidden in this fragment
+(smoke `CR-13c` enforces).
 
-A reasonable polling cadence is one full sweep per orchestrator turn
-with no explicit sleep between turns — Claude Code's turn cadence
-provides natural pacing. If a job stays in `running` for an
-unreasonably long time (>15 minutes), treat it as a soft-timeout
-candidate for the retry-or-escalate path.
+Each call emits one verdict per `jobId`:
 
-When a job reaches a terminal state, fetch its output:
+| verdict | meaning | next action |
+|---|---|---|
+| `alive` | broker says running; logFile fresh | keep polling next turn |
+| `stalled_suspect` | logFile stale > 90s but broker still coherent | keep polling next turn |
+| `broker_desynced` | broker says running, disk store says "No job found" — confirmed dead | cancel + §3.7 retry |
+| `wall_clock_exceeded` | elapsed > effort-derived ceiling | cancel + §3.7 retry |
+| `completed` | terminal; `raw_output` is in the verdict | consume `raw_output`, exit poll loop |
+| `failed_terminal` | terminal `failed` / `cancelled` | §3.7 retry |
+
+Poll all jobs in one orchestrator turn (multiple Bash blocks, each
+polling a different job) until all are terminal. Claude Code's
+between-turn cadence provides natural pacing — no explicit sleep
+between turns.
+
+When verdict is `broker_desynced` or `wall_clock_exceeded`, cancel
+the job before routing into §3.7's retry path. Cancel is
+fire-and-forget — its outcome doesn't gate the next step, and the
+wall-clock-ceiling logic in `codex-poll.sh` re-fires regardless on
+the next poll. Background + `disown` is Bash 3.2-portable; `timeout`
+is GNU coreutils and isn't on stock macOS:
 
 ```bash
-node "$CODEX_COMPANION" result "$job_id" --json \
-    > "/tmp/adams-review-codex-${review_id}-L${N}.out.json"
-
-codex_output_L<N>=$(jq -r '
-    .storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
-' "/tmp/adams-review-codex-${review_id}-L${N}.out.json")
+( node "$CODEX_COMPANION" cancel "$job_id" >/dev/null 2>&1 ) & disown
+elapsed_for_log=$(printf '%s' "$poll" | jq -r '.elapsed_sec // "null"')
+printf 'phase_1_codex_watchdog: lens=L<N> verdict=%s job=%s elapsed=%s\n' \
+    "$verdict" "$job_id" "$elapsed_for_log" >> "$trace_log_path"
+# fall through to §3.7 retry-with-orchestrator-judgment
 ```
 
-The companion's task-mode result emits `{job, storedJob}`; the
-freeform Codex stdout (the review text) lives at
-`.storedJob.result.rawOutput`. The `// .storedJob.payload.rawOutput
-// .storedJob.rawOutput // ""` fallback chain handles older companion
-shapes and the partial-failure record where the result sub-object
-isn't populated (Codex erred mid-task). Capture as `codex_output_L<N>`.
+When verdict is `completed`, the `raw_output` field IS the freeform
+Codex stdout — the helper has already plucked
+`.storedJob.result.rawOutput` (with the documented
+`// .storedJob.payload.rawOutput // .storedJob.rawOutput // ""`
+fallback chain) so this fragment doesn't repeat the result fetch:
+
+```bash
+codex_output_L<N>=$(printf '%s' "$poll" | jq -r '.raw_output')
+```
+
+Capture as `codex_output_L<N>`. An empty `raw_output` on a `completed`
+verdict still routes to the §3.7 retry path (the existing "completed
+but malformed" branch).
 
 #### Retry-with-orchestrator-judgment (per plan §3.7)
 

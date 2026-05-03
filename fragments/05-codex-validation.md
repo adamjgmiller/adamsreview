@@ -166,19 +166,57 @@ job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
 
 #### 4.2.3. Poll, fetch, shape-fix per finding
 
-Once all deep-lane Codex jobs are terminal (poll via `node
-"$CODEX_COMPANION" status <job_id> --json | jq -r '.job.status'`),
-fetch each output and pluck the freeform stdout from
-`.storedJob.result.rawOutput`:
+Poll each deep-lane Codex job via the watchdog helper (same shape
+as §1.4):
 
 ```bash
-node "$CODEX_COMPANION" result "$job_id" --json \
-    > "/tmp/adams-review-codex-${review_id}-V-${finding_id}.out.json"
+case "$effort" in
+    low)    ceiling=300 ;;    # 5 min
+    medium) ceiling=480 ;;    # 8 min
+    high)   ceiling=900 ;;    # 15 min
+    xhigh)  ceiling=1500 ;;   # 25 min
+    *)      ceiling=900 ;;
+esac
 
-codex_output=$(jq -r '
-    .storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
-' "/tmp/adams-review-codex-${review_id}-V-${finding_id}.out.json")
+poll=$(codex-poll.sh \
+        --job "$job_id" \
+        --companion "$CODEX_COMPANION" \
+        --stall-threshold-sec 90 \
+        --wall-clock-ceiling-sec "$ceiling")
+verdict=$(printf '%s' "$poll" | jq -r '.verdict')
 ```
+
+Verdict-branching matches §1.4's table verbatim — see that section
+for the full list. The behaviors that matter here:
+
+- `alive` / `stalled_suspect` → keep polling next turn.
+- `completed` → `raw_output` is in the verdict; capture as
+  `codex_output` (the helper has already plucked the canonical
+  `.storedJob.result.rawOutput` chain — direct calls to
+  `node "$CODEX_COMPANION" status` are forbidden in this fragment,
+  smoke `CR-13c` enforces).
+- `broker_desynced` / `wall_clock_exceeded` / `failed_terminal` →
+  cancel (best-effort) and route the single finding into §4.2.4's
+  per-finding atomicity (sentinel tuple, `disposition: uncertain`).
+
+```bash
+( node "$CODEX_COMPANION" cancel "$job_id" >/dev/null 2>&1 ) & disown   # fire-and-forget; `timeout` is GNU coreutils, not on stock macOS
+elapsed_for_log=$(printf '%s' "$poll" | jq -r '.elapsed_sec // "null"')
+printf 'phase_4a_codex_watchdog: finding=%s verdict=%s job=%s elapsed=%s\n' \
+    "$finding_id" "$verdict" "$job_id" "$elapsed_for_log" >> "$trace_log_path"
+# fall through to §4.2.4 per-finding atomicity (sentinel uncertain)
+```
+
+For the `completed` happy path:
+
+```bash
+codex_output=$(printf '%s' "$poll" | jq -r '.raw_output')
+```
+
+An empty `raw_output` on `completed` still routes to §4.2.4's
+sentinel-uncertain path — the §3.7 retry-with-judgment loop sits
+above this verdict-branch in the same orchestrator turn structure
+as §1.4.
 
 Then dispatch ONE Sonnet shape-fixer per finding. Each shape-fixer
 takes that freeform Codex output and returns a single canonical tuple.
@@ -380,12 +418,50 @@ job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
     --json | jq -r '.jobId')
 ```
 
-Poll all in one orchestrator turn via
-`node "$CODEX_COMPANION" status <job_id> --json | jq -r '.job.status'`
-until terminal. Then fetch each chunk's output the same way Phase 4a
-does: pluck `.storedJob.result.rawOutput` (with
-`// .storedJob.payload.rawOutput // .storedJob.rawOutput` fallbacks)
-into a `codex_chunk_output_<N>` shell variable.
+Poll each chunk via the watchdog helper. Light-lane reasoning is
+shorter than the deep lane — same per-effort table but compressed
+ceilings (10 min high / 18 min xhigh; chunked-batch over ≤25
+candidates is shallower than per-finding deep validation):
+
+```bash
+case "$effort" in
+    low)    ceiling=240 ;;    # 4 min
+    medium) ceiling=360 ;;    # 6 min
+    high)   ceiling=600 ;;    # 10 min
+    xhigh)  ceiling=1080 ;;   # 18 min
+    *)      ceiling=600 ;;
+esac
+
+poll=$(codex-poll.sh \
+        --job "$job_id" \
+        --companion "$CODEX_COMPANION" \
+        --stall-threshold-sec 90 \
+        --wall-clock-ceiling-sec "$ceiling")
+verdict=$(printf '%s' "$poll" | jq -r '.verdict')
+```
+
+Verdict-branching matches §1.4's table. Direct calls to
+`node "$CODEX_COMPANION" status` are forbidden in this fragment
+(smoke `CR-13c` enforces). On `completed`, capture
+`codex_chunk_output_<N>` from the verdict's `raw_output` — the
+helper has already plucked
+`.storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""`:
+
+```bash
+codex_chunk_output_<N>=$(printf '%s' "$poll" | jq -r '.raw_output')
+```
+
+On `broker_desynced` / `wall_clock_exceeded` / `failed_terminal`,
+cancel best-effort and route the chunk into §4.3.3's per-chunk
+atomicity (sentinel uncertain for every candidate id in the chunk):
+
+```bash
+( node "$CODEX_COMPANION" cancel "$job_id" >/dev/null 2>&1 ) & disown   # fire-and-forget; `timeout` is GNU coreutils, not on stock macOS
+elapsed_for_log=$(printf '%s' "$poll" | jq -r '.elapsed_sec // "null"')
+printf 'phase_4b_codex_watchdog: chunk=%s verdict=%s job=%s elapsed=%s\n' \
+    "$chunk_n" "$verdict" "$job_id" "$elapsed_for_log" >> "$trace_log_path"
+# fall through to §4.3.3 per-chunk atomicity
+```
 
 Dispatch ONE Sonnet shape-fixer per chunk:
 

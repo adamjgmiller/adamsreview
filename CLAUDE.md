@@ -60,12 +60,13 @@ All six commands are in production (`:codex-review` newest — added in v0.3.0).
 │              --background --effort $effort` jobs, one per lens L1–L7;
 │              prompt body = fragments/lens-prompts/_shared-invariants.md +
 │              fragments/lens-prompts/L<N>.md with $claude_md_paths and
-│              $prior_fix_suspects substituted; poll via `status --json`,
-│              fetch via `result --json`; one combined Sonnet normalizer
-│              over all 7 outputs → parse-with-repair + schema-guard +
-│              assign-finding-ids + origin-crosscheck + line-range-check
-│              + batched --add-findings; adaptive retry-with-judgment
-│              policy; AskUserQuestion escalation on degraded coverage)
+│              $prior_fix_suspects substituted; poll via codex-poll.sh
+│              [stall→cancel→§3.7 retry watchdog]; one combined Sonnet
+│              normalizer over all 7 outputs → parse-with-repair + schema-
+│              guard + assign-finding-ids + origin-crosscheck +
+│              line-range-check + batched --add-findings; adaptive
+│              retry-with-judgment policy; AskUserQuestion escalation on
+│              degraded coverage)
 ├── Phase 1.5 — Skipped (codex-review has no --ensemble; no CodeRabbit,
 │              no PR-comment scrape — purpose-built for Codex purity)
 ├── Phase 2 — Dedup (same fragment as :review)
@@ -74,15 +75,18 @@ All six commands are in production (`:codex-review` newest — added in v0.3.0).
 │   ├── Phase 4a deep — one parallel Codex per finding + per-finding Sonnet
 │   │     shape-fixer; per-finding atomicity (one bad output → uncertain
 │   │     for that finding only; rest of batch applies via --apply-decisions
-│   │     --expected $N)
+│   │     --expected $N); polled via codex-poll.sh [watchdog → sentinel
+│   │     uncertain on stall]
 │   ├── Phase 4b light — chunked-batch Codex (≤25 per chunk) + per-chunk
-│   │     Sonnet shape-fixer; per-chunk atomicity
+│   │     Sonnet shape-fixer; per-chunk atomicity; polled via codex-poll.sh
+│   │     [watchdog → sentinel uncertain on stall]
 │   ├── Wave 2 — DISABLED (bounded scope per plan; mirrors :add policy)
 │   ├── Pre-existing override re-assertion — same as :review
 │   └── Tree-cleanliness sweep + summary — same as :review
 ├── Phase 5 — Codex cross-cutting (one Codex pass over confirmed deep-lane
 │              actionable findings + one Sonnet shape-fixer; emits
-│              cross_cutting_groups)
+│              cross_cutting_groups; polled via codex-poll.sh [watchdog →
+│              skip Phase 5 on stall — observability, not correctness])
 └── Phase 6 — Finalize (same fragment as :review; tally-subagent-tokens.sh
                rolls Sonnet shape-fixer + normalizer spend; Codex tokens
                are NOT in tokens.jsonl — billed externally per Phase 1.5
@@ -437,6 +441,7 @@ All scripts live under `bin/`. The plugin runtime adds `bin/` to `$PATH` on load
 | `log-phase.sh` | Bash | Appends `trace.md` + `phases.jsonl`. Every phase fragment calls this. |
 | `log-tokens.sh` | Bash | Appends `tokens.jsonl`. Every sub-agent dispatch. |
 | `freshness-gate.sh` | Bash | Phase 0.2a base-branch freshness reconciliation. Detects remote, fetches (30s soft timeout), computes behind_count; emits JSON `{comparison_ref, base_freshness, remote_sha, behind_count, preflight_warnings[]}` with `base_freshness ∈ {fresh, fast_forwarded, used_remote_ref, proceeded_stale, no_remote, no_fetch, pending_user_gate}`. `pending_user_gate` signals the orchestrator to dispatch `AskUserQuestion` and re-invoke with `--after-choice <a|b|c>`; the helper then applies the chosen side-effect (fast-forward / used_remote_ref / proceeded_stale) and re-emits terminal JSON. Non-FF on (a) re-emits pending with `ff_available: false` so the orchestrator re-asks with only (b)/(c)/(d). |
+| `codex-poll.sh` | Bash | Phase 1 / 4 / 5 codex-job liveness watchdog (codex-review only). Wraps `node "$CODEX_COMPANION" status --json` with a two-signal stall check (logFile mtime > 90s + `result --json` "No job found" desync probe) and a per-effort wall-clock ceiling. Emits one JSON verdict per call: `alive` / `stalled_suspect` (keep polling) / `broker_desynced` / `wall_clock_exceeded` / `failed_terminal` (cancel + §3.7 retry) / `completed` (with plucked `raw_output`). Single source of truth — fragments must NOT call `node "$CODEX_COMPANION" status` directly (smoke `CR-13c` enforces). Defends against the bug class where the codex-companion broker reports `running` indefinitely after the underlying turn dies (real failure 2026-05-03; see `plans/codex-watchdog.md`). |
 | `tally-subagent-tokens.sh` | Bash | Rolls `tokens.jsonl` into `subagent_tokens` on the artifact. Pure readback, idempotent. Called at Phase 6 finalize and before each lifecycle command's final re-render so the published total stays cumulative across review → fix / add / walkthrough. |
 | `orchestrator-tokens.sh` | Bash | Rolls Claude Code session transcripts under `~/.claude/projects/<cwd-slug>/` into `orchestrator_tokens`. Complements `tally-subagent-tokens.sh` by capturing the main-session per-turn spend that `subagent_tokens` deliberately excludes (§11). **Opt-in via `ADAMS_REVIEW_TALLY_ORCHESTRATOR=1`** (default skip — the transcript scan trips the macOS Sequoia/Tahoe "access data from other apps" prompt because Claude Code marks transcripts with the `com.apple.provenance` xattr; opt-out exits 0 with a `skipped` stdout line and leaves the artifact untouched, preserving any prior opted-in value). Slug algorithm is `tr '/.' '-'` (both chars map to `-`). `--since` filters by assistant-line timestamp; when opted in, v1 accepts soft over-count modes from unrelated same-cwd sessions or intermission chat between lifecycle commands. |
 | `group-fixes.py` | Python | Phase 8 union-find over `files_planned` across eligible findings. Emits `[{id, finding_ids, files_planned}]`. |

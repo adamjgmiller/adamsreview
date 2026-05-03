@@ -5636,6 +5636,110 @@ else
     fail "CR-12: fragments/01-detection.md §1.3 missing top-of-section 'SINGLE orchestrator turn' directive between §1.3 header and the first L1 sub-section"
 fi
 
+# CR-13: codex-poll.sh watchdog wires up cleanly — single source of truth
+# for codex-job liveness checking. plans/codex-watchdog.md (FU-5) replaces
+# raw `node "$CODEX_COMPANION" status --json` polls with a helper that
+# detects broker-vs-disk desync via a two-signal liveness check. Without
+# it, a stalled codex turn leaves the broker reporting `running`
+# indefinitely (real failure observed 2026-05-03, beta-briefing/onboard-page).
+#
+# Three sub-checks:
+#   a. bin/codex-poll.sh exists, is executable, has a bash shebang.
+#   b. each of the four codex-fragment files invokes codex-poll.sh at
+#      least once.
+#   c. no fragment file outside bin/ calls `node "$CODEX_COMPANION"
+#      status` directly anymore — every poll site MUST go through the
+#      helper. (commands/codex-review.md is allowed to mention the
+#      pattern in its prose; the assertion only fires on fragment files.)
+
+# CR-13a — helper file exists, executable, bash shebang
+CR13_HELPER="$REPO/bin/codex-poll.sh"
+if [[ -x "$CR13_HELPER" ]] && head -1 "$CR13_HELPER" | grep -qE '^#!/usr/bin/env bash'; then
+    pass "CR-13a: bin/codex-poll.sh exists, is executable, and uses #!/usr/bin/env bash"
+else
+    fail "CR-13a: bin/codex-poll.sh missing, not executable, or wrong shebang"
+fi
+
+# CR-13b — each codex fragment invokes the helper
+CR13_FRAGMENTS=(
+    "fragments/01-codex-detection.md"
+    "fragments/05-codex-validation.md"
+    "fragments/06-codex-cross-cutting.md"
+)
+cr13b_missing=""
+for f in "${CR13_FRAGMENTS[@]}"; do
+    p="$REPO/$f"
+    if ! grep -qF 'codex-poll.sh' "$p"; then
+        cr13b_missing="$cr13b_missing $f"
+    fi
+done
+# 05-codex-validation.md hosts §4.2.3 AND §4.3.2 — require ≥2 invocations
+# in that file specifically.
+v05_count=$(grep -cF 'poll=$(codex-poll.sh' "$REPO/fragments/05-codex-validation.md" 2>/dev/null || echo 0)
+if [[ -z "$cr13b_missing" ]] && [[ "$v05_count" -ge 2 ]]; then
+    pass "CR-13b: every codex fragment invokes codex-poll.sh (05-codex-validation.md hosts both §4.2.3 and §4.3.2; v05_count=$v05_count)"
+else
+    fail "CR-13b: codex-poll.sh wiring incomplete:$cr13b_missing v05_count=$v05_count (expected ≥2 in 05-codex-validation.md)"
+fi
+
+# CR-13c — no fragment file calls `node "$CODEX_COMPANION" status` directly
+cr13c_violations=""
+for f in "${CR13_FRAGMENTS[@]}"; do
+    p="$REPO/$f"
+    if grep -nE 'node "\$CODEX_COMPANION" status' "$p" >/dev/null 2>&1; then
+        # Allow inside `forbidden in this fragment` prose bands — those
+        # mention the literal pattern as the rule being enforced. Any
+        # such mention must appear inside a quoted-prose bullet (the
+        # `direct calls to .* are forbidden` phrase) and not as a bash
+        # invocation. Use awk to filter: lines starting with whitespace
+        # then `node "$CODEX_COMPANION" status` (a bash call), with no
+        # surrounding "forbidden" prose.
+        offending=$(awk '
+            /forbidden in this fragment/ { next }
+            /^[[:space:]]*node "\$CODEX_COMPANION" status/ { print NR ": " $0 }
+        ' "$p")
+        if [[ -n "$offending" ]]; then
+            cr13c_violations="$cr13c_violations $f($(echo "$offending" | tr '\n' ';'))"
+        fi
+    fi
+done
+if [[ -z "$cr13c_violations" ]]; then
+    pass "CR-13c: no codex fragment calls 'node \"\$CODEX_COMPANION\" status' directly — all poll sites go through codex-poll.sh"
+else
+    fail "CR-13c: direct status-poll calls found:$cr13c_violations"
+fi
+
+# CR-13d — codex-poll.sh handles broker "No job found" status path gracefully.
+# Without this, lib/job-control.mjs `buildSingleJobSnapshot` throwing on a
+# pruned/unknown jobId aborts the helper with exit 5, and the fragments'
+# `poll=$(codex-poll.sh ...)` invocation under `set -euo pipefail` would
+# crash the whole --apply-decisions batch instead of producing a per-unit
+# sentinel-uncertain.
+if grep -qE "No job found" "$CR13_HELPER" \
+   && grep -qE 'emit "unknown" "broker_desynced"' "$CR13_HELPER"; then
+    pass "CR-13d: codex-poll.sh converts broker 'No job found' on status path to graceful broker_desynced verdict"
+else
+    fail "CR-13d: codex-poll.sh missing 'No job found' → broker_desynced fallback on the status read path"
+fi
+
+# CR-13e — no codex fragment uses non-portable `timeout` for cancel.
+# `timeout` is GNU coreutils — not on stock macOS — and the prior pattern
+# `timeout 30 node ... || true` silently no-ops there, leaving wedged jobs
+# uncancelled while the orchestrator believes cancel happened.
+cr13e_violations=""
+for f in "${CR13_FRAGMENTS[@]}"; do
+    p="$REPO/$f"
+    if grep -nE '^[[:space:]]*timeout[[:space:]]+[0-9]+[[:space:]]+node' "$p" >/dev/null 2>&1; then
+        offending=$(grep -nE '^[[:space:]]*timeout[[:space:]]+[0-9]+[[:space:]]+node' "$p" | tr '\n' ';')
+        cr13e_violations="$cr13e_violations $f($offending)"
+    fi
+done
+if [[ -z "$cr13e_violations" ]]; then
+    pass "CR-13e: no codex fragment uses non-portable \`timeout\` to cancel codex jobs (Bash 3.2 macOS portable)"
+else
+    fail "CR-13e: non-portable \`timeout\` cancel pattern found:$cr13e_violations"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

@@ -121,17 +121,51 @@ xc_job_id=$(node "$CODEX_COMPANION" task --background --effort "$effort" \
     --prompt-file "$prompt_file" --json | jq -r '.jobId')
 ```
 
-Poll via `node "$CODEX_COMPANION" status "$xc_job_id" --json |
-jq -r '.job.status'` (terminal: `completed` | `failed` | `cancelled`).
-Once terminal, fetch and pluck:
+Poll via the watchdog helper. Cross-cutting is one pass over already-
+validated findings (no source-tree reads), so the ceiling is
+compressed further (8 min high / 12 min xhigh):
 
 ```bash
-node "$CODEX_COMPANION" result "$xc_job_id" --json \
-    > "/tmp/adams-review-codex-${review_id}-XC.out.json"
+case "$effort" in
+    low)    ceiling=180 ;;    # 3 min
+    medium) ceiling=300 ;;    # 5 min
+    high)   ceiling=480 ;;    # 8 min
+    xhigh)  ceiling=720 ;;    # 12 min
+    *)      ceiling=480 ;;
+esac
 
-xc_codex_output=$(jq -r '
-    .storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""
-' "/tmp/adams-review-codex-${review_id}-XC.out.json")
+poll=$(codex-poll.sh \
+        --job "$xc_job_id" \
+        --companion "$CODEX_COMPANION" \
+        --stall-threshold-sec 90 \
+        --wall-clock-ceiling-sec "$ceiling")
+verdict=$(printf '%s' "$poll" | jq -r '.verdict')
+```
+
+Verdict-branching matches `fragments/01-codex-detection.md` §1.4's
+table. Direct calls to `node "$CODEX_COMPANION" status` are forbidden
+in this fragment (smoke `CR-13c` enforces).
+
+On `completed`, the verdict's `raw_output` is the freeform Codex
+stdout — the helper has already plucked the canonical
+`.storedJob.result.rawOutput // .storedJob.payload.rawOutput // .storedJob.rawOutput // ""`
+chain. Capture as `xc_codex_output`:
+
+```bash
+xc_codex_output=$(printf '%s' "$poll" | jq -r '.raw_output')
+```
+
+On `broker_desynced` / `wall_clock_exceeded` / `failed_terminal`,
+cancel best-effort and route through §5.2.3's existing retry-or-
+escalate path (Phase 5 is observability, not correctness — failure
+just skips Phase 5 and ships the artifact without `cross_cutting_groups`):
+
+```bash
+( node "$CODEX_COMPANION" cancel "$xc_job_id" >/dev/null 2>&1 ) & disown   # fire-and-forget; `timeout` is GNU coreutils, not on stock macOS
+elapsed_for_log=$(printf '%s' "$poll" | jq -r '.elapsed_sec // "null"')
+printf 'phase_5_codex_watchdog: verdict=%s job=%s elapsed=%s\n' \
+    "$verdict" "$xc_job_id" "$elapsed_for_log" >> "$trace_log_path"
+# fall through to §5.2.3 retry-with-judgment / AskUserQuestion
 ```
 
 #### 5.2.3. Adaptive retry-with-judgment
