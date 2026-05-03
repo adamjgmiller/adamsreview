@@ -5607,6 +5607,35 @@ else
     fail "CR-11: 01-codex-detection.md missing select(type == \"object\") guard in §1.5.1 normalizer-array projection"
 fi
 
+# CR-12: fragments/01-detection.md §1.3 carries an emphatic top-of-section
+# parallel-dispatch directive between the section header and the first L1
+# sub-section. The lens-prompt extraction (L1–L7 moved to
+# fragments/lens-prompts/) replaced inline blockquoted prompts in §1.3
+# with per-lens "Prompt body: Read fragments/lens-prompts/L<N>.md … and
+# dispatch" recipes. Each per-lens sub-section then reads as a self-
+# contained "Read X then dispatch Agent" pair, which an orchestrator
+# processing the fragment top-to-bottom can interpret as a serial
+# action — defeating the parallel dispatch this phase depends on
+# (Phase 1 wall-clock goes from max → sum). Mirrors the emphatic
+# "SINGLE orchestrator turn" directive in fragments/01-codex-detection.md
+# §1.3 (line ~188).
+#
+# Guard: the substring "SINGLE orchestrator turn" must appear inside §1.3
+# *between* the §1.3 header and the §1.3 first L1 sub-section ("#### L1").
+# An awk window keeps the assertion targeted: a SINGLE-turn mention
+# elsewhere in the fragment (e.g. a hypothetical §1.4) would not satisfy
+# the §1.3 placement contract.
+cr12_window=$(awk '
+    /^### 1\.3\./        {in_window=1; next}
+    /^#### L1 /          {if (in_window) in_window=0}
+    in_window            {print}
+' "$REPO/fragments/01-detection.md" | tr '\n' ' ')
+if printf '%s' "$cr12_window" | grep -qE 'SINGLE[[:space:]]+orchestrator[[:space:]]+turn'; then
+    pass "CR-12: fragments/01-detection.md §1.3 carries top-of-section SINGLE-turn parallel-dispatch directive (regression guard for lens-prompt extraction serializing dispatch)"
+else
+    fail "CR-12: fragments/01-detection.md §1.3 missing top-of-section 'SINGLE orchestrator turn' directive between §1.3 header and the first L1 sub-section"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
