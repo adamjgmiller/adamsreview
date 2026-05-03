@@ -451,7 +451,7 @@ during collection. Candidates accumulate in an in-context pool
 (`internal_candidates`) and are committed at the join step 1.5.
 
 Initialize the pool and capture the phase epoch before the first lens
-dispatch (at the top of step 1.3's dispatch turn):
+`Agent` block of step 1.3's dispatch turn:
 
 ```bash
 phase_1_start_epoch=$(date +%s)

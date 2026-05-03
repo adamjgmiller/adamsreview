@@ -595,14 +595,20 @@ else
     fail "CR-12a: fragments/01-detection.md §1.3 missing top-of-section 'SINGLE orchestrator turn' directive between §1.3 header and the first L1 sub-section"
 fi
 
-cr12b_window=$(awk '
+# Flatten newlines before the imperative grep — the per-lens prose
+# wraps at ~70 chars, so "and\ndispatch." (two-line wrap) is exactly
+# the failure mode this guard targets. Mirrors PFD-9's tr-flatten
+# pattern; without it a wrapped "Launch one ... and\ndispatch." would
+# slip past line-anchored grep -c.
+cr12b_window_flat=$(awk '
     /^#### L1 /     {in_window=1}
     /^### 1\.4\./   {in_window=0}
     in_window       {print}
-' "$REPO/fragments/01-detection.md")
-cr12b_imperatives=$(printf '%s\n' "$cr12b_window" \
-    | grep -cE '(Launch one `Agent` tool-use|and dispatch\.)' \
-    || true)
+' "$REPO/fragments/01-detection.md" | tr '\n' ' ')
+cr12b_imperatives=$(printf '%s\n' "$cr12b_window_flat" \
+    | grep -oE '(Launch one `Agent` tool-use|and[[:space:]]+dispatch\.)' \
+    | wc -l \
+    | tr -d '[:space:]')
 if [[ "$cr12b_imperatives" == "0" ]]; then
     pass "CR-12b: per-lens sub-sections in fragments/01-detection.md §1.3 contain no imperative dispatch phrases (regression guard for serial-dispatch reintroduction via per-lens recipes)"
 else
@@ -610,18 +616,23 @@ else
 fi
 ```
 
-Note: the `|| true` after `grep -c` is necessary because `grep -c`
-returns exit 1 when count is zero, and the surrounding script runs
-under `set -e` semantics — without `|| true` the smoke harness would
-abort instead of cleanly reporting `cr12b_imperatives=0`.
+Note: smoke runs under `set -u` only (test/smoke.sh:17 explicitly
+opts out of `-e` with the comment "intentionally no -e: we manage
+failures per-assertion"), so `grep -oE | wc -l` returns a clean `0`
+when the regex doesn't match — no `|| true` needed. The earlier
+draft of this plan called for `grep -cE | … || true` with a `set -e`
+rationale; both pieces were wrong (smoke isn't `-e`, and `grep -c`
+is line-anchored, which would miss wrapped imperatives — see PFD-9
+in the same diff for the same wrap problem and its `tr '\n' ' '`
+fix). The shipped form mirrors PFD-9: flatten then count matches.
 
-The `cr12b_window` awk windows from `#### L1 ` through `### 1.4.` —
-that captures L1, L2, L3, L4, L5, L6, L7, AND the new "#### Dispatch
-turn" + "#### Ensemble fan-out" subsections. The new "#### Dispatch
-turn" subsection's text uses "issue every applicable lens's `Agent`
-tool-use" (NOT "Launch one") and contains no "and dispatch." phrase,
-so it does not trip CR-12b. Verify this when adding the closing
-subsection.
+The `cr12b_window_flat` awk windows from `#### L1 ` through
+`### 1.4.` — that captures L1, L2, L3, L4, L5, L6, L7, AND the new
+"#### Dispatch turn" + "#### Ensemble fan-out" subsections. The new
+"#### Dispatch turn" subsection's text uses "issue every applicable
+lens's `Agent` tool-use" (NOT "Launch one") and contains no "and
+dispatch." phrase, so it does not trip CR-12b. Verify this when
+adding the closing subsection.
 
 ### Change 5: Plugin version bump
 
