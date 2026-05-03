@@ -5740,6 +5740,44 @@ else
     fail "CR-13e: non-portable \`timeout\` cancel pattern found:$cr13e_violations"
 fi
 
+# CR-13f — commands/codex-review.md must not teach a raw `node "$CODEX_COMPANION"
+# status` poll recipe in its prose. The command body is read by the orchestrator
+# as executable instruction — a stale recipe there bypasses codex-poll.sh and
+# reintroduces the indefinite-`running` failure mode. CR-13c covers fragments;
+# this one covers the command file. Allowed: forbidden-prose mentions
+# (the rule itself being stated), and references to fragment paths or the
+# helper's own internals. Disallowed: any `node "$CODEX_COMPANION" status`
+# line that reads as bash invocation guidance.
+CR13F_COMMAND="$REPO/commands/codex-review.md"
+cr13f_violations=""
+if grep -nE 'node "\$CODEX_COMPANION" status' "$CR13F_COMMAND" >/dev/null 2>&1; then
+    offending=$(awk '
+        /forbidden|do NOT call|Do NOT call/ { next }
+        /^[[:space:]]*node "\$CODEX_COMPANION" status/ { print NR ": " $0 }
+    ' "$CR13F_COMMAND")
+    if [[ -n "$offending" ]]; then
+        cr13f_violations=" commands/codex-review.md($(echo "$offending" | tr '\n' ';'))"
+    fi
+fi
+if [[ -z "$cr13f_violations" ]]; then
+    pass "CR-13f: commands/codex-review.md does not teach a raw 'node \"\$CODEX_COMPANION\" status' poll recipe — orchestrator routed through codex-poll.sh"
+else
+    fail "CR-13f: commands/codex-review.md teaches raw status-poll recipe (bypasses watchdog):$cr13f_violations"
+fi
+
+# CR-14 — fragments/00-preflight.md gates the --effort skip on working-context
+# `effort` being set. Without the gate, `/adamsreview:review --effort high`
+# silently consumes the flag (no upstream parser owns it on :review) instead
+# of falling through to the unexpected-token clarify path.
+# Two-signal check: the multi-line gate prose mentions both "only when" the
+# upstream parser owns the flag AND the unset-falls-through path.
+if grep -qE 'only when the upstream parser actually owns the flag' "$REPO/fragments/00-preflight.md" \
+   && grep -qE 'unexpected token and falls through to the clarify path' "$REPO/fragments/00-preflight.md"; then
+    pass "CR-14: fragments/00-preflight.md gates --effort skip on working-context effort being set (\`/adamsreview:review --effort\` falls through to clarify, not silent-consume)"
+else
+    fail "CR-14: fragments/00-preflight.md missing the working-context-effort gate around --effort skip"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0

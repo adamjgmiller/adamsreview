@@ -78,16 +78,27 @@ node "$CODEX_COMPANION" task --background --effort "$effort" \
 ```
 
 The companion returns the launch payload on stdout (extract the id
-with `jq -r '.jobId'`). Poll via `node "$CODEX_COMPANION" status
-<jobId> --json` and read the terminal state from `.job.status`
-(values: `queued` | `running` | `completed` | `failed` | `cancelled`).
-Fetch the freeform output via `node "$CODEX_COMPANION" result <jobId>
---json` and read it from `.storedJob.result.rawOutput` (with
-`// .storedJob.payload.rawOutput // .storedJob.rawOutput // ""` as
-fallbacks for older companion shapes and partial-failure records
-where the result sub-object isn't populated). Launch ALL jobs in a
-phase within a SINGLE orchestrator turn so they run concurrently;
-polling happens on subsequent turns.
+with `jq -r '.jobId'`). Launch ALL jobs in a phase within a SINGLE
+orchestrator turn so they run concurrently; polling happens on
+subsequent turns.
+
+**Polling and result fetch go through `codex-poll.sh` exclusively.**
+The helper is the single source of truth for codex-job liveness — it
+wraps `status --json`, runs the two-signal stall check (logFile mtime
++ `result --json` desync probe), enforces the per-effort wall-clock
+ceiling, and on `completed` plucks the freeform output via the
+documented `.storedJob.result.rawOutput` chain (with the
+`// .storedJob.payload.rawOutput // .storedJob.rawOutput // ""`
+fallback for older companion shapes and partial-failure records).
+**Do NOT call `node "$CODEX_COMPANION" status` or `result` directly
+anywhere** in this command's prose, fragment substitutions, or
+follow-up turn instructions — direct calls bypass the watchdog and
+reintroduce the indefinite-`running` failure mode (real failure
+2026-05-03; see `plans/codex-watchdog.md`). Phase fragments §1.4 /
+§4.2.3 / §4.3.2 / §5.2.2 specify the exact `codex-poll.sh` invocation
+shape per phase. Smoke `CR-13c` and `CR-13f` enforce this — fragment
+*and* command files are scanned for raw `node "$CODEX_COMPANION"
+status` recipes.
 
 `CODEX_COMPANION` is discovered the same way as in
 `fragments/01-detection.md` step 1.2a — see that block for the

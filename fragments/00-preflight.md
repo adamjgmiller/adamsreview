@@ -23,14 +23,22 @@ If the top-level command already parsed top-level-only flags into your
 working context BEFORE invoking this fragment (e.g., `effort` from
 `/adamsreview:codex-review --effort high`), trust those values and
 ignore the corresponding tokens in `$ARGUMENTS`. Recognized
-top-level-only flags whose value tokens this step skips silently:
+top-level-only flags whose value tokens this step skips silently
+**only when the upstream parser actually owns the flag** (i.e., the
+corresponding working-context value is set):
 
 - `--effort <value>` — owned by `/adamsreview:codex-review`'s argument
-  handler; the value is in working-context `effort`.
+  handler. Skip the flag and its value token only when working-context
+  `effort` is set. If `effort` is unset (e.g., `/adamsreview:review
+  --effort high` — `:review` has no `--effort` parser), `--effort` is
+  an unexpected token and falls through to the clarify path below.
+  Working-context `effort` being set is the proof that an upstream
+  command owns this flag; absence of the value means no upstream owner
+  exists.
 
 Any token not recognized as `--ensemble`, `--full`, a top-level-only
-flag (above), or a value following a top-level-only flag is unexpected
-— stop and ask the user to clarify.
+flag whose owner is proven present (above), or a value following such a
+flag is unexpected — stop and ask the user to clarify.
 
 ### 0.2. Resolve branch, base, and repo root
 
