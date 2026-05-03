@@ -133,7 +133,7 @@ robustly against future fragment edits.
    a new `CR-12b` that fails if any imperative dispatch phrase appears
    in the per-lens subsections.
 5. Smoke total: 312 → 313 (one new assertion).
-6. Plugin version bumped `0.3.0 → 0.3.1` (patch bump per CLAUDE.md
+6. Plugin version bumped `0.3.1 → 0.3.2` (patch bump per CLAUDE.md
    release discipline — this is a bug-class behavior correction, not a
    docs-only change).
 
@@ -627,7 +627,9 @@ subsection.
 
 **File:** `.claude-plugin/plugin.json`
 
-Bump `version` from `0.3.0` to `0.3.1`. Patch bump per CLAUDE.md
+Bump `version` from `0.3.1` to `0.3.2`. Patch bump per CLAUDE.md
+(plan was drafted when 0.3.0 was current; the codex-review feature
+ship at PR #23 took live to 0.3.1 before this fix landed).
 release discipline — this is a behavior correction (Phase 1 actually
 parallelizes now), not a docs-only change.
 
@@ -690,7 +692,7 @@ guess.
 ## Commit message draft
 
 ```
-Phase 1 parallel dispatch: strip per-lens imperatives (v0.3.1)
+Phase 1 parallel dispatch: strip per-lens imperatives (v0.3.2)
 
 The 0466d04 fix added an emphatic "Parallel dispatch — load-bearing"
 directive at the top of fragments/01-detection.md §1.3, but left 7
@@ -720,7 +722,7 @@ Smoke CR-12 split into CR-12a (existing presence guard) + CR-12b (new:
 forbids imperative dispatch phrases inside per-lens subsections).
 Smoke 312 → 313.
 
-Plugin version bumped 0.3.0 → 0.3.1.
+Plugin version bumped 0.3.1 → 0.3.2.
 
 /adamsreview:codex-review is structurally robust against this bug
 class (single recipe with L${N} substitution, no per-lens

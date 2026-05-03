@@ -5644,14 +5644,20 @@ else
     fail "CR-12a: fragments/01-detection.md §1.3 missing top-of-section 'SINGLE orchestrator turn' directive between §1.3 header and the first L1 sub-section"
 fi
 
-cr12b_window=$(awk '
+# Flatten newlines before the imperative grep — the per-lens prose
+# wraps at ~70 chars, so "and\ndispatch." (two-line wrap) is exactly
+# the failure mode this guard targets. Mirrors PFD-9's tr-flatten
+# pattern; without it a wrapped "Launch one ... and\ndispatch." would
+# slip past line-anchored grep -c.
+cr12b_window_flat=$(awk '
     /^#### L1 /     {in_window=1}
     /^### 1\.4\./   {in_window=0}
     in_window       {print}
-' "$REPO/fragments/01-detection.md")
-cr12b_imperatives=$(printf '%s\n' "$cr12b_window" \
-    | grep -cE '(Launch one `Agent` tool-use|and dispatch\.)' \
-    || true)
+' "$REPO/fragments/01-detection.md" | tr '\n' ' ')
+cr12b_imperatives=$(printf '%s\n' "$cr12b_window_flat" \
+    | grep -oE '(Launch one `Agent` tool-use|and[[:space:]]+dispatch\.)' \
+    | wc -l \
+    | tr -d '[:space:]')
 if [[ "$cr12b_imperatives" == "0" ]]; then
     pass "CR-12b: per-lens sub-sections in fragments/01-detection.md §1.3 contain no imperative dispatch phrases (regression guard for serial-dispatch reintroduction via per-lens recipes)"
 else

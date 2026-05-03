@@ -304,15 +304,16 @@ issue EVERY applicable lens's `Agent` tool-use in a SINGLE
 orchestrator turn so they run concurrently — alongside the ensemble
 fan-out's background `Bash` calls when `ensemble_mode == true` (see
 the "Ensemble fan-out" sub-section below). The per-lens sub-sections
-that follow give the prompt-body location and the per-lens
-substitution rules (`$prior_fix_suspects`, `$claude_md_paths`); their
-"Read `fragments/lens-prompts/L<N>.md` … and dispatch" phrasing is a
-*recipe per lens*, NOT an instruction to serialize one lens at a time
-across multiple turns. Doing the per-lens "Read L<N>.md then dispatch
-Agent" pairs serially defeats the parallelism this phase relies on:
-Phase 1 wall-clock latency goes from `max(lens_durations)` to
-`sum(lens_durations)`, and the ensemble fan-out's background CLIs
-lose their overlap window with the lens dispatches.
+that follow are declarative spec data — the dispatch model, prompt
+body location, and substitution rules (`$prior_fix_suspects`,
+`$claude_md_paths`) for each lens; they are reference material, NOT
+seven serial action targets. The unambiguous action target is the
+"#### Dispatch turn" sub-section after L7. Treating each per-lens
+sub-section as its own dispatch turn defeats the parallelism this
+phase relies on: Phase 1 wall-clock latency goes from
+`max(lens_durations)` to `sum(lens_durations)`, and the ensemble
+fan-out's background CLIs lose their overlap window with the lens
+dispatches.
 
 #### L1 — diff-local scan (Sonnet)
 
