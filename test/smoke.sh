@@ -5726,6 +5726,22 @@ cr15_section_14=$(awk '
     in_window               {print}
 ' "$REPO/fragments/01-detection.md")
 
+# CR-15b also needs a window-status sanity check: if `### 1.4.` or
+# `### 1.5.` is renamed/removed, cr15_section_14 goes empty and the
+# negative-init check passes vacuously — same fail-open class CR-15c
+# now closes for the dispatch window. Track the §1.4 window's
+# boundaries explicitly.
+cr15_section_14_status=$(awk '
+    BEGIN                   {found_start=0; found_end=0; content=0}
+    /^### 1\.4\./           {found_start=1; in_window=1; next}
+    /^### 1\.5\./           {if (in_window) {in_window=0; found_end=1}}
+    in_window               {content++}
+    END {
+        printf "found_start=%d found_end=%d content=%d\n",
+               found_start, found_end, content
+    }
+' "$REPO/fragments/01-detection.md")
+
 # CR-15a — positive guard. Whitespace-tolerant regex (mirrors
 # CR-12a's `[[:space:]]+` precedent). For internal_candidates the
 # optional-quote class `['"]?` accepts `'[]'`, `"[]"`, or bare
@@ -5741,11 +5757,16 @@ cr15_section_14=$(awk '
 cr15a_found_dispatch_for_window=$(printf '%s\n' "$cr15_window_status" | grep -oE 'found_dispatch=[01]' | head -1 | cut -d= -f2)
 cr15a_has_epoch=0
 cr15a_has_pool=0
+# Anchored regex: full-line match with optional leading/trailing
+# whitespace. The prefix-only forms accepted `$(date)` without
+# `+%s` (non-integer output, breaks `$(( - phase_1_start_epoch))`)
+# and `internal_candidates='[]garbage'` — silent-pass paths under
+# the broader pre-dispatch-window check. Anchoring closes both.
 printf '%s\n' "$cr15_pre_dispatch" \
-    | grep -qE 'phase_1_start_epoch[[:space:]]*=[[:space:]]*\$\(date' \
+    | grep -qE '^[[:space:]]*phase_1_start_epoch[[:space:]]*=[[:space:]]*\$\(date[[:space:]]+\+%s\)[[:space:]]*$' \
     && cr15a_has_epoch=1
 printf '%s\n' "$cr15_pre_dispatch" \
-    | grep -qE "internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]" \
+    | grep -qE "^[[:space:]]*internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]['\"]?[[:space:]]*\$" \
     && cr15a_has_pool=1
 if [[ "$cr15a_has_epoch" == "1" && "$cr15a_has_pool" == "1" && "$cr15a_found_dispatch_for_window" == "1" ]]; then
     pass "CR-15a: fragments/01-detection.md §1.3 '#### Dispatch turn' pre-dispatch window (heading → '**Dispatch.**') contains Phase 1 pre-dispatch init (phase_1_start_epoch + internal_candidates), and the '**Dispatch.**' marker bounding the window is present"
@@ -5767,17 +5788,29 @@ fi
 #     var name; that's a variable expansion)
 #   - `--argjson internal "$internal_candidates"` (same)
 #   - the §1.4 forward-pointer parenthetical (backticks, no `=`)
+# CR-15b composite: window must be structurally sound (start +
+# end + non-empty body) AND no violations within it. Same anchored
+# regexes as CR-15a so a `=$(date)` (no +%s) or `=[]garbage` site
+# in §1.4 would still trigger the duplication catch.
+cr15b_section_14_start=$(printf '%s\n' "$cr15_section_14_status" | grep -oE 'found_start=[01]' | head -1 | cut -d= -f2)
+cr15b_section_14_end=$(printf '%s\n' "$cr15_section_14_status" | grep -oE 'found_end=[01]' | head -1 | cut -d= -f2)
+cr15b_section_14_content=$(printf '%s\n' "$cr15_section_14_status" | grep -oE 'content=[0-9]+' | head -1 | cut -d= -f2)
 cr15b_violations=""
 printf '%s\n' "$cr15_section_14" \
-    | grep -qE 'phase_1_start_epoch[[:space:]]*=[[:space:]]*\$\(date' \
+    | grep -qE '^[[:space:]]*phase_1_start_epoch[[:space:]]*=[[:space:]]*\$\(date[[:space:]]+\+%s\)[[:space:]]*$' \
     && cr15b_violations="$cr15b_violations phase_1_start_epoch_in_§1.4"
 printf '%s\n' "$cr15_section_14" \
-    | grep -qE "internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]" \
+    | grep -qE "^[[:space:]]*internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]['\"]?[[:space:]]*\$" \
     && cr15b_violations="$cr15b_violations internal_candidates_in_§1.4"
-if [[ -z "$cr15b_violations" ]]; then
-    pass "CR-15b: fragments/01-detection.md §1.4 contains no Phase 1 pre-dispatch init (negative twin against duplication regression)"
+if [[ "$cr15b_section_14_start" == "1" && "$cr15b_section_14_end" == "1" && "$cr15b_section_14_content" =~ ^[1-9][0-9]*$ && -z "$cr15b_violations" ]]; then
+    pass "CR-15b: fragments/01-detection.md §1.4 (heading present, body=$cr15b_section_14_content lines) contains no Phase 1 pre-dispatch init (negative twin against duplication regression)"
 else
-    fail "CR-15b: fragments/01-detection.md §1.4 contains pre-dispatch init that should live only in '#### Dispatch turn' —$cr15b_violations — duplication would re-introduce original layout drift via last-write-wins source-order reading"
+    cr15b_problems=""
+    [[ "$cr15b_section_14_start" != "1" ]] && cr15b_problems="$cr15b_problems no_§1.4_heading"
+    [[ "$cr15b_section_14_end" != "1" ]] && cr15b_problems="$cr15b_problems no_§1.5_heading"
+    [[ ! "$cr15b_section_14_content" =~ ^[1-9][0-9]*$ ]] && cr15b_problems="$cr15b_problems empty_or_unparseable_§1.4_body(=$cr15b_section_14_content)"
+    [[ -n "$cr15b_violations" ]] && cr15b_problems="$cr15b_problems duplication:$cr15b_violations"
+    fail "CR-15b: fragments/01-detection.md §1.4 check failed —$cr15b_problems. Either the §1.4 window boundaries drifted (heading rename/removal would silently pass the negative check) or the pre-dispatch init was duplicated back into §1.4 (would re-introduce original layout drift via last-write-wins source-order reading)"
 fi
 
 # CR-15c — window sanity. Verifies BOTH the opening `#### Dispatch
