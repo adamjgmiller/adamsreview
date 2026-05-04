@@ -290,9 +290,10 @@ phase_1_5_start_epoch=$(date +%s)
 
 This epoch is what 02-ensemble-adapter.md step 1.5.7 subtracts to
 compute `phase_1_5_elapsed`. Placing it here mirrors Phase 1's
-`phase_1_start_epoch` capture in step 1.3's pre-dispatch init — both
-clocks start at the same turn boundary, so under §13.12 parallel
-dispatch the two `elapsed_sec` values naturally overlap in
+`phase_1_start_epoch` capture in step 1.3's pre-dispatch init —
+Phase 1.5 starts after readiness/prior-fix work and Phase 1 starts
+just before the lens fan-out, so both clocks bracket the §13.12
+dispatch turn and the two `elapsed_sec` values naturally overlap in
 `phases.jsonl`.
 
 ### 1.3. Dispatch the lenses (one turn, one Agent call per applicable lens)

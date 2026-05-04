@@ -1,8 +1,11 @@
 # Plan: Phase 1 init-block relocation — bring `#### Dispatch turn` and its prerequisites into the same sub-section
 
-**Status:** drafted 2026-05-03; awaiting user approval before execution.
-Branch: `parallel` (this worktree). Sits on top of `8fa8b6a` (R3 of the
-imperative-fix loop).
+**Status:** drafted 2026-05-03; executed 2026-05-04 on top of `8fa8b6a`
+(R3 of the imperative-fix loop). Branch: `parallel` (this worktree).
+This file is the pre-execution plan snapshot; the rendered tree reflects
+the executed result. Codex round-1 review of the executed diff added
+two follow-up tightening fixes to CR-15a/c and softened a Phase 1.5
+clock-alignment claim — see commit log for rounds.
 
 **Pattern:** three small text edits in one fragment + one new smoke
 assertion + a patch version bump. No schema changes, no helper changes,
