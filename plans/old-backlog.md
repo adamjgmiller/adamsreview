@@ -1,3 +1,5 @@
+> **Historical snapshot (frozen 2026-05-04).** This was the active backlog from 2026-04-22 through 2026-05-03. Active follow-ups have moved to GitHub issues — see **Filed as: GH #NN** annotations on items below. Items without a back-pointer were intentionally not pursued (see per-item triggers — most are "probably never" decisions kept for the rationale). Don't update this file going forward.
+
 # Backlog
 
 Forward-looking consolidation of everything still on the adamsreview plugin's backlog, organized by priority and effort class. Every item has a concrete trigger for when it unblocks or becomes worth doing — this is a real backlog, not a pile of "maybe someday."
@@ -11,17 +13,19 @@ Forward-looking consolidation of everything still on the adamsreview plugin's ba
 
 ## Quick summary
 
-| Class | Items | Unblocks when |
+| Class | Items | Status at freeze (2026-05-04) |
 |---|---|---|
-| **§1. Data-driven decisions** | #1B, #1C, #24 (threshold-decision portion) | ~10 reviews of Phase 3 telemetry data accumulate (instrumentation shipped 2026-04-22 in `ee81715`) |
-| **§2. Already-planned, dedicated session** | #2, #14 (Stage 4 fragment shrink) | *Closed 2026-04-23* — commit range `84c96ee..f9ccda0` (close-out commit `e1af3e9`; `f9ccda0` is a post-close self-review reconcile). Body kept for reference; Appendix B in the plan has the measurement snapshot |
-| **§3. Session / issue follow-ups** | Transcluded-fragment `allowed-tools` gap; broader `parse-with-repair.py` migration; telemetry data collection; exit-code reuse cleanup; post-fix robustness lens (GH #2); L5-ux line-range root-cause (GH #2) | Surfaced 2026-04-22 / 2026-04-26 sessions or in GH #2 (2026-04-20); per-item triggers |
-| **§4. Probably leave alone** | #3, #4, #5, #6, #7, #8, #17 | Per-item "probably never" triggers — documented for completeness, not expected to fire |
+| **§1. Data-driven decisions** | #1B, #1C, #24 | **Filed as GH #26.** Awaits ~10 reviews of telemetry; instrumentation shipped 2026-04-22 in `ee81715` |
+| **§2. Already-planned, dedicated session** | #2, #14 (Stage 4 fragment shrink) | *Closed 2026-04-23* — commit range `84c96ee..f9ccda0`; Appendix B in the plan has the measurement snapshot |
+| **§3. Session / issue follow-ups** | FU-1, FU-2, FU-3, FU-4, FU-5, P2, P3 | FU-1, FU-5, P3 closed in this branch's lifetime. FU-2 → **GH #27**, FU-4 → **GH #28**, P2 → **GH #29**. FU-3 (telemetry collection) is folded into GH #26's trigger |
+| **§4. Probably leave alone** | #3, #4, #5, #6, #7, #8, #17 | Per-item "probably never" triggers — kept for rationale |
 | **§5. Big refactors, unlikely to be worth it** | #1D, #1E | Cost becomes irrelevant / full architectural rewrite motivated |
 
 ---
 
 ## §1. Data-driven decisions (awaiting Phase 3 telemetry)
+
+**Filed as: GH #26.** Three decisions merged into one issue — they share the same trigger and resolve in concert.
 
 The 2026-04-22 session shipped Phase 3 telemetry (`demote_rate` + `score_phase3_histogram` to `phases.jsonl` on every Phase 3 close — commit `ee81715`). These three decisions are unblocked once ~10 real-review cohorts' worth of that data accumulates. Until then, the status quo (conservative Phase 3 gate at 45, symmetric Phase 4 confirmation at 60/75, lane-asymmetric Phase 8 fix gate) remains correct by default.
 
@@ -112,6 +116,8 @@ Smoke assertion `PF-INT-5` was already parameterized over three helpers (Shape A
 
 ### FU-2 — Broader `parse-with-repair.py` call-site migration
 
+**Filed as: GH #27.**
+
 Project F's middle-path decision bounded the 2026-04-22 migration to the `fragments/02-ensemble-adapter.md` normalizer step (the messiest LLM slop site — external-tool output). Other legacy ad-hoc JSON parse sites across fragments remain unmigrated pending real-world validation of the `parse-with-repair.py` contract.
 
 **Candidate sites** (enumerate before doing): search fragments for `jq '.[…]'` chains fed by sub-agent stdout, especially in Phase 4 validators (partially migrated via #12 `parse-validator-result.py`, but fragments that parse peripheral fields around the score still do it ad-hoc).
@@ -130,6 +136,8 @@ Phase 3 `demote_rate` + `score_phase3_histogram` are now in `phases.jsonl` on ev
 
 ### FU-4 — Exit-code reuse cleanup in `bin/_common.py`
 
+**Filed as: GH #28.**
+
 **Source:** 2026-04-26 CLAUDE.md audit (operational rule 3 update). `bin/_common.py:31-32` allocates `EXIT_SCORE_UNRECOVERABLE = 2` and `EXIT_UNKNOWN_FAMILY = 3` — both reuses of codes already assigned to other purposes (`EXIT_INVALID_TRANSITION = 2` for `artifact-patch.py` state-transition violations; `EXIT_DRY_RUN_INVALID = 3` for `--dry-run` rejection). The reuse is documented inline in `_common.py` and now in CLAUDE.md operational rule 3 (post-2026-04-26 audit), but the contract is enforced by convention, not by the file. Each call site happens to know which helper it's invoking and which error class is possible, so today's callers route correctly — but a new helper added in the future could collide with either code without `_common.py` being updated, and a reader still has to grep `_common.py` to know whether `rc == 2` from a given helper means "transition" or "score."
 
 **Direction:** allocate fresh codes:
@@ -142,7 +150,7 @@ Update both helpers' exit-code references; remove the inline `# also used by …
 - **Risk:** None known. The reuse works correctly today because each helper's callers know which helper they're calling. Switching to fresh codes is purely a hardening exercise.
 - **Trigger:** opportunistic — bundle into the next session that touches `bin/_common.py` for an unrelated reason. Or fires sooner if a new helper needs an additional exit-code class and the 2/3 overloading gets in the way.
 
-### FU-5 — `/adamsreview:codex-review` poll-loop watchdog
+### FU-5 — `/adamsreview:codex-review` poll-loop watchdog *(CLOSED 2026-05-03 — codex-poll.sh shipped via PR #23)*
 
 **Source:** real failure on 2026-05-03 01:55 UTC during a `/adamsreview:codex-review --effort high` run on `beta-briefing/onboard-page`. All 7 lens jobs went silent within a 7-second window after issuing initial git diff commands; broker reported `running` for 26 minutes; user aborted. Investigation (this session) confirmed: codex CLI processes still alive 80 min later but wedged on a network wait; `interruptAppServerTurn` returned `"thread not found"` for all 7 (codex CLI's *internal* app-server idle-GC'd the threads); fresh single + 7-parallel codex jobs at 03:13 UTC completed cleanly — bug is transient, best-fit hypothesis is an OpenAI-backend stream stall correlated across 7 simultaneous high-effort streams. Codex CLI has no client-side stream-stall detection; codex-companion's broker has no SIGCHLD handler on detached task-workers — both root-cause fixes live upstream in `openai/codex` and we're skipping the upstream issue.
 
@@ -154,7 +162,11 @@ Full plan with diagnostic write-up, helper algorithm, per-site ceiling values, e
 - **Trigger:** approve and execute; this is the right defense regardless of whether the upstream issue gets filed/fixed. No data dependency.
 - **Out of scope (filed and skipped):** filing the upstream codex CLI issue. Watchdog is enough defense without it.
 
+**Resolution (2026-05-03).** `bin/codex-poll.sh` shipped via PR #23 (commit `9e3df42`) as part of `/adamsreview:codex-review`. All four codex-only fragment poll sites consume it (`fragments/01-codex-detection.md` §1.4, `fragments/05-codex-validation.md` §4.2.3 + §4.3.2, `fragments/06-codex-cross-cutting.md` §5.2.2). Follow-up **GH #24** tracks a known limitation in the rapid-detect path (the `result --json` desync probe is dead code for the dominant "stuck-in-running" failure mode; recovery falls back to wall-clock ceiling).
+
 ### P2 — Post-fix robustness lens (from GH #2)
+
+**Filed as: GH #29.**
 
 **Source:** GH issue #2 (filed 2026-04-20 off the 2026-04-19 ray-finance `feat/import-apple` run). Motivating case: ultrareview's `bug_004` — unwrapped `mkdirSync` / `writeFileSync` at `src/cli/commands.ts:930-935` that can throw *after* the DB transaction commits. The block was added by a prior fixrun (F020 → commit `031e04d`); nothing in the pipeline currently re-audits fix-added code beyond the headline finding's claim. Observed twice on ray-finance (F002→F027/F028 access_token over-fetch; F020→`bug_004` unwrapped fs calls).
 

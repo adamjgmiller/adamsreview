@@ -30,7 +30,7 @@ Steps 2–4 can land days or weeks after step 1 — the review artifact persists
 
 - **`CLAUDE.md`** — operational guide for Claude Code sessions working in this repo. Self-contained for routine work; read first on a fresh session.
 - **`docs/archive/`** — frozen design + build docs (2026-04-19 onward). `DESIGN.md` (rev 8) is the original normative spec; `BUILD.md` is the stage-by-stage journal. Not maintained; consult only for historical rationale behind a specific decision. See `docs/archive/README.md`.
-- **`plans/`** — per-stage plan files. All original-roadmap stages are closed (1–3 + 2.5/2.6/2.7/2.8, plugin-conversion, post-plugin-improvements, stage-4-fragment-shrink). Forward-looking work lives in `plans/backlog.md`.
+- **`plans/`** — per-stage plan files. All original-roadmap stages are closed (1–3 + 2.5/2.6/2.7/2.8, plugin-conversion, post-plugin-improvements, stage-4-fragment-shrink). Active follow-ups now live in GitHub issues; the historical backlog is at `plans/old-backlog.md` (frozen 2026-05-04).
 
 ## Dependencies
 

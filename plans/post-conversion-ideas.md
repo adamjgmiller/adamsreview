@@ -1,6 +1,6 @@
 # Post-conversion ideas
 
-> **Historical record as of 2026-04-22.** This file is the chronological idea log for the plugin-conversion era. Eighteen items were executed in the 2026-04-22 session (see `> DONE` markers and `plans/post-plugin-improvements.md`). **For the forward-looking, prioritized view of everything still open, read [`plans/backlog.md`](./backlog.md).** This file is preserved for the original rationale / trigger wording on each item — edit it only to flip new items' scheduling markers as sessions complete them.
+> **Historical record as of 2026-04-22.** This file is the chronological idea log for the plugin-conversion era. Eighteen items were executed in the 2026-04-22 session (see `> DONE` markers and `plans/post-plugin-improvements.md`). **Active follow-ups now live in GitHub issues; the previously-active `plans/backlog.md` was renamed [`plans/old-backlog.md`](./old-backlog.md) on 2026-05-04 (frozen historical snapshot).** This file is preserved for the original rationale / trigger wording on each item; both files are now historical references.
 
 Architectural backlog for after the plugin conversion lands. Nothing here is
 committed work. Each item has a trigger/signal for when to revisit so this
