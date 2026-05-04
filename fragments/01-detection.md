@@ -416,8 +416,9 @@ operational rule 11 ("Working set lives in-prompt, not shell vars"),
 not `Bash` tool-uses; the orchestrator records them in-context
 *before* issuing the `Agent` blocks below. The `phase_1_start_epoch`
 capture mirrors the §1.2-Phase-1.5 `phase_1_5_start_epoch` so both
-clocks start at the same turn boundary (§13.12 parallel dispatch),
-and `internal_candidates='[]'` is the seed value §1.4's per-lens
+clocks bracket the §13.12 dispatch turn and the two `elapsed_sec`
+values naturally overlap in `phases.jsonl`, and
+`internal_candidates='[]'` is the seed value §1.4's per-lens
 `--argjson accum "$internal_candidates"` appends require.
 
 **Dispatch.** With every applicable lens's spec assembled (L1–L7

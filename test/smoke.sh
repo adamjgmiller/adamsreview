@@ -5699,16 +5699,24 @@ cr15_pre_dispatch=$(awk '
 ' "$REPO/fragments/01-detection.md")
 
 # CR-15c needs to verify BOTH boundary headings exist (start +
-# end). Track them in awk and emit a status sentinel so the bash
-# check can assert all three: heading, content, closing heading.
+# end), the body between them is non-empty, AND the load-bearing
+# `**Dispatch.**` paragraph marker is present (CR-15a's
+# pre-dispatch window relies on `**Dispatch.**` as its closing
+# boundary; if the marker is removed while a later `#### ` heading
+# still exists, CR-15a's window silently widens back to the whole
+# sub-section and accepts inits placed AFTER the dispatch prose —
+# the original ordering defect under a new disguise). Track all
+# four properties in awk and emit a status sentinel so the bash
+# check can assert each.
 cr15_window_status=$(awk '
-    BEGIN                   {found_start=0; found_end=0; content=0}
+    BEGIN                   {found_start=0; found_end=0; found_dispatch=0; content=0}
     /^#### Dispatch turn/   {found_start=1; in_window=1; next}
     /^#### /                {if (in_window) {in_window=0; found_end=1}}
+    in_window && /^\*\*Dispatch\.\*\*/ {found_dispatch=1}
     in_window               {content++}
     END {
-        printf "found_start=%d found_end=%d content=%d\n",
-               found_start, found_end, content
+        printf "found_start=%d found_end=%d found_dispatch=%d content=%d\n",
+               found_start, found_end, found_dispatch, content
     }
 ' "$REPO/fragments/01-detection.md")
 
@@ -5725,6 +5733,12 @@ cr15_section_14=$(awk '
 # is the *pre-dispatch* portion only — `#### Dispatch turn`
 # heading up to (but excluding) the `**Dispatch.**` paragraph
 # marker, so the inits must come BEFORE the dispatch prose.
+# Additionally requires the `**Dispatch.**` marker is present
+# (via found_dispatch sentinel below) — without that requirement,
+# removing the marker would silently widen cr15_pre_dispatch back
+# to the whole sub-section and accept inits below the lens
+# dispatch prose, defeating the ordering guarantee.
+cr15a_found_dispatch_for_window=$(printf '%s\n' "$cr15_window_status" | grep -oE 'found_dispatch=[01]' | head -1 | cut -d= -f2)
 cr15a_has_epoch=0
 cr15a_has_pool=0
 printf '%s\n' "$cr15_pre_dispatch" \
@@ -5733,13 +5747,14 @@ printf '%s\n' "$cr15_pre_dispatch" \
 printf '%s\n' "$cr15_pre_dispatch" \
     | grep -qE "internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]" \
     && cr15a_has_pool=1
-if [[ "$cr15a_has_epoch" == "1" && "$cr15a_has_pool" == "1" ]]; then
-    pass "CR-15a: fragments/01-detection.md §1.3 '#### Dispatch turn' pre-dispatch window (heading → '**Dispatch.**') contains Phase 1 pre-dispatch init (phase_1_start_epoch + internal_candidates)"
+if [[ "$cr15a_has_epoch" == "1" && "$cr15a_has_pool" == "1" && "$cr15a_found_dispatch_for_window" == "1" ]]; then
+    pass "CR-15a: fragments/01-detection.md §1.3 '#### Dispatch turn' pre-dispatch window (heading → '**Dispatch.**') contains Phase 1 pre-dispatch init (phase_1_start_epoch + internal_candidates), and the '**Dispatch.**' marker bounding the window is present"
 else
     cr15a_missing=""
     [[ "$cr15a_has_epoch" == "0" ]] && cr15a_missing="$cr15a_missing phase_1_start_epoch=\$(date +%s)"
     [[ "$cr15a_has_pool" == "0" ]] && cr15a_missing="$cr15a_missing internal_candidates='[]'"
-    fail "CR-15a: fragments/01-detection.md §1.3 pre-dispatch window (heading → '**Dispatch.**') missing init —$cr15a_missing — either the inits drifted *below* '**Dispatch.**' (top-to-bottom orchestrator dispatches lenses before capturing the phase epoch — phase_1_elapsed under-reports) or the '**Dispatch.**' marker is missing entirely"
+    [[ "$cr15a_found_dispatch_for_window" != "1" ]] && cr15a_missing="$cr15a_missing **Dispatch.**_marker"
+    fail "CR-15a: fragments/01-detection.md §1.3 pre-dispatch window (heading → '**Dispatch.**') incomplete —$cr15a_missing — either the inits drifted *below* '**Dispatch.**' (top-to-bottom orchestrator dispatches lenses before capturing the phase epoch — phase_1_elapsed under-reports), or the '**Dispatch.**' marker itself is missing (which would silently widen the window back to the whole sub-section)"
 fi
 
 # CR-15b — negative twin. Catches the regression where a future
@@ -5767,23 +5782,33 @@ fi
 
 # CR-15c — window sanity. Verifies BOTH the opening `#### Dispatch
 # turn` heading AND a subsequent `#### ` boundary heading exist,
-# AND the body between them is non-empty. A non-empty-window
-# check alone is not enough: if the closing `#### ` heading is
-# removed or demoted, the awk window simply expands to EOF and
-# remains non-empty, so the success message ("a subsequent
-# '#### ' boundary follows it") would be false. Track both
-# boundaries explicitly via the cr15_window_status sentinel.
+# the body between them is non-empty, AND the load-bearing
+# `**Dispatch.**` paragraph marker is present (CR-15a relies on
+# the marker as its closing boundary). A non-empty-window check
+# alone is not enough: if the closing `#### ` heading is removed
+# or demoted, the awk window simply expands to EOF and remains
+# non-empty, so the success message ("a subsequent '#### '
+# boundary follows it") would be false.
+#
+# All four properties are tracked in cr15_window_status. Each
+# field is parsed with an anchored positive-integer / 0|1 regex
+# and the bash check requires each parsed value to match its
+# expected shape — a missing or malformed sentinel field becomes
+# fail-closed (empty string fails the shape check), not
+# fail-open (empty != "0" was previously accepted).
 cr15c_found_start=$(printf '%s\n' "$cr15_window_status" | grep -oE 'found_start=[01]' | head -1 | cut -d= -f2)
 cr15c_found_end=$(printf '%s\n' "$cr15_window_status" | grep -oE 'found_end=[01]' | head -1 | cut -d= -f2)
+cr15c_found_dispatch=$(printf '%s\n' "$cr15_window_status" | grep -oE 'found_dispatch=[01]' | head -1 | cut -d= -f2)
 cr15c_content=$(printf '%s\n' "$cr15_window_status" | grep -oE 'content=[0-9]+' | head -1 | cut -d= -f2)
-if [[ "$cr15c_found_start" == "1" && "$cr15c_found_end" == "1" && "$cr15c_content" != "0" ]]; then
-    pass "CR-15c: fragments/01-detection.md '#### Dispatch turn' awk window has both boundary headings AND non-empty body (start=found, end=found, body=$cr15c_content lines)"
+if [[ "$cr15c_found_start" == "1" && "$cr15c_found_end" == "1" && "$cr15c_found_dispatch" == "1" && "$cr15c_content" =~ ^[1-9][0-9]*$ ]]; then
+    pass "CR-15c: fragments/01-detection.md '#### Dispatch turn' window structurally sound (start=found, end=found, dispatch_marker=found, body=$cr15c_content lines)"
 else
     cr15c_problems=""
     [[ "$cr15c_found_start" != "1" ]] && cr15c_problems="$cr15c_problems no_start_heading"
     [[ "$cr15c_found_end" != "1" ]] && cr15c_problems="$cr15c_problems no_end_heading"
-    [[ "$cr15c_content" == "0" ]] && cr15c_problems="$cr15c_problems empty_body"
-    fail "CR-15c: fragments/01-detection.md '#### Dispatch turn' awk window malformed —$cr15c_problems. Silent-mis-fire risk: CR-15a's window would expand or shrink invalidly. Verify the '^#### Dispatch turn' heading and the next '^#### ' heading both exist with content between them."
+    [[ "$cr15c_found_dispatch" != "1" ]] && cr15c_problems="$cr15c_problems no_dispatch_marker"
+    [[ ! "$cr15c_content" =~ ^[1-9][0-9]*$ ]] && cr15c_problems="$cr15c_problems empty_or_unparseable_body(=$cr15c_content)"
+    fail "CR-15c: fragments/01-detection.md '#### Dispatch turn' window malformed —$cr15c_problems. Silent-mis-fire risk: CR-15a's window would expand or shrink invalidly. Verify the '^#### Dispatch turn' heading, the next '^#### ' heading, and the '**Dispatch.**' paragraph marker all exist with content between them."
 fi
 
 # CR-13: codex-poll.sh watchdog wires up cleanly — single source of truth
