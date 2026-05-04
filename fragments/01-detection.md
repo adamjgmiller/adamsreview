@@ -290,9 +290,10 @@ phase_1_5_start_epoch=$(date +%s)
 
 This epoch is what 02-ensemble-adapter.md step 1.5.7 subtracts to
 compute `phase_1_5_elapsed`. Placing it here mirrors Phase 1's
-`phase_1_start_epoch` capture at the top of step 1.3 — both clocks
-start at the same turn boundary, so under §13.12 parallel dispatch
-the two `elapsed_sec` values naturally overlap in `phases.jsonl`.
+`phase_1_start_epoch` capture in step 1.3's pre-dispatch init — both
+clocks start at the same turn boundary, so under §13.12 parallel
+dispatch the two `elapsed_sec` values naturally overlap in
+`phases.jsonl`.
 
 ### 1.3. Dispatch the lenses (one turn, one Agent call per applicable lens)
 
@@ -400,11 +401,29 @@ shared invariants (from step 1.2.1) + lens body.
 
 #### Dispatch turn (one turn, all blocks)
 
-With every applicable lens's spec assembled (L1–L7 sub-sections
-above), issue every applicable lens's `Agent` tool-use in a SINGLE
-orchestrator turn. The per-lens sub-sections are reference data — a
-parameter sweep, not a turn sweep. Phase 1 wall-clock latency is
-`max(lens_durations)`, not `sum(lens_durations)`.
+**Pre-dispatch init** (orchestrator working context — not a separate
+tool-use turn): capture the phase epoch and seed the in-context
+candidate pool that §1.4 will append to as lens results return.
+
+```bash
+phase_1_start_epoch=$(date +%s)
+internal_candidates='[]'
+```
+
+These are working-context value initializations per CLAUDE.md
+operational rule 11 ("Working set lives in-prompt, not shell vars"),
+not `Bash` tool-uses; the orchestrator records them in-context
+*before* issuing the `Agent` blocks below. The `phase_1_start_epoch`
+capture mirrors the §1.2-Phase-1.5 `phase_1_5_start_epoch` so both
+clocks start at the same turn boundary (§13.12 parallel dispatch),
+and `internal_candidates='[]'` is the seed value §1.4's per-lens
+`--argjson accum "$internal_candidates"` appends require.
+
+**Dispatch.** With every applicable lens's spec assembled (L1–L7
+sub-sections above), issue every applicable lens's `Agent` tool-use
+in a SINGLE orchestrator turn. The per-lens sub-sections are
+reference data — a parameter sweep, not a turn sweep. Phase 1
+wall-clock latency is `max(lens_durations)`, not `sum(lens_durations)`.
 
 Under `ensemble_mode == true`, the Ensemble fan-out's background
 `Bash` calls (next sub-section) launch in this same turn — see the
@@ -448,15 +467,9 @@ execution reaches it and execution proceeds straight to Phase 2.
 Collection runs per-lens as each sub-agent result returns — but under
 §13.12 nothing gets an `id` and nothing is committed to the artifact
 during collection. Candidates accumulate in an in-context pool
-(`internal_candidates`) and are committed at the join step 1.5.
-
-Initialize the pool and capture the phase epoch before the first lens
-`Agent` block of step 1.3's dispatch turn:
-
-```bash
-phase_1_start_epoch=$(date +%s)
-internal_candidates='[]'
-```
+(`internal_candidates`, initialized in step 1.3's pre-dispatch init
+along with `phase_1_start_epoch`) and are committed at the join step
+1.5.
 
 For each sub-agent result, in the order it returns:
 

@@ -5664,6 +5664,92 @@ else
     fail "CR-12b: $cr12b_imperatives imperative dispatch phrase(s) ('Launch one \`Agent\` tool-use' / 'and dispatch.') found in fragments/01-detection.md §1.3 per-lens sub-sections — these reintroduce serial dispatch despite the §1.3 top-of-section directive"
 fi
 
+# CR-15: fragments/01-detection.md §1.3 "#### Dispatch turn"
+# sub-section hosts the Phase 1 pre-dispatch init block
+# (phase_1_start_epoch + internal_candidates). Without
+# phase_1_start_epoch in the dispatch sub-section, a top-to-bottom
+# orchestrator captures the start time AFTER §1.3 dispatches the
+# lenses and phase_1_elapsed under-reports by the lens duration.
+# internal_candidates is co-located for structural cleanliness (the
+# seed value belongs with the dispatch it seeds); duplicating it
+# back into §1.4 would re-introduce the original layout drift via
+# last-write-wins source-order reading.
+#
+# Three sub-checks:
+#   a. positive guard — both vars present in the dispatch-turn
+#      window (`#### Dispatch turn` → next `#### ` heading).
+#   b. negative twin — neither var present in §1.4 (`### 1.4.` →
+#      `### 1.5.`). Catches future-edit duplication.
+#   c. window sanity — the dispatch-turn window itself is
+#      non-empty. Sanity guard against silent no-op if a future
+#      fragment edit renames the sub-section heading.
+
+cr15_window=$(awk '
+    /^#### Dispatch turn/   {in_window=1; next}
+    /^#### /                {if (in_window) in_window=0}
+    in_window               {print}
+' "$REPO/fragments/01-detection.md")
+
+cr15_section_14=$(awk '
+    /^### 1\.4\./           {in_window=1; next}
+    /^### 1\.5\./           {in_window=0}
+    in_window               {print}
+' "$REPO/fragments/01-detection.md")
+
+# CR-15a — positive guard. Whitespace-tolerant regex (mirrors
+# CR-12a's `[[:space:]]+` precedent). For internal_candidates the
+# optional-quote class `['"]?` accepts `'[]'`, `"[]"`, or bare
+# `=[]` so trivial reformats don't trip the assertion.
+cr15a_has_epoch=0
+cr15a_has_pool=0
+printf '%s\n' "$cr15_window" \
+    | grep -qE 'phase_1_start_epoch[[:space:]]*=[[:space:]]*\$\(date' \
+    && cr15a_has_epoch=1
+printf '%s\n' "$cr15_window" \
+    | grep -qE "internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]" \
+    && cr15a_has_pool=1
+if [[ "$cr15a_has_epoch" == "1" && "$cr15a_has_pool" == "1" ]]; then
+    pass "CR-15a: fragments/01-detection.md §1.3 '#### Dispatch turn' sub-section contains Phase 1 pre-dispatch init (phase_1_start_epoch + internal_candidates)"
+else
+    cr15a_missing=""
+    [[ "$cr15a_has_epoch" == "0" ]] && cr15a_missing="$cr15a_missing phase_1_start_epoch=\$(date +%s)"
+    [[ "$cr15a_has_pool" == "0" ]] && cr15a_missing="$cr15a_missing internal_candidates='[]'"
+    fail "CR-15a: fragments/01-detection.md §1.3 '#### Dispatch turn' sub-section missing pre-dispatch init —$cr15a_missing — top-to-bottom orchestrator would dispatch lenses before capturing the phase epoch (phase_1_elapsed under-reports)"
+fi
+
+# CR-15b — negative twin. Catches the regression where a future
+# edit re-introduces the init in §1.4 alongside the dispatch-turn
+# placement. Same regex as 15a, applied to the §1.4 → §1.5 window.
+# Precision matters: the regex requires `=` then optional quote
+# then `[]`, so it does NOT match the existing §1.4 sites:
+#   - `internal_candidates=$(jq ...)` (no `[]`)
+#   - `--argjson accum "$internal_candidates"` (no `=` after the
+#     var name; that's a variable expansion)
+#   - `--argjson internal "$internal_candidates"` (same)
+#   - the §1.4 forward-pointer parenthetical (backticks, no `=`)
+cr15b_violations=""
+printf '%s\n' "$cr15_section_14" \
+    | grep -qE 'phase_1_start_epoch[[:space:]]*=[[:space:]]*\$\(date' \
+    && cr15b_violations="$cr15b_violations phase_1_start_epoch_in_§1.4"
+printf '%s\n' "$cr15_section_14" \
+    | grep -qE "internal_candidates[[:space:]]*=[[:space:]]*['\"]?\[\]" \
+    && cr15b_violations="$cr15b_violations internal_candidates_in_§1.4"
+if [[ -z "$cr15b_violations" ]]; then
+    pass "CR-15b: fragments/01-detection.md §1.4 contains no Phase 1 pre-dispatch init (negative twin against duplication regression)"
+else
+    fail "CR-15b: fragments/01-detection.md §1.4 contains pre-dispatch init that should live only in '#### Dispatch turn' —$cr15b_violations — duplication would re-introduce original layout drift via last-write-wins source-order reading"
+fi
+
+# CR-15c — window sanity. If a future edit renames "#### Dispatch
+# turn" or removes the next "#### " boundary, cr15_window goes
+# empty and 15a would silently pass without checking anything.
+# Loud-fail instead.
+if [[ -n "$cr15_window" ]]; then
+    pass "CR-15c: fragments/01-detection.md '#### Dispatch turn' awk window non-empty (heading present and a subsequent '#### ' boundary follows it)"
+else
+    fail "CR-15c: fragments/01-detection.md '#### Dispatch turn' awk window empty — heading missing, renamed, or no subsequent '#### ' heading found. Silent-no-op risk: CR-15a would pass without checking anything. Verify the '^#### Dispatch turn' heading and the next '^#### ' heading both exist."
+fi
+
 # CR-13: codex-poll.sh watchdog wires up cleanly — single source of truth
 # for codex-job liveness checking. plans/codex-watchdog.md (FU-5) replaces
 # raw `node "$CODEX_COMPANION" status --json` polls with a helper that
