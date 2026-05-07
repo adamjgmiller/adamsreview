@@ -147,6 +147,11 @@ PROMPT
 
 #### 4.2.2. Launch Codex jobs (one orchestrator turn)
 
+> **One turn for all per-finding launches — not one turn per finding.**
+> Issue every deep-lane finding's `node "$CODEX_COMPANION" task --background`
+> Bash block in a single orchestrator turn. Phase 4a wall-clock latency is
+> `max(codex_durations)`, not `sum(codex_durations)`.
+
 For each deep-lane finding, fire one Bash tool-use:
 
 ```bash
@@ -220,6 +225,12 @@ as §1.4.
 
 Then dispatch ONE Sonnet shape-fixer per finding. Each shape-fixer
 takes that freeform Codex output and returns a single canonical tuple.
+
+> **One turn for all shape-fixer `Agent` dispatches — not one turn per
+> finding.** Shape-fixers are independent (each takes one Codex output,
+> returns one tuple); serializing turns the canonicalization pass into
+> a per-finding timer.
+
 Dispatch all shape-fixers in one orchestrator turn for concurrency.
 
 Shape-fixer prompt essence:
@@ -327,6 +338,11 @@ log-tokens.sh \
 ```
 
 ### 4.3. Phase 4b — light lane (chunked-batch Codex per chunk)
+
+> **One turn for all chunk launches — not one turn per chunk.** Issue
+> every chunk's `node "$CODEX_COMPANION" task --background` Bash block
+> in a single orchestrator turn. Phase 4b wall-clock latency is
+> `max(chunk_durations)`, not `sum(chunk_durations)`.
 
 Split light-lane candidates (and every candidate under `trivial_mode`)
 into chunks of **≤25 candidates per chunk**. For each chunk, build

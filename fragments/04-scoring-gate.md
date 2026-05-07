@@ -51,6 +51,12 @@ be all-gate skip too).
 
 ### 3.3. Dispatch scoring sub-agents (chunked-batch fan-out)
 
+> **One turn for all chunk-agent dispatches — not one turn per chunk.**
+> Phase 3 wall-clock latency is `max(chunk_durations)`, not
+> `sum(chunk_durations)`. Serializing turns the cheap-scoring pass into
+> a per-chunk timer and breaks the parallelism Phase 4's wave timing
+> assumes upstream of it.
+
 Split `scoring_ids` into chunks of **at most 25 candidates per chunk**,
 balanced as evenly as feasible (e.g. 22 → one chunk of 22; 50 → 25/25;
 60 → 20/20/20). For each chunk, launch ONE Sonnet sub-agent. Fire all

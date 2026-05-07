@@ -185,6 +185,12 @@ Per lens that runs, the orchestrator does:
 
 ### 1.3. Dispatch the Codex jobs (one orchestrator turn)
 
+> **One turn for all lens launches — not one turn per lens.** Issue every
+> running lens's `node "$CODEX_COMPANION" task --background` Bash block in
+> a single orchestrator turn. Phase 1 wall-clock latency is
+> `max(codex_durations)`, not `sum(codex_durations)`. Serializing turns
+> up to ~7× the runtime budget.
+
 Launch each running lens's Codex job in a SINGLE orchestrator turn so
 they run concurrently. Each launch is a Bash tool-use:
 
@@ -226,6 +232,13 @@ for what's in flight. The §1.6 summary's `lenses_run` and
 `lenses_dropped` lists are filled in across §1.4 as jobs resolve.
 
 ### 1.4. Poll the Codex jobs (subsequent orchestrator turns)
+
+> **One turn for all in-flight polls — not one turn per job.** Issue every
+> still-alive job's `codex-poll.sh` Bash block in the same orchestrator
+> turn (and re-poll the still-alive ones together on the next turn).
+> Polling one job per turn turns the 90s stall-detection cadence into
+> N×90s and silently lengthens the phase by an order of magnitude on
+> wide fan-outs.
 
 For each `jobId` in the map, poll via the watchdog helper:
 

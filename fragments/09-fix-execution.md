@@ -121,6 +121,11 @@ on disk.
 
 ### 8.5. Dispatch parallel fix-group agents (one turn)
 
+> **One turn for all fix-group `Agent` dispatches — not one turn per
+> group.** Phase 8 wall-clock latency is `max(group_durations)`, not
+> `sum(group_durations)`. Serializing turns the fix run into a per-group
+> timer; each group's edits are independent.
+
 Fan out one `Agent` tool-use per group, all in a single orchestrator
 turn. Each agent uses `subagent_type: general-purpose`, `model: opus`,
 and receives the full §19.8 input per-group.
