@@ -319,6 +319,12 @@ dispatches.
 
 #### L1 — diff-local scan (Sonnet)
 
+> **Read L1–L7 before issuing any Agent tool-use.** The per-lens sub-sections
+> below are spec data (model, prompt body, substitutions). Issue every
+> applicable lens's `Agent` block in the single `#### Dispatch turn` at the
+> end of this section — one orchestrator turn, not seven. Phase 1 latency is
+> `max(lens_durations)`, not `sum(lens_durations)`.
+
 Dispatch spec: `model: sonnet`, `subagent_type: general-purpose`.
 
 Prompt body: `fragments/lens-prompts/L1.md` (read in step 1.3's bulk
@@ -326,6 +332,8 @@ pre-read; its content is the L1 prompt body verbatim). Final prompt =
 shared invariants (from step 1.2.1) + lens body.
 
 #### L2 — structural / blast-radius (Opus; skipped if `trivial_mode`)
+
+> **Spec data — issue this lens's `Agent` block in the single `#### Dispatch turn` at the end of §1.3, not here.**
 
 Dispatch spec: `model: opus`, `subagent_type: general-purpose`. The
 sub-agent inherits the parent command's `Read` + `Bash(git:*)` +
@@ -341,6 +349,8 @@ substitution: `$prior_fix_suspects` → the JSON array captured at step
 
 #### L3 — CLAUDE.md compliance (Sonnet)
 
+> **Spec data — issue this lens's `Agent` block in the single `#### Dispatch turn` at the end of §1.3, not here.**
+
 Dispatch spec: `model: sonnet`.
 
 Prompt body: `fragments/lens-prompts/L3.md` (read in step 1.3's bulk
@@ -351,6 +361,8 @@ body (with substitution applied).
 
 #### L4 — comment compliance (Sonnet)
 
+> **Spec data — issue this lens's `Agent` block in the single `#### Dispatch turn` at the end of §1.3, not here.**
+
 Dispatch spec: `model: sonnet`.
 
 L4 additionally reads the current content of every modified file.
@@ -360,6 +372,8 @@ pre-read; its content is the L4 prompt body verbatim). Final prompt =
 shared invariants (from step 1.2.1) + lens body.
 
 #### L5 — UX (Sonnet; skipped if `trivial_mode` or `user_facing == false`)
+
+> **Spec data — issue this lens's `Agent` block in the single `#### Dispatch turn` at the end of §1.3, not here.**
 
 Dispatch spec: `model: sonnet`.
 
@@ -372,6 +386,8 @@ invariants (from step 1.2.1) + lens body (with substitution applied).
 
 #### L6 — lightweight security (Sonnet; skipped if `trivial_mode`)
 
+> **Spec data — issue this lens's `Agent` block in the single `#### Dispatch turn` at the end of §1.3, not here.**
+
 Dispatch spec: `model: sonnet`.
 
 Prompt body: `fragments/lens-prompts/L6.md` (read in step 1.3's bulk
@@ -381,6 +397,8 @@ duplicate kept for now to avoid scope creep). Final prompt = shared
 invariants (from step 1.2.1) + lens body.
 
 #### L7 — holistic review (Opus; `ensemble_mode` only; skipped if `trivial_mode`)
+
+> **Spec data — issue this lens's `Agent` block in the single `#### Dispatch turn` at the end of §1.3, not here.**
 
 Dispatch spec: `model: opus`, `subagent_type: general-purpose`.
 Inherits the parent command's Read + Bash(git:*) + Bash(grep:*) grants —

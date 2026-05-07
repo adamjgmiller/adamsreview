@@ -40,6 +40,11 @@ on `impact_type`):
 
 ### 4.2. Wave 1 — deep lane (Opus per candidate; skipped under trivial_mode)
 
+> **One turn for all deep-lane `Agent` dispatches — not one turn per
+> candidate.** Phase 4a wall-clock latency is `max(opus_durations)`, not
+> `sum(opus_durations)`. Serializing turns the deep lane into a
+> per-candidate timer.
+
 For each deep-lane candidate, launch ONE `Agent` tool-use with
 `model: opus`, `subagent_type: general-purpose`. Dispatch all in one
 orchestrator turn for concurrency.
@@ -187,6 +192,10 @@ Prompt essence:
 > and `fix_proposal.{approach,files_to_modify}` instead.
 
 ### 4.3. Wave 1 — light lane (Sonnet, chunked-batch fan-out)
+
+> **One turn for all chunk-`Agent` dispatches — not one turn per chunk.**
+> Light-lane chunks are independent; serializing turns the lane into a
+> per-chunk timer (latency = `sum(chunk_durations)` instead of `max(...)`).
 
 Split light-lane candidates (including every candidate under
 `trivial_mode`) into chunks of **at most 25 candidates per chunk**,
@@ -548,6 +557,11 @@ If the resulting list is non-empty AND we haven't already done Wave 2:
    further `related_candidates_to_investigate` entries." (Hard-cap
    enforcement: §4 says "Hard cap at 2 waves.") Wave 2 is deep-lane
    only — one Opus per candidate, no batching, same rule as §4.2.
+
+   > **One turn for all Wave 2 `Agent` dispatches — not one turn per
+   > candidate.** Same parallelism contract as §4.2 above; serializing
+   > turns the chain-retry into a per-candidate timer on top of an
+   > already-deep validation pass.
 4. Apply the decision table per step 4.4 for Wave 2 results. Build a
    second tuple array at `$scratch/phase4-wave2-decisions.json`, then
    compute `$N_wave2_dispatched` from the gate-passers list (Wave 2 is
