@@ -198,8 +198,12 @@ the README documents for local-mode `--ensemble` without Codex
 ("Phase 1.5 has no work to do").
 
 ```bash
-scrape_bot_count=$(jq 'length' "$scratch_dir/pr-scrape.json")
-if [[ "$codex_status" != "success" ]] && [[ "${scrape_bot_count:-0}" -eq 0 ]]; then
+scrape_bot_count=0
+if [[ -s "$scratch_dir/pr-scrape.json" ]] \
+   && jq -e 'type == "array"' "$scratch_dir/pr-scrape.json" >/dev/null 2>&1; then
+    scrape_bot_count=$(jq 'length' "$scratch_dir/pr-scrape.json")
+fi
+if [[ "$codex_status" != "success" ]] && [[ "$scrape_bot_count" -eq 0 ]]; then
     external_candidates="[]"
     external_candidate_count=0
     printf 'phase_1_5_no_external_inputs: skipping normalizer dispatch\n' \
@@ -289,6 +293,7 @@ if [[ -z "$normalizer_clean" ]]; then
     printf 'phase_1_5_normalizer_unparseable: dropping external candidates\n' \
         >> "$trace_log_path"
     external_candidates="[]"
+    external_candidate_count=0
 fi
 ```
 
@@ -304,6 +309,7 @@ if [[ -n "$normalizer_clean" ]]; then
           line_range: (.line_range // [1,1])
         } ]
     ')
+    external_candidate_count=$(jq 'length' <<<"$external_candidates")
 fi
 ```
 

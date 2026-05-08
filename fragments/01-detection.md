@@ -602,9 +602,10 @@ For each sub-agent result, in the order it returns:
 ### 1.5. Join + assign IDs + batched add-findings (§13.12)
 
 Wait until every internal lens has returned AND (if `ensemble_mode ==
-true`) the ensemble normalizer has emitted its candidate array into
-`external_candidates` per `02-ensemble-adapter.md` step 1.5.5. Under
-`ensemble_mode=false`, `external_candidates` defaults to `[]`.
+true`) `external_candidates` has been set — either by the no-input
+early-skip at `02-ensemble-adapter.md` step 1.5.4b (sets `[]`) or by
+the normalizer at step 1.5.5. Under `ensemble_mode=false`,
+`external_candidates` defaults to `[]`.
 
 **Step 1. Combine the two pools:**
 
