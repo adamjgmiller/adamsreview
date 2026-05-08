@@ -177,9 +177,10 @@ unavailable**, dispatch `AskUserQuestion` **once** with two options:
 
 - **Proceed without Codex** — in PR mode, continue with the PR
   bot-comment scrape only; in local mode, this leaves Phase 1.5 with
-  no external sources (skipped). Either way, `codex_status=skipped`
-  lands in the Phase 1.5 summary record (`phases.jsonl`); the final
-  report's `reviewer_sources` reflects the absence.
+  no external sources (skipped). Either way, `codex=skipped` lands in
+  the Phase 1.5 narrative summary in `trace.md` (via §1.5.7's
+  `log-phase.sh --summary`); the final report's `reviewer_sources`
+  reflects the absence.
 - **Stop so I can set it up first** — exit the command. Print the
   exact remediation command (`/codex:setup`) and let the user fix
   first.
