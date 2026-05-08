@@ -188,7 +188,33 @@ output only. Do not abort. The freshness-filter failure path (inner
 `if`) is separately logged because it can fire independently of the
 scrape succeeding.
 
+### 1.5.4b. No-input early-skip
+
+If both prompt slots are trivially empty — `codex_status != success`
+AND the PR scrape produced zero bot comments — skip §1.5.5 (normalizer
+dispatch) and §1.5.6 (token log: no sub-agent ran). Proceed directly
+to §1.5.6b (scratch cleanup) and §1.5.7 (summary). This is the path
+the README documents for local-mode `--ensemble` without Codex
+("Phase 1.5 has no work to do").
+
+```bash
+scrape_bot_count=$(jq 'length' "$scratch_dir/pr-scrape.json")
+if [[ "$codex_status" != "success" ]] && [[ "${scrape_bot_count:-0}" -eq 0 ]]; then
+    external_candidates="[]"
+    external_candidate_count=0
+    printf 'phase_1_5_no_external_inputs: skipping normalizer dispatch\n' \
+        >> "$trace_log_path"
+    # Fall through to §1.5.6b. The dispatch in §1.5.5 is gated on this.
+fi
+```
+
+If at least one input has content, dispatch the normalizer in §1.5.5
+below.
+
 ### 1.5.5. Normalize all external inputs (single Sonnet sub-agent)
+
+Skip this section entirely if §1.5.4b set `external_candidates="[]"`
+on the no-input early-skip path.
 
 Pass the normalizer both inputs in its prompt. The sub-agent produces
 one unified candidate list. This follows §19.2a verbatim.

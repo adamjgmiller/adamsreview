@@ -175,9 +175,10 @@ fi
 **If Codex is available**, proceed silently. **If Codex is
 unavailable**, dispatch `AskUserQuestion` **once** with two options:
 
-- **Proceed without Codex** — continue with the PR scrape only. Note
-  that Codex was skipped in the final report's source breakdown and in
-  `trace.md`.
+- **Proceed without Codex** — in PR mode, continue with the PR
+  bot-comment scrape only; in local mode, this leaves Phase 1.5 with
+  no external sources (skipped). Either way, Codex is marked skipped
+  in the final report's source breakdown and in `trace.md`.
 - **Stop so I can set it up first** — exit the command. Print the
   exact remediation command (`/codex:setup`) and let the user fix
   first.
