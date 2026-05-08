@@ -198,7 +198,7 @@ The Python helpers (`artifact-patch.py`, `artifact-render.py`) use a PEP 723 inl
 
 ### `--ensemble` mode requirements
 
-`/adamsreview:review --ensemble` additionally requires the `codex` Claude Code plugin (the local Codex CLI is invoked through the plugin's `codex-companion.mjs`, not as a standalone CLI on `$PATH`). Without the plugin installed, the readiness gate prompts you to either continue with PR-comment scraping only or stop and run `/codex:setup` first. The default (non-ensemble) mode has no such requirement.
+`/adamsreview:review --ensemble` additionally requires the `codex` Claude Code plugin (the local Codex CLI is invoked through the plugin's `codex-companion.mjs`, not as a standalone CLI on `$PATH`). Without the plugin installed, the readiness gate prompts you to either continue without Codex (in PR mode that means PR-comment scraping only; in local mode it means internal lenses only — Phase 1.5 has no work to do) or stop and run `/codex:setup` first. The default (non-ensemble) mode has no such requirement.
 
 ### Windows: Git Bash not found
 

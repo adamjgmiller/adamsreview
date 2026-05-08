@@ -45,9 +45,9 @@ don't abort the whole command.
 ## Sub-agent dispatch pattern
 
 Every Agent tool-use specifies:
-- `subagent_type: general-purpose` (unless a plugin agent is needed —
-  the only exception in this command is `codex:codex-rescue`, wrapped
-  by the ensemble fragment).
+- `subagent_type: general-purpose`. (The Codex CLI under `--ensemble`
+  runs as a background Bash invocation of `codex-companion.mjs`, not
+  an Agent dispatch — see `fragments/02-ensemble-adapter.md`.)
 - `model:` explicitly — `haiku`, `sonnet`, or `opus` per the fragment's
   instructions.
 
