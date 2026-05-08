@@ -61,8 +61,7 @@ at least one candidate. Compute it from `findings[].sources[]`:
   seeded artifact (Phase 0 step 0.15) carries this label when the
   top-level command set `reviewer_sources_label=internal-codex`;
   preserve it here instead of mapping back to `internal`.
-- adapter names (`codex`, `coderabbit`) — present when any entry
-  matches exactly.
+- adapter name (`codex`) — present when any entry matches exactly.
 - `external-pr:<bot-login>` — present when any entry starts with
   `external-pr:`.
 
@@ -85,7 +84,7 @@ reviewer_sources=$(jq -c --arg internal "$internal_label" '
       # ($internal). Any entry that doesn't match falls through to
       # `empty` and gets dropped from the union.
       if test("^L[0-9]+-") then $internal
-      elif . == "codex" or . == "coderabbit" then .
+      elif . == "codex" then .
       elif startswith("external-pr:") then .
       else empty end
     )

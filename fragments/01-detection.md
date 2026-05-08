@@ -124,11 +124,11 @@ lens claim.
 
 ### 1.2a. Ensemble readiness gate (§13.12)
 
-This gate runs before the dispatch turn so missing-CLI prompts surface
+This gate runs before the dispatch turn so a missing-CLI prompt surfaces
 ahead of any token spend. Under `ensemble_mode=false` it's a one-line
-no-op; under `ensemble_mode=true` it probes CodeRabbit + Codex, may
-prompt the user via `AskUserQuestion`, and prepares the scratch
-directory + Codex prompt file for the joint dispatch at step 1.3.
+no-op; under `ensemble_mode=true` it probes Codex, may prompt the user
+via `AskUserQuestion`, and prepares the scratch directory + Codex
+prompt file for the joint dispatch at step 1.3.
 
 **When `ensemble_mode != true`:**
 
@@ -138,29 +138,18 @@ Skip the gate. Record one line in `trace.md`:
 Phase 1 ensemble readiness gate skipped — --ensemble not set
 ```
 
-Set `coderabbit_available=false`, `codex_available=false` in your
-working context (so downstream fragments can short-circuit uniformly)
-and continue to step 1.3.
+Set `codex_available=false` in your working context (so downstream
+fragments can short-circuit uniformly) and continue to step 1.3.
 
 **When `ensemble_mode == true`:**
 
-Create the scratch directory for CLI outputs (keeps `$review_dir`
+Create the scratch directory for CLI output (keeps `$review_dir`
 free of transient noise):
 
 ```bash
 scratch_dir="/tmp/adams-review-$review_id"
 mkdir -p "$scratch_dir"
 ```
-
-Check CodeRabbit availability:
-
-```bash
-coderabbit --version 2>&1 && coderabbit auth status 2>&1 | head -3
-```
-
-If either returns non-zero, record `coderabbit_available=false` with
-the specific failure reason (e.g., "not installed", "not authenticated
-— run `coderabbit auth login`"). Otherwise `coderabbit_available=true`.
 
 Check Codex availability:
 
@@ -183,15 +172,15 @@ else
 fi
 ```
 
-**If both CLIs are available**, proceed silently. **If either is
+**If Codex is available**, proceed silently. **If Codex is
 unavailable**, dispatch `AskUserQuestion` **once** with two options:
 
-- **Proceed with what's available** — continue with the available
-  reviewer(s) plus the PR scrape. Note skipped reviewers in the final
-  report's source breakdown and in `trace.md`.
-- **Stop so I can set them up first** — exit the command. Print the
-  exact remediation commands (`coderabbit auth login`, `/codex:setup`)
-  and let the user fix first.
+- **Proceed without Codex** — continue with the PR scrape only. Note
+  that Codex was skipped in the final report's source breakdown and in
+  `trace.md`.
+- **Stop so I can set it up first** — exit the command. Print the
+  exact remediation command (`/codex:setup`) and let the user fix
+  first.
 
 Stopping here costs zero lens tokens — the whole point of hoisting the
 gate ahead of dispatch.
@@ -304,7 +293,7 @@ dispatch turn and the two `elapsed_sec` values naturally overlap in
 tool-uses can run in parallel within one orchestrator turn). Then
 issue EVERY applicable lens's `Agent` tool-use in a SINGLE
 orchestrator turn so they run concurrently — alongside the ensemble
-fan-out's background `Bash` calls when `ensemble_mode == true` (see
+fan-out's background `Bash` call when `ensemble_mode == true` (see
 the "Ensemble fan-out" sub-section below). The per-lens sub-sections
 that follow are declarative spec data — the dispatch model, prompt
 body location, and substitution rules (`$prior_fix_suspects`,
@@ -314,7 +303,7 @@ seven serial action targets. The unambiguous action target is the
 sub-section as its own dispatch turn defeats the parallelism this
 phase relies on: Phase 1 wall-clock latency goes from
 `max(lens_durations)` to `sum(lens_durations)`, and the ensemble
-fan-out's background CLIs lose their overlap window with the lens
+fan-out's background CLI loses its overlap window with the lens
 dispatches.
 
 #### L1 — diff-local scan (Sonnet)
@@ -446,13 +435,13 @@ reference data — a parameter sweep, not a turn sweep. Phase 1
 wall-clock latency is `max(lens_durations)`, not `sum(lens_durations)`.
 
 Under `ensemble_mode == true`, the Ensemble fan-out's background
-`Bash` calls (next sub-section) launch in this same turn — see the
+`Bash` call (next sub-section) launches in this same turn — see the
 "Total tool-use blocks" table below for the exact count by mode.
 
 #### Ensemble fan-out (same turn, when `ensemble_mode == true`)
 
 When `ensemble_mode=true`, the dispatch turn also launches the
-external CLI reviewers. These run as tool-use blocks in the same
+external Codex CLI reviewer. It runs as a tool-use block in the same
 orchestrator turn as the lens `Agent` dispatches above — waiting a
 turn between them serializes what's meant to be parallel. The PR
 comment scrape is NOT in this turn; it's deferred to §1.5.4 in
@@ -464,21 +453,17 @@ Total tool-use blocks in the dispatch turn:
 | Condition | Blocks |
 |---|---|
 | `ensemble_mode=false` | applicable lenses (6 max — L1..L6; L7 is ensemble-gated) |
-| `ensemble_mode=true`, both CLIs available | lenses (up to 7, including L7) + 2 background Bash |
-| `ensemble_mode=true`, one CLI unavailable | lenses (up to 7) + 1 background Bash |
-| `ensemble_mode=true`, no CLIs available | lenses (up to 7) |
+| `ensemble_mode=true`, Codex available | lenses (up to 7, including L7) + 1 background Bash |
+| `ensemble_mode=true`, Codex unavailable | lenses (up to 7) |
 
-The ensemble launch specs live in `02-ensemble-adapter.md`:
+The ensemble launch spec lives in `02-ensemble-adapter.md`:
 
-- **CodeRabbit** (background Bash) — see `02-ensemble-adapter.md`
-  step 1.5.2. Skip if `coderabbit_available=false`. Capture
-  `coderabbit_shell_id`.
 - **Codex** (background Bash) — see `02-ensemble-adapter.md` step
   1.5.2. Skip if `codex_available=false`. The prompt file was already
   written in step 1.2a; the launch block just invokes `node
   "$CODEX_COMPANION" task …`. Capture `codex_shell_id`.
 
-Under `ensemble_mode=false`, none of these launches happen; the
+Under `ensemble_mode=false`, this launch doesn't happen; the
 02-ensemble-adapter fragment's top-level skip note fires when
 execution reaches it and execution proceeds straight to Phase 2.
 
@@ -668,9 +653,9 @@ ided=$(printf '%s' "$sanitized" \
 ```
 
 `assign-finding-ids.sh` sorts by source priority (L1, L2, L3, L4, L5,
-L6, L7, external-pr, codex, coderabbit — stable within source = input
-order preserved) and assigns `F001…F0NN`. See the helper's header for
-the full priority table.
+L6, L7, external-pr, codex — stable within source = input order
+preserved) and assigns `F001…F0NN`. See the helper's header for the
+full priority table.
 
 On non-zero exit (malformed pool JSON), log stderr to `trace.md` and
 bail — the whole detection phase must re-run because the pool is

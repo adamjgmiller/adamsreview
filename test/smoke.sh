@@ -653,7 +653,7 @@ fi
 U_OUT=$(echo '["L1-diff-local","L3-claude-md","L7-holistic","codex","external-pr:greptile-apps[bot]","random-tag"]' \
     | jq -c 'map(
         if test("^L[0-9]+-") then "internal"
-        elif . == "codex" or . == "coderabbit" then .
+        elif . == "codex" then .
         elif startswith("external-pr:") then .
         else empty end
       ) | unique')
@@ -672,7 +672,7 @@ fi
 U_OUT_STRICT=$(echo '["L7-holistic"]' \
     | jq -c 'map(
         if test("^L[0-9]+-") then "internal"
-        elif . == "codex" or . == "coderabbit" then .
+        elif . == "codex" then .
         elif startswith("external-pr:") then .
         else empty end
       ) | unique')
@@ -1797,13 +1797,13 @@ else
 fi
 
 # Assertion AI-2: ensemble-mixed pool — 1 L1 + 1 L6 + 1 external-pr +
-# 1 codex + 1 coderabbit. Expect L1 → L6 → external-pr → codex → coderabbit.
-in='[{"sources":["L1-diff-local"],"file":"a.ts"},{"sources":["L6-security"],"file":"b.ts"},{"sources":["external-pr:greptile[bot]"],"file":"c.ts"},{"sources":["codex"],"file":"d.ts"},{"sources":["coderabbit"],"file":"e.ts"}]'
+# 1 codex. Expect L1 → L6 → external-pr → codex.
+in='[{"sources":["L1-diff-local"],"file":"a.ts"},{"sources":["L6-security"],"file":"b.ts"},{"sources":["external-pr:greptile[bot]"],"file":"c.ts"},{"sources":["codex"],"file":"d.ts"}]'
 out=$(echo "$in" | "$AI_TOOL")
 line=$(echo "$out" | jq -r '[.[] | "\(.id):\(.sources[0])"] | join(",")')
-expected="F001:L1-diff-local,F002:L6-security,F003:external-pr:greptile[bot],F004:codex,F005:coderabbit"
+expected="F001:L1-diff-local,F002:L6-security,F003:external-pr:greptile[bot],F004:codex"
 if [[ "$line" == "$expected" ]]; then
-    pass "AI-2 (§13.12): ensemble-mixed pool orders L1 → L6 → external-pr → codex → coderabbit"
+    pass "AI-2 (§13.12): ensemble-mixed pool orders L1 → L6 → external-pr → codex"
 else
     fail "AI-2: expected '$expected', got '$line'"
 fi

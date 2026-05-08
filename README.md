@@ -15,7 +15,7 @@ Command files live at bare-stem paths under `commands/` (`review.md`, `codex-rev
 
 Not required — each command is independent — but they work best in this order on a non-trivial PR:
 
-1. **Review.** `/adamsreview:review` — or `/adamsreview:review --ensemble` if you have the CodeRabbit + Codex CLIs installed and want a multi-source review at higher token cost. **Or** `/adamsreview:codex-review [--effort <level>]` for a Codex-driven peer review (drop-in for everything downstream; effort tunable; no `--ensemble`).
+1. **Review.** `/adamsreview:review` — or `/adamsreview:review --ensemble` if you have the Codex CLI installed and want to pool a Codex pass plus a PR bot-comment scrape on top of the internal Claude lenses (higher token cost). **Or** `/adamsreview:codex-review [--effort <level>]` for a Codex-driven peer review (drop-in for everything downstream; effort tunable; no `--ensemble`).
 2. **Add.** *(optional)* `/adamsreview:add <paste...>` — if you ran a parallel review (cloud `/ultrareview`, Opus once-over, manual scan, etc.) that surfaced bugs the original review missed, paste the result here. The findings are validated by Phase 4 and land in the same artifact, deduped against what's already there. Auto-eligible additions feed step 4; non-eligible ones surface in step 3.
 3. **Walkthrough.** *(optional)* `/adamsreview:walkthrough [threshold]` — step through findings the fix command would skip (deep-manual, deep-report, and the entire light lane including light `confirmed_mechanical`), restricted to those scoring at or above `$threshold` (default 60) so low-signal items don't pad the session. Each finding gets a briefing + options + recommendation; promote the ones you want auto-fixed with tailored fix-hints, skip the rest. Posts a decisions log to the PR for audit. Pass a lower threshold (e.g. `/adamsreview:walkthrough 30`) and pick the **Full** tier at the preflight prompt to audit Phase-3-demoted `below_gate` findings too.
 4. **Fix.** `/adamsreview:fix` — applies every auto-eligible finding (including whatever was added in step 2 and promoted in step 3). Default: one combined commit for all surviving fixes; pass `--granular-commits` for one commit per fix group. Per-group Phase-9 outcome lands in the commit message either way.
@@ -198,7 +198,7 @@ The Python helpers (`artifact-patch.py`, `artifact-render.py`) use a PEP 723 inl
 
 ### `--ensemble` mode requirements
 
-`/adamsreview:review --ensemble` additionally requires the `codex` and `coderabbit` CLIs installed as Claude Code plugins (not standalone CLIs on `$PATH`). Phase 1.5 dispatches `codex:codex-rescue` and `coderabbit:code-reviewer` through the ensemble adapter; without both plugins present, the run errors at the adapter step. The default (non-ensemble) mode has no such requirement.
+`/adamsreview:review --ensemble` additionally requires the `codex` Claude Code plugin (the local Codex CLI is invoked through the plugin's `codex-companion.mjs`, not as a standalone CLI on `$PATH`). Without the plugin installed, the readiness gate prompts you to either continue with PR-comment scraping only or stop and run `/codex:setup` first. The default (non-ensemble) mode has no such requirement.
 
 ### Windows: Git Bash not found
 

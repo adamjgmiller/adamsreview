@@ -13,8 +13,9 @@ Flags (optional):
   doc/config-PR early-exit). Same semantics as `:review --full`.
 
 Note: this command has **no `--ensemble` flag** — it is purpose-built
-for Codex-only review. If you want CodeRabbit + PR-scrape pooling,
-run `/adamsreview:review --ensemble` instead.
+for Codex-only review. If you want internal Claude lenses pooled with
+the Codex CLI + a PR bot-comment scrape, run `/adamsreview:review
+--ensemble` instead.
 
 **Read `fragments/_prelude-shared.md` before proceeding — it lists
 rules that apply to every phase below (sub-agent return handling,
@@ -219,5 +220,6 @@ the instructions inside.
 - No fallback to Claude lenses if Codex is unavailable — codex-review
   is Codex-only by design. The readiness gate above exits cleanly with
   a setup hint.
-- No Phase 1.5 external-source pooling (CodeRabbit, PR-comment scrape).
-  Run `/adamsreview:review --ensemble` if you want that.
+- No Phase 1.5 external-source pooling (PR-comment scrape, secondary
+  Codex CLI). Run `/adamsreview:review --ensemble` if you want that on
+  top of internal Claude lenses.

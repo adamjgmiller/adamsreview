@@ -13,13 +13,13 @@ CLAUDE.md keeps a one-paragraph summary per command; this file is the reference.
 ├── Phase 1    ─┐ Detection (6 parallel lens agents, 7 under --ensemble — L7
 │               │   is a holistic Opus safety net; origin cross-check corrects
 │               │   blame-traceable verdicts; under --ensemble also invokes the
-│               │   CodeRabbit and Codex CLIs as subprocesses via the ensemble
-│               │   adapter, feeding their output into the Phase 1.5 normalizer)
+│               │   Codex CLI as a subprocess via the ensemble adapter,
+│               │   feeding its output into the Phase 1.5 normalizer)
 ├── Phase 1.5  ─┘ External-source pooling (PR-comment scrape: gh api → bot
 │                 filter → comment-freshness; merged with --ensemble's
-│                 CodeRabbit + Codex CLI output through a single Sonnet
-│                 normalizer; ensemble mode only; CLI launches dispatched
-│                 jointly with Phase 1, PR scrape deferred to post-CLI)
+│                 Codex CLI output through a single Sonnet normalizer;
+│                 ensemble mode only; CLI launch dispatched jointly with
+│                 Phase 1, PR scrape deferred to post-CLI)
 ├── Phase 2 — Dedup (one Sonnet call; merges equivalent candidates, unions source_families)
 ├── Phase 3 — Cheap scoring + gate (chunked-batch Sonnet err-up rubric, ≤25
 │              candidates per chunk-agent; ≥2 families auto-graduate; logs
@@ -54,8 +54,9 @@ CLAUDE.md keeps a one-paragraph summary per command; this file is the reference.
 │              origin-crosscheck + batched --add-findings; adaptive
 │              retry-with-judgment policy; AskUserQuestion escalation on
 │              degraded coverage)
-├── Phase 1.5 — Skipped (codex-review has no --ensemble; no CodeRabbit,
-│              no PR-comment scrape — purpose-built for Codex purity)
+├── Phase 1.5 — Skipped (codex-review has no --ensemble; no PR-comment
+│              scrape, no secondary Codex pass — purpose-built for
+│              Codex purity)
 ├── Phase 2 — Dedup (same fragment as :review)
 ├── Phase 3 — Scoring gate (same fragment as :review)
 ├── Phase 4 — Codex validation
@@ -131,9 +132,9 @@ add / walkthrough arc:
 
 - **`subagent_tokens`** — rolled up from `tokens.jsonl` (every dispatched sub-agent's
   cost). Captures Phase 1 lenses, Phase 4 validators, Phase 8 fix groups, Phase 9
-  post-fix reviewer, etc. External CLIs invoked under `--ensemble` (CodeRabbit,
-  Codex) are billed by their own providers and are NOT in `tokens.jsonl` — only
-  the Phase 1.5 Sonnet normalizer pass over their output is.
+  post-fix reviewer, etc. The Codex CLI invoked under `--ensemble` is billed
+  by its own provider and is NOT in `tokens.jsonl` — only the Phase 1.5
+  Sonnet normalizer pass over its output is.
 - **`orchestrator_tokens`** — rolled up from the Claude Code session transcript(s)
   under `~/.claude/projects/<cwd-slug>/` (main-session `message.usage` per assistant
   turn, filtered by timestamp ≥ `review_started_at`). Captures what
