@@ -325,6 +325,28 @@ def _finding_detail(f):
         if fix_hint:
             lines.append(f"**Fix direction:** {fix_hint}")
 
+    # Auto-recommendation block (auto_fix_hint, more-auto.md). Renders
+    # when the field is present AND it adds information the
+    # human_confirmation block doesn't already convey — i.e. the finding
+    # hasn't been promoted yet, OR the user edited the hint at promotion
+    # time so the auto-rec serves as the original-recommendation audit
+    # trail. When promoted with the auto-rec hint verbatim, suppress
+    # this block to avoid double-display of the same fix_hint.
+    afh = f.get("auto_fix_hint")
+    hc_fix_hint = (hc or {}).get("fix_hint") if hc else None
+    if afh and hc_fix_hint != afh.get("hint"):
+        confidence = afh.get("confidence", "?")
+        lines.append(f"**Auto-recommendation ({confidence}):** {afh.get('hint', '')}")
+        concerns = afh.get("concerns") or []
+        if afh.get("second_opinion") == "concerns" and concerns:
+            lines.append(f"- _Concerns:_ {'; '.join(concerns)}")
+        alternatives = afh.get("alternatives") or []
+        if alternatives:
+            alt_bits = " · ".join(
+                f"**{alt.get('label', '?')}** {alt.get('title', '')}" for alt in alternatives
+            )
+            lines.append(f"- _Alternatives:_ {alt_bits}")
+
     vr = f.get("validation_result") or {}
     evidence = vr.get("evidence") or []
     if evidence:
@@ -376,6 +398,56 @@ def _finding_detail(f):
     return "\n".join(lines)
 
 
+def render_auto_recommendations(buckets):
+    """Findings with auto_fix_hint, regardless of disposition or lane.
+
+    Surfaces AI-authored fix recommendations in the rendered MD so reviewers
+    see them in the published PR comment without running :fix or
+    :walkthrough first. Confirmed_manual / confirmed_report / light-lane
+    confirmed_mechanical findings still appear in their disposition sections
+    below — this is an overlay view, not a relocation.
+    """
+    rows = []
+    for finding_list in buckets.values():
+        for f in finding_list:
+            if f.get("auto_fix_hint") and not f.get("human_confirmation"):
+                rows.append(f)
+    rows.sort(key=lambda f: f.get("id", ""))
+    if not rows:
+        return ""
+
+    lines = [f"### Auto-recommendations ({len(rows)})", ""]
+    lines.append(
+        "_AI-authored fix directions for findings that aren't auto-fixable today. "
+        "Run `/adamsreview:fix` to batch-apply with one confirmation, or "
+        "`/adamsreview:walkthrough` to review one-by-one._"
+    )
+    lines.append("")
+    lines.append("| # | Score | Disp | File | Recommendation |")
+    lines.append("|---|-------|------|------|----------------|")
+    for f in rows:
+        afh = f.get("auto_fix_hint") or {}
+        hint = afh.get("hint", "")
+        if len(hint) > 140:
+            hint = hint[:137] + "..."
+        confidence = afh.get("confidence", "?")
+        disp_short = SECTION_LABEL.get(f.get("disposition"), ("", "", "", "?"))[3]
+        lines.append(
+            f"| {f.get('id')} | {f.get('score_phase4') or f.get('score_phase3') or ''} | "
+            f"{disp_short} | {file_link(f)} | _{confidence}:_ {hint} |"
+        )
+
+    lines.append("")
+    lines.append("<details><summary>Full recommendations and alternatives</summary>")
+    for detail in (_finding_detail(f) for f in rows):
+        lines.append("")
+        lines.append(detail)
+    lines.append("")
+    lines.append("</details>")
+
+    return "\n".join(lines)
+
+
 def render_deep_other(buckets, disposition):
     rows = [f for f in buckets.get(disposition, []) if f.get("validation_lane") == "deep"]
     if not rows:
@@ -384,8 +456,10 @@ def render_deep_other(buckets, disposition):
     lines = [f"### {glyph} {label} ({len(rows)})", ""]
     if disposition == "confirmed_manual":
         lines.append(
-            "_Not touched by `/adamsreview:fix` by default. "
-            "To force-apply as auto-fix, run `/adamsreview:promote <finding_id>`._"
+            "_Not auto-applied by `/adamsreview:fix` directly — these need a confirmation step. "
+            "Findings with an auto-recommendation get batch-confirmed at `:fix`'s Phase 7.5 "
+            "preflight (or `:walkthrough` Step 4.5); use `/adamsreview:promote <finding_id>` "
+            "for a single-finding manual override._"
         )
         lines.append("")
         lines.append("| # | Score | Impact | File | Issue | Why manual |")
@@ -427,9 +501,10 @@ def render_light_lane(buckets):
     lines = ["## Light lane — ux, policy, architecture", ""]
     if any(f.get("disposition") in ("confirmed_mechanical", "confirmed_manual") for f in rows):
         lines.append(
-            "_Light-lane findings are not touched by `/adamsreview:fix` by default — "
-            "including rows labeled auto-fixable. To force-apply any row as auto-fix, "
-            "run `/adamsreview:promote <finding_id>`._"
+            "_Light-lane findings — including rows labeled auto-fixable — aren't applied by "
+            "`/adamsreview:fix` directly. Findings with an auto-recommendation get "
+            "batch-confirmed at `:fix`'s Phase 7.5 preflight (or `:walkthrough` Step 4.5); "
+            "use `/adamsreview:promote <finding_id>` for a single-finding manual override._"
         )
         lines.append("")
     lines.append("| # | Score | Impact | File | Finding | Disposition |")
@@ -649,6 +724,7 @@ def render(artifact):
             f.get("validation_lane") == "deep" for f in artifact.get("findings", [])
         ) else "",
         render_deep_auto(buckets, cross_cutting),
+        render_auto_recommendations(buckets),
         render_deep_other(buckets, "confirmed_manual"),
         render_deep_other(buckets, "uncertain"),
         render_deep_other(buckets, "confirmed_report"),

@@ -35,7 +35,7 @@ Found 7 findings across all lanes:
 
 ### ⚠ Requires manual attention (1)
 
-_Not touched by `/adamsreview:fix` by default. To force-apply as auto-fix, run `/adamsreview:promote <finding_id>`._
+_Not auto-applied by `/adamsreview:fix` directly — these need a confirmation step. Findings with an auto-recommendation get batch-confirmed at `:fix`'s Phase 7.5 preflight (or `:walkthrough` Step 4.5); use `/adamsreview:promote <finding_id>` for a single-finding manual override._
 
 | # | Score | Impact | File | Issue | Why manual |
 |---|-------|--------|------|-------|-------------|
@@ -52,7 +52,7 @@ further investigation with fresh context.
 
 ## Light lane — ux, policy, architecture
 
-_Light-lane findings are not touched by `/adamsreview:fix` by default — including rows labeled auto-fixable. To force-apply any row as auto-fix, run `/adamsreview:promote <finding_id>`._
+_Light-lane findings — including rows labeled auto-fixable — aren't applied by `/adamsreview:fix` directly. Findings with an auto-recommendation get batch-confirmed at `:fix`'s Phase 7.5 preflight (or `:walkthrough` Step 4.5); use `/adamsreview:promote <finding_id>` for a single-finding manual override._
 
 | # | Score | Impact | File | Finding | Disposition |
 |---|-------|--------|------|---------|-------------|

@@ -2702,6 +2702,233 @@ else
     fail "MP-10: 'Fix direction:' should NOT appear when fix_hint is absent"
 fi
 
+# ------------------------------------------------------------------ AFH-* auto-fix-hint (more-auto.md)
+#
+# Covers the auto_fix_hint field, the two new artifact-patch.py modes
+# (--apply-auto-fix-hints / --apply-auto-rec-promotions), and the
+# renderer's Auto-recommendation block.
+#
+# Targets F004 (light-lane, confirmed_mechanical, score=60, open) for
+# the happy path: it stays open through every prior assertion (only F001
+# sees state mutations earlier in the suite), and post-AFH-4 promotion
+# its human_confirmation routes it through render_light_lane → promoted
+# details → _finding_detail, exercising the new Auto-recommendation
+# render branch.
+
+AFH_ART="$WORK/art-afh.json"
+cp "$ART" "$AFH_ART"  # reuse the post-stage-1 artifact
+
+# AFH-1: --apply-auto-fix-hints with valid input → exit 0; finding gains
+# auto_fix_hint with the right shape (hint, confidence, second_opinion, ts).
+afh1_input=$(jq -nc '[{
+    id: "F004",
+    hint: "Add a loading spinner during the destructive request to prevent double-click",
+    confidence: "high",
+    second_opinion: "concurs"
+}]')
+afh1_stdout=$("$TOOLS/artifact-patch.py" --path "$AFH_ART" \
+        --apply-auto-fix-hints "$afh1_input" 2>/dev/null); afh1_code=$?
+afh1_hint=$(jq -r '.findings[] | select(.id=="F004") | .auto_fix_hint.hint // empty' "$AFH_ART")
+afh1_conf=$(jq -r '.findings[] | select(.id=="F004") | .auto_fix_hint.confidence // empty' "$AFH_ART")
+afh1_so=$(jq -r '.findings[] | select(.id=="F004") | .auto_fix_hint.second_opinion // empty' "$AFH_ART")
+afh1_ts=$(jq -r '.findings[] | select(.id=="F004") | .auto_fix_hint.ts // empty' "$AFH_ART")
+if [[ "$afh1_code" == "0" ]] \
+   && [[ "$afh1_hint" == "Add a loading spinner during the destructive request to prevent double-click" ]] \
+   && [[ "$afh1_conf" == "high" ]] \
+   && [[ "$afh1_so" == "concurs" ]] \
+   && [[ -n "$afh1_ts" ]]; then
+    pass "AFH-1 (more-auto.md Stage 1): --apply-auto-fix-hints valid input → exit 0, auto_fix_hint set with hint/confidence/second_opinion/ts"
+else
+    fail "AFH-1: code=$afh1_code hint='$afh1_hint' conf='$afh1_conf' so='$afh1_so' ts='$afh1_ts' stdout='$afh1_stdout'"
+fi
+
+# AFH-2: --apply-auto-fix-hints with invalid input (missing required `hint`)
+# → exit 7 (all rejected) with error-as-prompt. Schema rejection is a
+# per-entry continue-on-error, but a single-entry batch where every entry
+# is rejected lands on EXIT_ALL_REJECTED.
+AFH_ART_BAD="$WORK/art-afh-bad.json"
+cp "$ART" "$AFH_ART_BAD"
+afh2_input=$(jq -nc '[{id: "F004", confidence: "high", second_opinion: "concurs"}]')  # missing hint
+afh2_err=$("$TOOLS/artifact-patch.py" --path "$AFH_ART_BAD" \
+        --apply-auto-fix-hints "$afh2_input" 2>&1 >/dev/null); afh2_code=$?
+if [[ "$afh2_code" == "7" ]] \
+   && echo "$afh2_err" | grep -q "auto-fix-hints-rejected:" \
+   && echo "$afh2_err" | grep -q "ERROR: --apply-auto-fix-hints: every input was rejected" \
+   && echo "$afh2_err" | grep -q "Action:"; then
+    pass "AFH-2 (more-auto.md Stage 1): --apply-auto-fix-hints rejects entry missing 'hint' → exit 7 with error-as-prompt + per-entry rejection line"
+else
+    fail "AFH-2: expected exit 7 + auto-fix-hints-rejected + ERROR: + Action:; code=$afh2_code stderr=$afh2_err"
+fi
+
+# AFH-3: when finding already has auto_fix_hint, --apply-auto-fix-hints
+# without --overwrite rejects the entry → exit 7 (single-entry batch, all
+# rejected). Pre-condition: AFH-1 set F004's auto_fix_hint, so AFH_ART
+# already carries one.
+afh3_input=$(jq -nc '[{
+    id: "F004",
+    hint: "different hint that should not land",
+    confidence: "low",
+    second_opinion: "concerns",
+    concerns: ["this would clobber AFH-1"]
+}]')
+afh3_err=$("$TOOLS/artifact-patch.py" --path "$AFH_ART" \
+        --apply-auto-fix-hints "$afh3_input" 2>&1 >/dev/null); afh3_code=$?
+afh3_hint_after=$(jq -r '.findings[] | select(.id=="F004") | .auto_fix_hint.hint' "$AFH_ART")
+if [[ "$afh3_code" == "7" ]] \
+   && echo "$afh3_err" | grep -q "reason=already_set" \
+   && [[ "$afh3_hint_after" == "Add a loading spinner during the destructive request to prevent double-click" ]]; then
+    pass "AFH-3 (more-auto.md Stage 1): --apply-auto-fix-hints rejects already-set finding without --overwrite → exit 7, original hint preserved"
+else
+    fail "AFH-3: expected exit 7 + reason=already_set + AFH-1 hint preserved; code=$afh3_code stderr=$afh3_err hint_after='$afh3_hint_after'"
+fi
+
+# AFH-4: --apply-auto-rec-promotions with valid input → exit 0. Promotes
+# F004 (which now carries an auto_fix_hint from AFH-1). Validates:
+#   - exit 0
+#   - finding now has human_confirmation populated
+#   - human_confirmation.fix_hint == auto_fix_hint.hint (sourced server-side)
+#   - human_confirmation.reviewer matches the input
+afh4_input=$(jq -nc '[{
+    id: "F004",
+    reviewer: "auto-rec/tester@example.com",
+    reason: "AFH-4 batch promote"
+}]')
+afh4_stdout=$("$TOOLS/artifact-patch.py" --path "$AFH_ART" \
+        --apply-auto-rec-promotions "$afh4_input" 2>/dev/null); afh4_code=$?
+afh4_hc_reviewer=$(jq -r '.findings[] | select(.id=="F004") | .human_confirmation.reviewer // empty' "$AFH_ART")
+afh4_hc_fix_hint=$(jq -r '.findings[] | select(.id=="F004") | .human_confirmation.fix_hint // empty' "$AFH_ART")
+afh4_afh_hint=$(jq -r '.findings[] | select(.id=="F004") | .auto_fix_hint.hint // empty' "$AFH_ART")
+if [[ "$afh4_code" == "0" ]] \
+   && [[ "$afh4_hc_reviewer" == "auto-rec/tester@example.com" ]] \
+   && [[ -n "$afh4_hc_fix_hint" ]] \
+   && [[ "$afh4_hc_fix_hint" == "$afh4_afh_hint" ]]; then
+    pass "AFH-4 (more-auto.md Stage 1): --apply-auto-rec-promotions valid input → exit 0, human_confirmation.fix_hint sourced from auto_fix_hint.hint, reviewer recorded"
+else
+    fail "AFH-4: code=$afh4_code reviewer='$afh4_hc_reviewer' hc_fix_hint='$afh4_hc_fix_hint' afh_hint='$afh4_afh_hint' stdout='$afh4_stdout'"
+fi
+
+# AFH-5: --apply-auto-rec-promotions on a finding that already has
+# human_confirmation → first-fail-halt (exit 1). Pre-condition: AFH-4
+# already promoted F004, so re-running with the same id should bail.
+afh5_input=$(jq -nc '[{
+    id: "F004",
+    reviewer: "auto-rec/tester@example.com",
+    reason: "AFH-5 second promote attempt"
+}]')
+afh5_err=$("$TOOLS/artifact-patch.py" --path "$AFH_ART" \
+        --apply-auto-rec-promotions "$afh5_input" 2>&1 >/dev/null); afh5_code=$?
+if [[ "$afh5_code" == "1" ]] \
+   && echo "$afh5_err" | grep -q "already has human_confirmation"; then
+    pass "AFH-5 (more-auto.md Stage 1): --apply-auto-rec-promotions on already-promoted finding → exit 1 (first-fail-halt) with descriptive error-as-prompt"
+else
+    fail "AFH-5: expected exit 1 + 'already has human_confirmation'; code=$afh5_code stderr=$afh5_err"
+fi
+
+# AFH-6: hint text reaches the reader via SOME rendering path when
+# auto_fix_hint is set. Two scenarios are covered by separate assertions:
+#   - AFH-7 covers "auto_fix_hint set, NOT promoted" → '### Auto-recommendations' section
+#   - AFH-8 covers "auto_fix_hint set, promoted with SAME hint" → suppressed inline, shown via 'Fix direction:'
+#   - AFH-9 covers "auto_fix_hint set, promoted with EDITED hint" → both 'Fix direction:' and inline appear
+# AFH-6 stays as a coarse end-to-end check: AFH_ART (post-AFH-4) renders
+# the hint text via the human_confirmation path, and the baseline ART
+# (no hint anywhere) renders neither path.
+AFH_MD="$WORK/art-afh.md"
+"$TOOLS/artifact-render.py" --input "$AFH_ART" --output "$AFH_MD" \
+    || fail "AFH-6 setup: render of AFH_ART failed"
+AFH_BASELINE_MD="$WORK/art-afh-baseline.md"
+"$TOOLS/artifact-render.py" --input "$ART" --output "$AFH_BASELINE_MD" \
+    || fail "AFH-6 setup: render of baseline ART failed"
+if grep -q "Add a loading spinner during the destructive request" "$AFH_MD" \
+   && grep -q "Fix direction:" "$AFH_MD" \
+   && ! grep -q "Add a loading spinner during the destructive request" "$AFH_BASELINE_MD" \
+   && ! grep -q "Auto-recommendation" "$AFH_BASELINE_MD"; then
+    pass "AFH-6 (more-auto.md Stage 1+4): renderer surfaces auto_fix_hint text via human_confirmation 'Fix direction' line after batch-accept promotion; omits all hint paths when no hint exists"
+else
+    fail "AFH-6: rendered output mismatch — AFH_MD must contain hint text + 'Fix direction:'; baseline must omit hint and 'Auto-recommendation'" "AFH_MD has hint=$(grep -c 'loading spinner' "$AFH_MD" || true) fix-direction=$(grep -c 'Fix direction:' "$AFH_MD" || true); baseline has hint=$(grep -c 'loading spinner' "$AFH_BASELINE_MD" || true) auto-rec=$(grep -c 'Auto-recommendation' "$AFH_BASELINE_MD" || true)"
+fi
+
+# AFH-7: renderer emits a top-level "Auto-recommendations" SECTION (not just
+# the per-finding inline block) when at least one finding has auto_fix_hint
+# AND has not been promoted (human_confirmation == null). Pre-AFH-4 state on
+# F004 satisfies this; rebuild a fresh fixture rather than rewinding AFH_ART.
+AFH7_ART="$WORK/art-afh7.json"
+cp "$ART" "$AFH7_ART"
+AFH7_HINTS="$WORK/afh7-hints.json"
+cat > "$AFH7_HINTS" <<'EOF'
+[{"id":"F004","hint":"Add a loading spinner during the destructive request and disable the button until the response returns","confidence":"high","second_opinion":"concurs"}]
+EOF
+"$TOOLS/artifact-patch.py" --path "$AFH7_ART" --apply-auto-fix-hints "@$AFH7_HINTS" >/dev/null \
+    || fail "AFH-7 setup: --apply-auto-fix-hints failed"
+AFH7_MD="$WORK/art-afh7.md"
+"$TOOLS/artifact-render.py" --input "$AFH7_ART" --output "$AFH7_MD" \
+    || fail "AFH-7 setup: render of AFH7_ART failed"
+if grep -q "^### Auto-recommendations (1)" "$AFH7_MD" \
+   && grep -q "Add a loading spinner during the destructive request" "$AFH7_MD" \
+   && ! grep -q "^### Auto-recommendations" "$AFH_BASELINE_MD" \
+   && ! grep -q "^### Auto-recommendations" "$AFH_MD"; then
+    pass "AFH-7 (more-auto.md Stage 1.5): renderer emits dedicated 'Auto-recommendations (N)' overlay section for unpromoted hint-bearing findings; omits when none qualify (baseline + post-promote)"
+else
+    fail "AFH-7: section visibility mismatch — AFH7_MD must contain '### Auto-recommendations (1)' + hint text; baseline + AFH_MD must NOT contain '### Auto-recommendations'" "AFH7_MD: $(grep -c '^### Auto-recommendations' "$AFH7_MD" || true); AFH_MD: $(grep -c '^### Auto-recommendations' "$AFH_MD" || true); baseline: $(grep -c '^### Auto-recommendations' "$AFH_BASELINE_MD" || true)"
+fi
+
+# AFH-8: when a finding has both auto_fix_hint AND human_confirmation with
+# the SAME fix_hint (i.e. promoted via :fix Phase 7.5 / :walkthrough Step 4.5
+# Apply-all path, helper sourcing fix_hint from auto_fix_hint.hint), the
+# renderer must suppress the **Auto-recommendation block in _finding_detail**
+# to avoid double-displaying the same hint text. The finding still appears
+# elsewhere via its disposition section's _finding_detail call; only the
+# inline block is suppressed. AFH_ART (post-AFH-4) satisfies this:
+# F004.auto_fix_hint.hint == F004.human_confirmation.fix_hint == AFH-1's hint.
+# The previously-rendered AFH_MD already exists from AFH-6.
+afh8_inline_count=$(grep -c "^\*\*Auto-recommendation (high):\*\*" "$AFH_MD" || true)
+if [[ "$afh8_inline_count" == "0" ]]; then
+    pass "AFH-8 (more-auto.md Stage 4): renderer suppresses inline Auto-recommendation block in _finding_detail when auto_fix_hint.hint == human_confirmation.fix_hint (no double-display after batch-accept promotion)"
+else
+    fail "AFH-8: expected 0 inline '**Auto-recommendation (high):**' lines in AFH_MD (F004 promoted with same hint); got $afh8_inline_count"
+fi
+
+# AFH-9: edited-hint case — when human_confirmation.fix_hint DIFFERS from
+# auto_fix_hint.hint (user took the auto-rec then edited at promote time, or
+# walkthrough's edit-hint flow set a custom hint), the renderer keeps the
+# inline auto_fix_hint block as the audit trail of the original
+# recommendation alongside the user's revised fix_hint.
+AFH9_ART="$WORK/art-afh9.json"
+# Direct jq mutation: --set rejects `human_confirmation.*` (immutable-by-helper);
+# this scenario simulates the walkthrough edit-hint flow which sets the override
+# via promote-core, not the auto-rec batch helper. For smoke we just want a
+# fixture with diverging fix_hints to exercise the renderer's audit-trail path.
+jq '(.findings[] | select(.id=="F004") | .human_confirmation.fix_hint) = "Reviewer rewrite — different wording than the auto-rec"' \
+    "$AFH_ART" > "$AFH9_ART" \
+    || fail "AFH-9 setup: jq mutation of human_confirmation.fix_hint failed"
+AFH9_MD="$WORK/art-afh9.md"
+"$TOOLS/artifact-render.py" --input "$AFH9_ART" --output "$AFH9_MD" \
+    || fail "AFH-9 setup: render of AFH9_ART failed"
+afh9_inline_count=$(grep -c "^\*\*Auto-recommendation (high):\*\*" "$AFH9_MD" || true)
+if [[ "$afh9_inline_count" -ge "1" ]]; then
+    pass "AFH-9 (more-auto.md Stage 4): renderer keeps inline Auto-recommendation block when human_confirmation.fix_hint diverges from auto_fix_hint.hint (edit-hint audit trail preserved)"
+else
+    fail "AFH-9: expected ≥1 inline '**Auto-recommendation (high):**' lines in AFH9_MD (F004 promoted with edited hint); got $afh9_inline_count"
+fi
+
+# AFH-10: integration wiring grep checks. These catch accidental drops of
+# the auto_fix_hint plumbing during future refactors. They're not behavior
+# tests — they assert that the cross-file references stay in place.
+afh10_ok=true
+grep -q '06b-auto-fix-hint.md' "$REPO/commands/review.md" || afh10_ok=false
+grep -q '06b-auto-fix-hint.md' "$REPO/commands/codex-review.md" || afh10_ok=false
+grep -q '06b-auto-fix-hint.md' "$REPO/commands/add.md" || afh10_ok=false
+grep -q 'apply-auto-fix-hints' "$REPO/fragments/06b-auto-fix-hint.md" || afh10_ok=false
+grep -q 'Phase 7.5' "$REPO/fragments/08-fix-loader.md" || afh10_ok=false
+grep -q 'apply-auto-rec-promotions' "$REPO/fragments/08-fix-loader.md" || afh10_ok=false
+grep -q '4.5' "$REPO/commands/walkthrough.md" || afh10_ok=false
+grep -q 'auto_fix_hint' "$REPO/commands/walkthrough.md" || afh10_ok=false
+grep -q 'apply-auto-rec-promotions' "$REPO/commands/walkthrough.md" || afh10_ok=false
+if $afh10_ok; then
+    pass "AFH-10 (more-auto.md Stage 4): cross-file integration wiring intact — review/codex-review/add include 06b; 06b calls apply-auto-fix-hints; 08-fix-loader has Phase 7.5 + apply-auto-rec-promotions; walkthrough has Step 4.5 + auto_fix_hint references + apply-auto-rec-promotions"
+else
+    fail "AFH-10: integration wiring missing — re-grep the assertion to find the dropped reference"
+fi
+
 # ---------------------------------------------------------------- walkthrough
 #
 # WT-* cover the /adamsreview:walkthrough command surface. WT-1..WT-4 exercise

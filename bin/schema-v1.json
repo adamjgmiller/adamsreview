@@ -264,6 +264,36 @@
             { "type": "null" }
           ]
         },
+        "auto_fix_hint": {
+          "description": "Set by Phase 5.5 (auto-fix-hint generation). Validator-derived recommendation that mirrors what /adamsreview:walkthrough's per-finding briefer would produce, but pre-computed with a second-opinion verification pass. When present, /adamsreview:fix preflight and /adamsreview:walkthrough Step 4.5 surface a batch-confirm UI that promotes the finding via human_confirmation.fix_hint=auto_fix_hint.hint. Optional — absence means no auto-rec was generated for this finding (ineligible per §5.5 filter, or generation skipped/failed).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hint", "confidence", "second_opinion", "ts"],
+          "properties": {
+            "hint": { "type": "string", "minLength": 1 },
+            "confidence": { "enum": ["high", "medium", "low"] },
+            "second_opinion": { "enum": ["concurs", "concerns"] },
+            "concerns": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "alternatives": {
+              "type": "array",
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["label", "title", "hint"],
+                "properties": {
+                  "label": { "type": "string" },
+                  "title": { "type": "string" },
+                  "hint":  { "type": "string", "minLength": 1 }
+                }
+              }
+            },
+            "ts": { "type": "string", "format": "date-time" }
+          }
+        },
         "fix_attempts": {
           "type": "array",
           "items": { "$ref": "#/$defs/fix_attempt" }

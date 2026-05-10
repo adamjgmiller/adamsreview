@@ -23,8 +23,9 @@ helper-script error-as-prompt).**
 
 ## Execution overview
 
-This command orchestrates the same Phases 0–6 as `/adamsreview:review`,
-swapping the Claude sub-agent dispatches for **Codex jobs** (via the
+This command orchestrates the same phases as `/adamsreview:review`
+(Phases 0–6 plus Phase 5.5 auto-fix-hint generation), swapping the
+Claude sub-agent dispatches for **Codex jobs** (via the
 `codex-companion.mjs` plugin's `task --background` primitive) at:
 
 - **Phase 1 detection** — 7 parallel Codex lenses (L1–L7) instead of
@@ -203,7 +204,16 @@ and execute the instructions inside before proceeding to Phase 5.
 ---
 
 **Phase 5 — Codex cross-cutting.** Read `fragments/06-codex-cross-cutting.md`
-and execute the instructions inside before proceeding to Phase 6.
+and execute the instructions inside before proceeding to Phase 5.5.
+
+---
+
+**Phase 5.5 — Auto-fix-hint generation.** Read
+`fragments/06b-auto-fix-hint.md` and execute the instructions inside
+before proceeding to Phase 6. Same fragment as `:review` — it's
+Sonnet-driven and validator-agnostic, so the codex-review path runs
+it identically once Phase 5's cross-cutting (Codex variant) has
+returned.
 
 ---
 

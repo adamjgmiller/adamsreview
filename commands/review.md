@@ -97,7 +97,13 @@ the instructions inside before proceeding to Phase 5.
 ---
 
 **Phase 5 — Cross-cutting.** Read `fragments/06-cross-cutting.md` and
-execute the instructions inside before proceeding to Phase 6.
+execute the instructions inside before proceeding to Phase 5.5.
+
+---
+
+**Phase 5.5 — Auto-fix-hint generation.** Read
+`fragments/06b-auto-fix-hint.md` and execute the instructions inside
+before proceeding to Phase 6.
 
 ---
 

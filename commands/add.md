@@ -875,6 +875,20 @@ log-phase.sh \
   --summary "deep=$deep_count light=$light_count new_ids=$new_ids"
 ```
 
+### 7.9 Auto-fix-hint generation (Phase 5.5)
+
+Read `fragments/06b-auto-fix-hint.md` and execute the instructions
+inside before proceeding to step 8.
+
+The fragment's eligibility filter is artifact-wide — it picks up any
+finding (newly-added by this `:add` run, or pre-existing from the
+prior `:review`) that meets the predicate AND has no
+`auto_fix_hint` yet. `artifact-patch.py --apply-auto-fix-hints`
+defaults to rejecting findings whose `auto_fix_hint` is already set
+(`reason=already_set`), so re-running `:add` after `:review` only
+generates hints for findings that didn't have one — idempotent
+without bookkeeping here.
+
 ### 8. Re-tally `subagent_tokens` + `orchestrator_tokens`, then re-render `artifact.md`
 
 Re-tally first so the rendered report (and the downstream PR comment
@@ -980,8 +994,8 @@ Cumulative sub-agent spend: <total> tokens across <invs> invocations.
 Cumulative orchestrator spend: <output> output / <input> input across <turns> turns.
 
 Next:
-  - /adamsreview:fix             apply newly auto-eligible findings (deep-lane confirmed_mechanical)
-  - /adamsreview:walkthrough     promote any non-eligible new findings (light-lane / manual / uncertain)
+  - /adamsreview:fix             apply auto-eligible findings (deep confirmed_mechanical) plus auto-recommendations via Phase 7.5 batch-accept
+  - /adamsreview:walkthrough     review any remaining non-promoted findings (light-lane / manual / uncertain)
 ```
 
 Build the per-finding lines from `artifact-read.sh`:

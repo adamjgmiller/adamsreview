@@ -39,8 +39,18 @@ helper-script error-as-prompt).**
 4. Shows a pre-flight summary + asks the reviewer which tier to walk
    (default **Qualifying**; **Full skip set** is the opt-in for
    auditing Phase-3-demoted findings).
-5. For each finding in the chosen tier:
-   - Dispatches a Sonnet briefing sub-agent → `{summary, options[], recommendation}`.
+4.5. **Auto-recommendation batch.** When any in-scope finding carries
+   an `auto_fix_hint` from Phase 5.5, surfaces a batch confirm UI
+   (Accept all / Pick subset / Walk through each). Accepted findings
+   are promoted via `--apply-auto-rec-promotions` and removed from
+   the per-finding loop's working scope.
+5. For each remaining finding in the chosen tier:
+   - When the finding has `auto_fix_hint` (i.e., it was in scope at
+     §4.5 but the reviewer chose Walk-each / didn't include it in
+     Pick-subset), constructs the briefing inline from `auto_fix_hint`
+     — saves the ~3-5k tokens a Sonnet briefer would cost.
+   - Otherwise, dispatches a Sonnet briefing sub-agent →
+     `{summary, options[], recommendation}`.
    - Presents the briefing and asks the reviewer which option to pick
      (or "Edit the fix hint" to override the recommended option's hint).
    - Dispatches a promote (patch + trace, no render/publish) or a skip.
@@ -49,7 +59,8 @@ helper-script error-as-prompt).**
 8. For each `pre_existing_report` finding (PR mode only): offers to
    draft + create a GitHub issue, one by one.
 9. Posts a new "Walkthrough decisions" comment to the PR with the
-   full log of what was promoted / skipped / issues filed / why.
+   full log of what was auto-accepted / promoted / skipped / issues
+   filed / why.
 10. Appends a `## walkthrough (<ts>)` block to `trace.md`.
 11. Prints a user-visible summary.
 
@@ -410,20 +421,331 @@ reviewer=$(git config user.email 2>/dev/null)
 [[ -z "$reviewer" ]] && reviewer="unknown"
 ```
 
+### 4.5. Auto-recommendation batch (Phase 5.5 fast-path)
+
+Phase 5.5 of `/adamsreview:review` (and `:codex-review` / `:add`)
+generates an `auto_fix_hint` for findings the user typically accepts
+during walkthrough — surfacing the recommendation upfront lets a
+batch confirmation replace the per-finding loop for the typical
+"AI proposes, user agrees" case (~90% acceptance rate observed).
+
+This step runs after the scope-tier choice and BEFORE the per-finding
+loop. Findings the reviewer accepts in batch are promoted via
+`artifact-patch.py --apply-auto-rec-promotions` (which sources
+`fix_hint` automatically from `finding.auto_fix_hint.hint` — do NOT
+pass `fix_hint` in the payload) and removed from `scope_ids` so the
+per-finding loop in §5 doesn't re-process them.
+
+Initialize the decisions array up-front — used by both this step
+(when batch acceptances land) and §5's loop. Initialize even when
+§4.5 is skipped so §5 / §6 / §7 / §8 always have a defined array
+to iterate:
+
+```bash
+decisions=()   # bash array of JSON-encoded objects; action ∈ {auto_accept, promote, skip, stop}
+```
+
+Skip the rest of step 4.5 entirely when `scope_tier == "cancel"` or
+`scope_tier == "none"` (no walk scope to filter; auto-rec batch is
+moot).
+
+#### 4.5.1. Compute auto-rec eligibility within scope
+
+Filter at consume time — intersect the chosen `scope_ids` with the
+auto-rec eligibility predicate. The artifact already carries
+`auto_fix_hint` for eligible findings; we additionally guard
+`current_state == "open"` and `human_confirmation == null` so a
+finding mid-promote (or already promoted off-menu) doesn't get
+clobbered.
+
+```bash
+# Build a JSON array of the chosen-tier scope ids so jq can
+# intersect against it. scope_ids is comma-separated.
+scope_ids_json=$(printf '%s' "$scope_ids" | jq -R '
+    if length > 0 then split(",") else [] end
+')
+
+auto_rec_in_scope=$(jq -c --argjson scope "$scope_ids_json" '
+    [.findings[]
+     | select(.id as $id | $scope | index($id))
+     | select(.auto_fix_hint != null)
+     | select(.human_confirmation == null)
+     | select(.current_state == "open")
+     | {
+         id,
+         file,
+         line_range,
+         claim,
+         disposition,
+         score: (.score_phase4 // .score_phase3 // null),
+         auto_fix_hint
+       }
+    ]
+' "$artifact_path")
+auto_rec_count=$(jq 'length' <<<"$auto_rec_in_scope")
+```
+
+If `auto_rec_count == 0`, log a one-line note ("No auto-recommendations
+in scope; entering per-finding loop.") and skip directly to §5 with
+`scope_ids` unchanged. `decisions=()` was already initialized in
+§4.5's prologue, so §5 / §6 / §7 / §8 have a valid empty array to
+iterate.
+
+#### 4.5.2. Render the auto-rec summary table
+
+Render a markdown table to chat covering every auto-rec finding
+in scope. Surface low-confidence and "concerns" rows prominently —
+those are the cases the reviewer most needs to inspect:
+
+```bash
+auto_rec_table=$(jq -r '
+    (["F-id", "score", "disp", "file:line", "hint", "confidence", "concerns"] | @tsv),
+    (.[] | [
+       .id,
+       (.score | tostring),
+       .disposition,
+       (.file + ":" + (.line_range[0] | tostring)),
+       (.auto_fix_hint.hint | gsub("\n"; " ") |
+         (if length > 120 then (.[0:117] + "...") else . end)),
+       .auto_fix_hint.confidence,
+       (if .auto_fix_hint.second_opinion == "concerns"
+        then ("⚠ " + ((.auto_fix_hint.concerns // []) | join("; ")))
+        else "" end)
+     ] | @tsv)
+' <<<"$auto_rec_in_scope")
+```
+
+Render the table to chat with a heading like
+`## Auto-recommendations available (N in scope)` and call out any
+`confidence == "low"` or `second_opinion == "concerns"` rows in a
+short note above the table — those entries should not be auto-accepted
+without inspection. Build a list of "watch-out" ids:
+
+```bash
+auto_rec_watchout_ids=$(jq -r '
+    [.[] | select(.auto_fix_hint.confidence == "low"
+                  or .auto_fix_hint.second_opinion == "concerns")
+         | .id] | join(", ")
+' <<<"$auto_rec_in_scope")
+```
+
+If non-empty, emit a one-line note above the table:
+"Watch out: [$auto_rec_watchout_ids] flagged low-confidence or
+second-opinion concerns; consider Pick-subset / Walk-each instead
+of Accept-all."
+
+#### 4.5.3. Ask for the batch action
+
+Dispatch `AskUserQuestion` with three options. **Note on rationale:**
+the original spec called for four options including a "Skip auto-rec
+batch" alongside "Walk through each." Both end with the same outcome
+(continue to §5 with full scope; the §5.2 short-circuit handles the
+auto-rec findings inline). Folded into a single "Walk through each
+individually" option to keep cadence predictable — the per-finding
+loop's short-circuit means there's no token cost difference between
+the two original options.
+
+- "Accept all $auto_rec_count auto-recommendation(s) (recommended)"
+- "Pick subset to accept"
+- "Walk through each individually"
+
+Bind result to `$auto_rec_action` (one of `accept_all` / `pick_subset`
+/ `walk_each`).
+
+#### 4.5.4. Branch: build the accept set
+
+Compute `accept_ids` (comma-separated) and `accept_payload`
+(JSON array for the helper) based on the action:
+
+**`accept_all`:** every id in `auto_rec_in_scope`.
+
+```bash
+accept_ids=$(jq -r '[.[].id] | join(",")' <<<"$auto_rec_in_scope")
+```
+
+**`pick_subset`:** dispatch `AskUserQuestion` (multi-select) with
+one option per auto-rec finding:
+
+```
+"$id: <claim first line> — <hint truncated to 80c>"
+```
+
+If multi-select isn't available in the harness, fall back to a
+free-form comma-separated id list (validate against
+`auto_rec_in_scope` ids; reject unknowns with an error-as-prompt).
+Capture chosen ids into `accept_ids`. Empty selection → equivalent
+to `walk_each` (no batch promotion; `accept_ids=""`).
+
+**`walk_each`:** `accept_ids=""` (no batch promotion; the §5 loop
+walks every in-scope finding, but the §5.2 short-circuit will fire
+on auto-rec findings to skip the briefer).
+
+#### 4.5.5. Apply batch promotions (when `accept_ids` non-empty)
+
+When `accept_ids` is empty (Walk-each, or Pick-subset with empty
+selection), skip this whole step and §4.5.6 — there's nothing to
+promote and no scope to strip. Drop straight to the chat note in
+§4.5.6's trailing paragraph (which is also guarded on
+`accept_ids` being empty) and proceed to §5.
+
+Otherwise: build the payload for `--apply-auto-rec-promotions`. The
+helper sources `fix_hint` automatically from
+`finding.auto_fix_hint.hint`, so we DON'T pass `fix_hint` in the
+payload (per Stage 1's contract). The `reviewer` follows the
+convention `auto-rec/<email>` so the audit trail distinguishes
+batch acceptance from manual promote.
+
+```bash
+if [[ -z "$accept_ids" ]]; then
+    # No batch acceptances; skip §4.5.5 / §4.5.6 entirely and proceed
+    # to §5. decisions[] stays empty; scope_ids unchanged.
+    :
+else
+    accept_ids_json=$(printf '%s' "$accept_ids" | jq -R '
+        if length > 0 then split(",") else [] end
+    ')
+
+    payload_path="$review_dir/walkthrough_step4_5_promotions.json"
+    jq -n \
+        --argjson chosen "$accept_ids_json" \
+        --arg reviewer "auto-rec/$reviewer" \
+        --arg reason "auto-recommendation accepted in :walkthrough Step 4.5 batch" \
+        '[$chosen[] | {id: ., reviewer: $reviewer, reason: $reason}]' \
+        > "$payload_path"
+
+    expected_count=$(jq 'length' "$payload_path")
+
+    artifact-patch.py \
+        --path "$artifact_path" \
+        --apply-auto-rec-promotions "@$payload_path" \
+        --expected "$expected_count"
+    patch_rc=$?
+
+    if [[ $patch_rc -ne 0 ]]; then
+        # Helper emitted error-as-prompt to stderr. Log to trace and abort
+        # Step 4.5 — the per-finding loop in §5 can still run on the
+        # remaining (un-accepted) scope; preceding tuples in the batch
+        # may have committed (first-fail-halt semantics).
+        {
+            printf '## walkthrough_auto_rec_batch_failed (%s)\n' "$walkthrough_ts"
+            printf 'patch_rc=%s payload=%s\n\n' "$patch_rc" "$payload_path"
+        } >> "$trace_log_path"
+        # Surface a one-line note to the user pointing at the trace
+        # entry; continue to §5 with scope_ids unchanged so they can at
+        # least walk what they would have anyway.
+        printf 'Step 4.5 batch promote failed (rc=%s). See %s.\n' \
+            "$patch_rc" "$trace_log_path"
+    else
+        rm -f "$payload_path"
+    fi
+fi
+```
+
+On success (the inner `else` branch above), append one `decisions[]`
+entry per promoted finding so §7's decisions-log can render them
+under the "Auto-accepted" subsection and §8's trace block tallies
+them correctly. The `prior_disposition` and `prior_score` come from
+the in-scope snapshot we captured at §4.5.1 (before the patch
+overwrote `disposition` to `confirmed_mechanical`). The `fix_hint`
+we record matches what the helper actually wrote to
+`human_confirmation.fix_hint` (`auto_fix_hint.hint`). Skip this
+block when `accept_ids` is empty or `patch_rc != 0`:
+
+```bash
+if [[ -n "$accept_ids" && ${patch_rc:-1} -eq 0 ]]; then
+    while IFS= read -r d; do
+        decisions+=("$d")
+    done < <(jq -c --arg ts "$walkthrough_ts" --arg accepted "$accept_ids" '
+        .[] | select(.id as $id |
+            ($accepted | split(",") | index($id)))
+        | {
+            finding_id: .id,
+            action: "auto_accept",
+            option_label: "auto-rec",
+            option_title: "auto-recommendation accepted in batch",
+            edited_hint: false,
+            reason: "auto-recommendation accepted in :walkthrough Step 4.5 batch",
+            fix_hint: .auto_fix_hint.hint,
+            prior_disposition: .disposition,
+            prior_score: .score,
+            confidence: .auto_fix_hint.confidence,
+            ts: $ts
+          }
+    ' <<<"$auto_rec_in_scope")
+fi
+```
+
+#### 4.5.6. Remove accepted ids from `scope_ids`
+
+The §5 loop iterates `scope_ids`. Strip out anything we just promoted
+so they aren't re-processed (the promote-core fragment would no-op
+because `human_confirmation != null`, but presenting the briefer for
+an already-promoted finding wastes both reviewer attention and tokens).
+
+```bash
+# Strip only when the batch succeeded — first-fail-halt may have
+# committed a prefix of the batch but not all of it; if any failed,
+# leave scope_ids alone so §5 falls back to per-finding handling.
+# (Spec note: if you ever want to strip only the committed prefix
+# instead of all-or-nothing, parse the helper's stdout JSON for
+# `.promoted` and use that ids list here.)
+if [[ -n "$accept_ids" && ${patch_rc:-1} -eq 0 ]]; then
+    # Build a remaining-ids comma-separated list. Both inputs are
+    # comma-separated; jq's index() treats absent as null.
+    scope_ids=$(jq -nr \
+        --arg full "$scope_ids" \
+        --arg accepted "$accept_ids" '
+        ($full | if length > 0 then split(",") else [] end) as $f
+        | ($accepted | if length > 0 then split(",") else [] end) as $a
+        | [$f[] | select(. as $id | ($a | index($id) | not))]
+        | join(",")
+    ')
+    # scope_count is informational; recompute so §6's
+    # `unreviewed_count = scope_count - …` arithmetic stays consistent
+    # with the post-batch loop's actual iteration set. (Since auto-
+    # accept entries land in decisions[] under their own action tag,
+    # `unreviewed_count` excludes them naturally.)
+    if [[ -z "$scope_ids" ]]; then
+        scope_count=0
+    else
+        scope_count=$(awk -F, '{print NF}' <<<"$scope_ids")
+    fi
+fi
+```
+
+Print a one-line chat update mirroring §5.6's cadence:
+"Step 4.5: N auto-recommendation(s) accepted in batch. Continuing
+to per-finding walkthrough for $scope_count remaining finding(s)."
+where N is the count of just-promoted ids
+(`$(jq 'length' <<<"$accept_ids_json")`). The cumulative
+`auto_accept_count` used by §6 / §7.1 / §8 / §9 is computed there
+from `decisions[]` directly — no need to thread a running variable
+across steps. When `accept_ids` is empty (no batch acceptance
+happened — reviewer chose Walk-each / Pick-subset with empty
+selection), skip this chat line entirely.
+
 ### 5. Per-finding loop
 
-Initialize an in-memory decisions array in your working context. Each
-entry records the full outcome of one finding — whether promoted,
+The in-memory decisions array (declared in §4.5's prologue as
+`decisions=()`) records the full outcome of every finding — whether
+auto-accepted in batch (§4.5.5), promoted in the per-finding loop,
 skipped, or interrupted — so step 7's decisions-log comment has the
 complete audit trail:
 
 ```
-decisions = []   # list of {finding_id, action, option_label, option_title, edited_hint?, reason, fix_hint?, prior_disposition, prior_score, ts}
+# decisions[] entries (already declared above):
+#   { finding_id, action, option_label, option_title,
+#     edited_hint?, reason, fix_hint?, confidence?,
+#     prior_disposition, prior_score, ts }
+# action ∈ {auto_accept, promote, skip, stop}
 ```
 
 Iterate `scope_ids` **in the order returned by the jq** (no re-sort —
-that's the order the reviewer saw in the preview table at step 4).
-For each `$finding_id`:
+that's the order the reviewer saw in the preview table at step 4),
+**minus any ids §4.5 already accepted in batch.** When `scope_ids`
+is empty here (e.g. every in-scope finding was an auto-rec and the
+reviewer chose Accept-all in §4.5), skip the loop and fall through
+to §6. For each remaining `$finding_id`:
 
 #### 5.1. Fetch the finding JSON
 
@@ -446,7 +768,82 @@ f_impact=$(jq -r '.impact_type' <<<"$finding_json")
 f_claim=$(jq -r '.claim' <<<"$finding_json")
 ```
 
-#### 5.2. Dispatch the briefing sub-agent
+#### 5.2. Build the briefing (short-circuit when `auto_fix_hint` is present, else dispatch)
+
+**Short-circuit path (auto_fix_hint exists).** When the finding has
+`auto_fix_hint != null` AND `human_confirmation == null` (e.g. the
+reviewer chose "Walk through each individually" or "Pick subset" in
+§4.5 and left this finding unaccepted), construct the briefing object
+INLINE from `auto_fix_hint`. Skip the Sonnet briefer entirely — the
+auto_fix_hint already encodes the same shape (recommended fix +
+alternatives) the briefer would produce, and re-dispatching wastes
+~3–5k tokens per finding.
+
+```bash
+f_afh=$(jq -c '.auto_fix_hint // null' <<<"$finding_json")
+f_hc=$(jq -c '.human_confirmation // null' <<<"$finding_json")
+
+if [[ "$f_afh" != "null" && "$f_hc" == "null" ]]; then
+    # Construct briefing inline. Map .hint → option A, alternatives
+    # → options B/C. Recommendation pre-set to A. The summary is the
+    # claim's first line (or first 2 sentences if claim is long) since
+    # auto_fix_hint doesn't carry a separate summary field.
+    briefing_json=$(jq -n \
+        --argjson afh "$f_afh" \
+        --arg claim "$f_claim" '
+        # Summary: take up to first 2 sentences of claim (heuristic).
+        ($claim
+          | split("\n")
+          | .[0]) as $first_line
+        | (if ($first_line | length) > 200
+           then ($first_line[0:197] + "...")
+           else $first_line end) as $summary
+        | (if ($afh.confidence == "low") then " (low confidence — review carefully)"
+           elif ($afh.second_opinion == "concerns") then " (verifier flagged concerns)"
+           else "" end) as $rationale_suffix
+        | {
+            summary: $summary,
+            options: (
+              [{
+                label: "A",
+                title: "Apply auto-recommendation",
+                detail: $afh.hint,
+                fix_hint_if_picked: $afh.hint
+              }]
+              + (
+                ($afh.alternatives // [])
+                | to_entries
+                | map({
+                    label: (.value.label // (["B","C"] | .[.key])),
+                    title: .value.title,
+                    detail: .value.hint,
+                    fix_hint_if_picked: .value.hint
+                  })
+              )
+            ),
+            recommendation: {
+              label: "A",
+              rationale: ("auto-recommendation (confidence=" + $afh.confidence + ")" + $rationale_suffix)
+            }
+          }
+    ')
+    # No Sonnet dispatch → no token logging (the helper records
+    # auto-rec generation tokens at Phase 5.5; reusing them here
+    # is observed by the rendered Auto-recommendation block).
+    briefing_source="auto_fix_hint"
+else
+    briefing_source="briefer_agent"
+    # Fall through to the Sonnet briefer dispatch below.
+fi
+```
+
+When `briefing_source == "auto_fix_hint"`, skip the rest of §5.2 (the
+Sonnet briefer dispatch and its parse/retry/log steps) and proceed
+directly to §5.3 with `$briefing_json` populated.
+
+**Briefer dispatch path (auto_fix_hint absent or already promoted).**
+Run the Sonnet briefer below ONLY when `briefing_source ==
+"briefer_agent"`.
 
 One `Agent` tool-use per finding. Model: `sonnet`. Budget: ~3-5k
 tokens. Prompt:
@@ -523,13 +920,17 @@ Parse the returned text as JSON (one retry on parse failure with an
 log to `trace.md` under tag `walkthrough_briefing_failed:$finding_id`
 and fall through to a degraded UX: present the raw finding JSON with
 options `Skip (briefing failed)` / `Promote anyway (no fix-hint)` /
-`Stop the walkthrough`.
+`Stop the walkthrough`. Set `$briefing_json` to the parsed object (or
+the degraded-UX shape on second failure) so §5.3 / §5.4 can read it
+through the same variable as the short-circuit path.
 
 Log the agent's token count to `tokens.jsonl`.
 Extract the agent id and token count from the Agent tool result's
 `<usage>` block. When the block is missing or unparseable, pass the
 literal `null` for tokens (same fallback pattern as Phase 8 fix-group
-logging) — token tracking is observability, not correctness:
+logging) — token tracking is observability, not correctness. Only
+runs on the briefer-dispatch path; the short-circuit path doesn't
+dispatch a sub-agent so there's nothing to log:
 
 ```bash
 log-tokens.sh \
@@ -701,12 +1102,22 @@ docstring). 4 of 10 processed."). No per-iteration render or publish.
 ### 6. Finalize — render + publish main comment
 
 First, tally the decision counts from the `decisions[]` array so step
-7 (decisions-log) and step 8 (trace block) can reference them:
+7 (decisions-log) and step 8 (trace block) can reference them.
+`auto_accept_count` covers Step 4.5 batch acceptances; `promote_count`
+covers per-finding-loop promotes only — they're tracked separately
+so the decisions-log and user-visible summary can distinguish the
+two pathways:
 
 ```bash
+auto_accept_count=$(jq -s '[.[] | select(.action == "auto_accept")] | length' <<<"$(printf '%s\n' "${decisions[@]}")")
 promote_count=$(jq -s '[.[] | select(.action == "promote")] | length' <<<"$(printf '%s\n' "${decisions[@]}")")
-skip_count=$(jq   -s '[.[] | select(.action == "skip")]    | length' <<<"$(printf '%s\n' "${decisions[@]}")")
-stop_count=$(jq   -s '[.[] | select(.action == "stop")]    | length' <<<"$(printf '%s\n' "${decisions[@]}")")
+skip_count=$(jq    -s '[.[] | select(.action == "skip")]    | length' <<<"$(printf '%s\n' "${decisions[@]}")")
+stop_count=$(jq    -s '[.[] | select(.action == "stop")]    | length' <<<"$(printf '%s\n' "${decisions[@]}")")
+# scope_count was reduced by §4.5.6 to exclude auto-accepted ids, so
+# unreviewed_count below is the count of findings the per-finding loop
+# would have walked but didn't (because of stop). The auto-accept
+# entries live in decisions[] under their own action tag and are
+# accounted for in §7.1's "Auto-accepted" subsection.
 unreviewed_count=$(( scope_count - promote_count - skip_count - stop_count ))
 ```
 
@@ -720,8 +1131,9 @@ findings.
 context. `comment_id` is deferred to §6.2 where the publish call uses
 it.)
 
-Guard: if `promote_count == 0` (all skip/stop), there's nothing to
-re-render or re-publish. Skip steps 6.1 and 6.2; proceed to step 6.5
+Guard: if `promote_count == 0` AND `auto_accept_count == 0` (no
+mutations at all from this walk), there's nothing to re-render or
+re-publish. Skip steps 6.1 and 6.2; proceed to step 6.5
 (pre-existing issue filing) and then step 7 (decisions-log comment).
 Issue filing is independent of walk activity — a reviewer who skipped
 every walk finding may still want to file pre-existing issues. The
@@ -1058,15 +1470,24 @@ array.
 
 `$review_id` · scope=**$scope_tier** · score_floor=$threshold · reviewer=$reviewer · ts=$walkthrough_ts
 
-Walking the **$scope_tier_title** scope: of **$scope_count** non-auto-eligible finding(s), **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
+Walking the **$scope_tier_title** scope: of **$scope_count** non-auto-eligible finding(s), **$auto_accept_count auto-accepted**, **$promote_count promoted**, **$skip_count skipped**, **$stop_count stopped**, **$unreviewed_count unreviewed**.
 
 Promoted findings will be picked up by the next `/adamsreview:fix` run via the `human_confirmation` bypass, regardless of its score threshold.
 
 ---
 
+#### Auto-accepted (Step 4.5 batch)
+
+- **F003** — [first line of claim]
+  - **Hint:** <fix_hint>
+  - **Prior:** disposition=<prior_disposition> · score=<prior_score>
+  - _Auto-recommendation accepted in batch (confidence=<confidence>)._
+
+- **F004** — ...
+
 #### Promoted
 
-- **F003** — [first line of claim] · option **A** (Update the docstring to match the code)
+- **F006** — [first line of claim] · option **A** (Update the docstring to match the code)
   - **Why:** <option.detail> — <recommendation.rationale>
   - **Fix hint:** `<fix_hint>` (marked "(edited by reviewer)" when `edited_hint == true`; "— (no steering hint supplied)" when empty)
   - **Prior:** disposition=<prior_disposition> · score=<prior_score>
@@ -1075,7 +1496,7 @@ Promoted findings will be picked up by the next `/adamsreview:fix` run via the `
 
 #### Skipped
 
-- **F006** — [first line of claim]
+- **F009** — [first line of claim]
   - Reviewer skipped during walkthrough.
 
 #### Stopped
@@ -1100,22 +1521,29 @@ Current state: see the main review comment and `artifact.md`.
 `"Full skip set"` when `scope_tier == full`, and `"Pre-existing only"`
 when `scope_tier == none` (the walk was skipped because
 `scope_full_count == 0`). In the `none` case, `scope_count == 0` and
-`decisions[]` is empty — the Promoted/Skipped/Stopped subsections all
-omit, leaving only the Pre-existing issues subsection. The header
-sentence becomes "Walking the **Pre-existing only** scope: of **0**
-non-auto-eligible finding(s), 0 promoted, 0 skipped, 0 stopped." —
-accurate and matches the §7 guard (which skips the POST only when
-BOTH decisions and issues_filed are empty).
+`decisions[]` is empty — the Auto-accepted/Promoted/Skipped/Stopped
+subsections all omit, leaving only the Pre-existing issues subsection.
+The header sentence becomes "Walking the **Pre-existing only** scope:
+of **0** non-auto-eligible finding(s), 0 auto-accepted, 0 promoted,
+0 skipped, 0 stopped." — accurate and matches the §7 guard (which
+skips the POST only when BOTH decisions and issues_filed are empty).
 
-Emit the Pre-existing issues subsection only when `issues_filed[]`
-is non-empty. Other sections continue to follow the existing "emit
-only when non-empty" rule. Similarly, omit the `$unreviewed_count
-unreviewed` clause from the header sentence when `$unreviewed_count
-== 0` (i.e., every scoped finding was promoted, skipped, or stopped
-at). Omit the "Promoted findings will be picked up by the next
-`/adamsreview:fix`…" sentence entirely when `$promote_count == 0`
-— with zero promotes it describes a non-event (and misleadingly
-hints that a fix run is pending when it isn't).
+The **Auto-accepted** subsection comes BEFORE **Promoted** because
+batch acceptance happens first (Step 4.5 runs before §5). The order
+in the rendered comment matches the order the actions occurred.
+
+Emit the Auto-accepted subsection only when `auto_accept_count > 0`,
+the Pre-existing issues subsection only when `issues_filed[]` is
+non-empty, and similarly for the existing Promoted/Skipped/Stopped
+sections. Omit the `$auto_accept_count auto-accepted` and/or
+`$unreviewed_count unreviewed` clauses from the header sentence when
+their counts are 0. Omit the "Promoted findings will be picked up
+by the next `/adamsreview:fix`…" sentence entirely when
+`$promote_count == 0` AND `$auto_accept_count == 0` — with zero
+mutations it describes a non-event (and misleadingly hints that a
+fix run is pending when it isn't); when EITHER count is non-zero,
+keep the sentence (auto-accepted findings also flow through the
+`human_confirmation` bypass).
 
 #### 7.2. POST via `gh api`
 
@@ -1154,10 +1582,10 @@ recover the content and manually post it), then `rm -f "$err_tmp"`.
 ```bash
 {
     printf '## walkthrough (%s)\n' "$walkthrough_ts"
-    printf 'review_id=%s scope_tier=%s threshold=%s scope_count=%s promote_count=%s skip_count=%s stop_count=%s unreviewed_count=%s\n' \
-        "$review_id" "$scope_tier" "$threshold" "$scope_count" "$promote_count" "$skip_count" "$stop_count" "$unreviewed_count"
+    printf 'review_id=%s scope_tier=%s threshold=%s scope_count=%s auto_accept_count=%s promote_count=%s skip_count=%s stop_count=%s unreviewed_count=%s\n' \
+        "$review_id" "$scope_tier" "$threshold" "$scope_count" "$auto_accept_count" "$promote_count" "$skip_count" "$stop_count" "$unreviewed_count"
     printf 'decisions:\n'
-    # one line per decision, in order
+    # one line per decision, in order. action ∈ {auto_accept, promote, skip, stop}.
     for d in "${decisions[@]}"; do
         edited_marker=""
         if [[ "$(jq -r '.edited_hint // false' <<<"$d")" == "true" ]]; then
@@ -1186,15 +1614,22 @@ recover the content and manually post it), then `rm -f "$err_tmp"`.
 
 ### 9. User-visible summary
 
-Print a clear summary block to chat (plain text, not a tool call):
+Print a clear summary block to chat (plain text, not a tool call).
+The summary line distinguishes Step 4.5 batch acceptance from
+per-finding-loop promotion: "$auto_accept_count auto-recommendations
+accepted in batch + $promote_count promoted via per-finding
+walk-through" (with the `+ … per-finding walk-through` half omitted
+when `$promote_count == 0`):
 
 ```
 Walkthrough complete. Scope: $scope_tier_title.
-Of $scope_count finding(s) in scope:
-  Promoted:    $promote_count
-  Skipped:     $skip_count
-  Stopped:     $stop_count
-  Unreviewed:  $unreviewed_count
+$auto_accept_count auto-recommendations accepted in batch + $promote_count promoted via per-finding walk-through.
+Of $scope_count finding(s) walked individually:
+  Auto-accepted (batch): $auto_accept_count
+  Promoted (per-finding): $promote_count
+  Skipped:               $skip_count
+  Stopped:               $stop_count
+  Unreviewed:            $unreviewed_count
 
 Pre-existing issues filed: <N; list id → url pairs below, or omit section>
   F026 → <url>
@@ -1203,8 +1638,9 @@ Pre-existing issues filed: <N; list id → url pairs below, or omit section>
 Cumulative sub-agent spend: <total> tokens across <invs> invocations.
 Cumulative orchestrator spend: <output> output / <input> input across <turns> turns.
 
-Promoted findings are now auto-fix-eligible via the human_confirmation
-bypass — they'll be picked up at any fix threshold. To apply:
+Promoted findings (auto-accepted + per-finding) are now auto-fix-
+eligible via the human_confirmation bypass — they'll be picked up
+at any fix threshold. To apply:
 
   /adamsreview:fix
 
@@ -1212,10 +1648,20 @@ Decisions log comment: <url to the POSTed comment, if PR mode>
 Main review comment: updated in place.
 
 You can resume later by re-running /adamsreview:walkthrough — the
-scope filter naturally excludes anything you already promoted, so the
-$unreviewed_count unreviewed finding(s) plus any newly-added ones
-will be what you see.
+scope filter naturally excludes anything you already promoted (whether
+auto-accepted or per-finding), so the $unreviewed_count unreviewed
+finding(s) plus any newly-added ones will be what you see.
 ```
+
+The "Auto-accepted (batch)" line is omitted when
+`$auto_accept_count == 0` (matches the existing per-section omission
+rule). When `$auto_accept_count > 0` AND `$promote_count == 0`, the
+first sentence collapses to "$auto_accept_count auto-recommendations
+accepted in batch."; the inverse holds for the
+all-promoted-no-auto-accept case. The
+"Promoted findings (auto-accepted + per-finding) are now auto-fix-
+eligible…" sentence is kept whenever EITHER count is > 0; omitted
+only when both are 0 (matches §7.1's "skip if zero mutations" rule).
 
 Read the cumulative spend numbers from the artifact (populated by
 §6.1's re-tally). Direct `jq -r` call so stdout is the chat line

@@ -52,6 +52,47 @@ Modes (CLI flags; mutually exclusive):
                             9.pre) leaves current_state at attempted and
                             only appends the fix_attempt — the next run's
                             leftover-attempted hard abort catches the user.
+  --apply-auto-fix-hints <array>  Phase 5.5: bulk-set finding.auto_fix_hint
+                            for findings the generation+verification chain
+                            produced a recommendation for. Input is a JSON
+                            array of {id, hint, confidence, second_opinion,
+                            concerns?, alternatives?}; the helper stamps `ts`
+                            (current ISO-8601 UTC) on each entry. Continue-
+                            on-error like --add-findings: per-finding
+                            rejections (not_found, already_set,
+                            state_not_open, pre_existing_report,
+                            already_promoted, schema_invalid) are logged on
+                            stderr (`auto-fix-hints-rejected:` lines, one
+                            per drop) and the rest of the batch still
+                            commits. Pass --overwrite to replace an existing
+                            auto_fix_hint (default behavior protects against
+                            accidental re-runs clobbering Phase-5.5 output).
+                            Exit 0 if any accepted; 7 if all rejected.
+                            Stdout: one-line JSON
+                            {accepted: [ids], rejected: [{id, reason}],
+                             total: N}. Appends a `## auto_fix_hint (<ts>)`
+                            block to <artifact-dir>/trace.md (sibling of
+                            --path; matches log-phase.sh convention).
+  --apply-auto-rec-promotions <array>  Phase 7.5 / walkthrough Step 4.5:
+                            batch wrapper around the existing
+                            human_confirmation single-promotion flow. Input
+                            is a JSON array of {id, reviewer, reason?}; the
+                            helper sources fix_hint from
+                            finding.auto_fix_hint.hint and snapshots
+                            promoted_from = {disposition, actionability,
+                            score_phase4}. First-fail-halt semantics
+                            (matches --apply-promotion); preceding tuples
+                            stay committed if the helper aborts mid-batch.
+                            Per-tuple preconditions: finding has
+                            auto_fix_hint, human_confirmation == null,
+                            current_state == "open", disposition ∈
+                            {confirmed_mechanical, confirmed_manual,
+                            confirmed_report}. Pair with --expected N to
+                            reject mismatched batches with EXIT_EXPECTED_
+                            MISMATCH (6).
+                            Stdout: {promoted: [ids], total: N} on success.
+                            Appends a `## auto_rec_promotions (<ts>)` block
+                            to trace.md.
   --set field=value         mutate a scalar field (repeatable). With
                             --finding-id, targets a finding; without,
                             targets top-level artifact fields.
@@ -1412,6 +1453,533 @@ def cmd_apply_fix_outcomes(args):
     return c.EXIT_OK
 
 
+# ----- --apply-auto-fix-hints / --apply-auto-rec-promotions (Phase 5.5 / 7.5) ---
+#
+# These two modes cover the auto-fix-hint feature (umbrella plan
+# `more-auto.md`). The first writes Phase 5.5's generation+verification
+# output into finding.auto_fix_hint; the second batch-promotes findings
+# whose auto_fix_hint the user accepted at /adamsreview:fix preflight or
+# /adamsreview:walkthrough Step 4.5.
+#
+# Distinct error models on purpose:
+#
+#   --apply-auto-fix-hints      continue-on-error (matches --add-findings).
+#                               Per-finding rejections are reportable but
+#                               not fatal — Phase 5.5 input may include
+#                               stale ids (artifact mutated mid-run by a
+#                               concurrent /adamsreview:add) or findings
+#                               whose state shifted out of eligibility
+#                               between dispatch and patch-time. The wave
+#                               still lands the salvageable subset.
+#
+#   --apply-auto-rec-promotions first-fail-halt (matches the
+#                               single-finding promote in promote-core.md).
+#                               A failure mid-batch indicates the user-
+#                               facing batch UI lost its preflight
+#                               invariant (someone else mutated the
+#                               artifact, or our own preflight had a bug);
+#                               continuing would produce a partial promote
+#                               surface with no clear recovery. Halt and
+#                               surface so the orchestrator can re-render
+#                               the preflight from fresh state.
+
+ALLOWED_AUTO_FIX_HINT_KEYS = frozenset({
+    "id", "hint", "confidence", "second_opinion", "concerns", "alternatives",
+})
+
+_REQUIRED_AUTO_FIX_HINT_KEYS = frozenset({
+    "id", "hint", "confidence", "second_opinion",
+})
+
+_AUTO_FIX_HINT_CONFIDENCE_VALUES = frozenset({"high", "medium", "low"})
+_AUTO_FIX_HINT_SECOND_OPINION_VALUES = frozenset({"concurs", "concerns"})
+
+# Dispositions a finding may be in when an auto-rec promotion is applied.
+# Pre-existing/below-gate/uncertain/disproven all fall outside Phase 5.5's
+# eligibility filter (umbrella §Decided/Eligibility) so reject them up
+# front; the orchestrator's preflight should already have filtered.
+_AUTO_REC_PROMOTABLE_DISPOSITIONS = frozenset({
+    "confirmed_mechanical", "confirmed_manual", "confirmed_report",
+})
+
+ALLOWED_AUTO_REC_PROMOTION_KEYS = frozenset({"id", "reviewer", "reason"})
+
+
+def _trace_path_for(args):
+    """Return the trace.md path for `args.path`, creating parent dir if needed.
+
+    Default lookup: `<artifact-dir>/trace.md`. The artifact lives at
+    `<reviews-root>/<repo>/<branch>/<review-id>/artifact.json`, and
+    trace.md is its sibling — every other helper uses the same convention
+    (artifact-publish.sh:trace_append, log-phase.sh, etc.). Caller passes
+    --path as absolute, per CLAUDE.md rule 11.
+    """
+    return Path(args.path).parent / "trace.md"
+
+
+def _trace_append(trace_path, header_line, body_lines):
+    """Append a `## <header_line>` block followed by body_lines to trace.md.
+
+    Mirrors the format other helpers write (artifact-publish.sh,
+    log-phase.sh): one `##`-headed block per call. Best-effort — failures
+    here don't abort the patch (the artifact write already succeeded).
+    """
+    try:
+        Path(trace_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(trace_path, "a", encoding="utf-8") as f:
+            f.write(f"## {header_line}\n")
+            for line in body_lines:
+                f.write(f"{line}\n")
+            f.write("\n")
+    except OSError as e:
+        # Loud but non-fatal: orchestrator can re-derive accepted/rejected
+        # ids from helper stdout if trace.md write fails.
+        print(f"warning: trace.md append failed at {trace_path}: {e}", file=sys.stderr)
+
+
+def _check_auto_fix_hint_entry(entry, idx):
+    """Validate one --apply-auto-fix-hints entry's shape.
+
+    Returns (fid, rejection_dict_or_None). Rejections are continue-on-
+    error; the caller logs to stderr and skips. Reasons:
+      - "not_object"     : non-dict element
+      - "missing_id"     : no id field
+      - "schema_invalid" : missing required key, unknown key, bad enum,
+                           empty-string hint, alternative shape mismatch.
+    """
+    if not isinstance(entry, dict):
+        return None, {"idx": idx, "id": "(missing)", "reason": "not_object",
+                      "detail": f"got {type(entry).__name__}"}
+
+    fid = entry.get("id") or "(missing)"
+    if not entry.get("id"):
+        return None, {"idx": idx, "id": fid, "reason": "missing_id",
+                      "detail": "every entry must name a finding id"}
+
+    bad_keys = [k for k in entry.keys() if k not in ALLOWED_AUTO_FIX_HINT_KEYS]
+    if bad_keys:
+        return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                     "detail": f"unknown keys {sorted(bad_keys)}"}
+
+    missing = [k for k in _REQUIRED_AUTO_FIX_HINT_KEYS if k not in entry]
+    if missing:
+        return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                     "detail": f"missing required keys {sorted(missing)}"}
+
+    hint = entry.get("hint")
+    if not isinstance(hint, str) or not hint.strip():
+        return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                     "detail": "hint must be a non-empty string"}
+
+    conf = entry.get("confidence")
+    if conf not in _AUTO_FIX_HINT_CONFIDENCE_VALUES:
+        return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                     "detail": f"confidence must be one of {sorted(_AUTO_FIX_HINT_CONFIDENCE_VALUES)}, got {conf!r}"}
+
+    so = entry.get("second_opinion")
+    if so not in _AUTO_FIX_HINT_SECOND_OPINION_VALUES:
+        return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                     "detail": f"second_opinion must be one of {sorted(_AUTO_FIX_HINT_SECOND_OPINION_VALUES)}, got {so!r}"}
+
+    concerns = entry.get("concerns")
+    if concerns is not None:
+        if not isinstance(concerns, list) or not all(isinstance(x, str) for x in concerns):
+            return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                         "detail": "concerns must be an array of strings"}
+
+    alternatives = entry.get("alternatives")
+    if alternatives is not None:
+        if not isinstance(alternatives, list) or len(alternatives) > 2:
+            return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                         "detail": "alternatives must be an array of at most 2 objects"}
+        for ai, alt in enumerate(alternatives):
+            if not isinstance(alt, dict):
+                return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                             "detail": f"alternatives[{ai}] must be an object"}
+            # `label` and `title` accept any string (per schema). `hint`
+            # requires non-empty (matches the schema's minLength: 1) —
+            # rendering an empty hint produces a useless alternative.
+            for required_key in ("label", "title"):
+                if not isinstance(alt.get(required_key), str):
+                    return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                                 "detail": f"alternatives[{ai}].{required_key} must be a string"}
+            ahint = alt.get("hint")
+            if not isinstance(ahint, str) or not ahint.strip():
+                return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                             "detail": f"alternatives[{ai}].hint must be a non-empty string"}
+            extra = [k for k in alt.keys() if k not in ("label", "title", "hint")]
+            if extra:
+                return fid, {"idx": idx, "id": fid, "reason": "schema_invalid",
+                             "detail": f"alternatives[{ai}] has unknown keys {sorted(extra)}"}
+
+    return fid, None
+
+
+def _emit_auto_fix_hint_rejection(rejection):
+    """Single-line rejection log to stderr (matches _emit_rejection's shape)."""
+    detail = rejection["detail"]
+    detail_str = "; ".join(detail) if isinstance(detail, list) else str(detail)
+    if len(detail_str) > 200:
+        detail_str = detail_str[:197] + "..."
+    print(
+        f"auto-fix-hints-rejected: idx={rejection['idx']} "
+        f"id={rejection['id']} reason={rejection['reason']} "
+        f"detail={detail_str}",
+        file=sys.stderr,
+    )
+
+
+def cmd_apply_auto_fix_hints(args):
+    """Phase 5.5: bulk-set finding.auto_fix_hint with verifier output.
+
+    Continue-on-error per umbrella `more-auto.md` Stage 1 spec. Each entry
+    may be rejected for: not_found / already_set (without --overwrite) /
+    state_not_open / pre_existing_report / already_promoted /
+    schema_invalid. The wave still commits the surviving subset.
+    """
+    entries = read_json_arg(args.apply_auto_fix_hints, "--apply-auto-fix-hints")
+
+    if not isinstance(entries, list):
+        c.err_prompt(
+            f"--apply-auto-fix-hints expects a JSON array, got {type(entries).__name__}",
+            action="pass an array of {id, hint, confidence, second_opinion, ...} objects."
+        )
+        return c.EXIT_USAGE
+
+    artifact = _load_or_fail(args.path)
+    findings_by_id = {f.get("id"): f for f in artifact.get("findings", []) if f.get("id")}
+
+    accepted_ids = []
+    rejected = []
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    for idx, entry in enumerate(entries):
+        fid, shape_rejection = _check_auto_fix_hint_entry(entry, idx)
+        if shape_rejection is not None:
+            rejected.append(shape_rejection)
+            _emit_auto_fix_hint_rejection(shape_rejection)
+            continue
+
+        finding = findings_by_id.get(fid)
+        if finding is None:
+            r = {"idx": idx, "id": fid, "reason": "not_found",
+                 "detail": "no finding with this id in artifact"}
+            rejected.append(r)
+            _emit_auto_fix_hint_rejection(r)
+            continue
+
+        if finding.get("auto_fix_hint") is not None and not args.overwrite:
+            r = {"idx": idx, "id": fid, "reason": "already_set",
+                 "detail": "auto_fix_hint already populated; pass --overwrite to replace"}
+            rejected.append(r)
+            _emit_auto_fix_hint_rejection(r)
+            continue
+
+        if finding.get("current_state") != "open":
+            r = {"idx": idx, "id": fid, "reason": "state_not_open",
+                 "detail": f"current_state='{finding.get('current_state')}' (expected 'open')"}
+            rejected.append(r)
+            _emit_auto_fix_hint_rejection(r)
+            continue
+
+        if finding.get("disposition") == "pre_existing_report":
+            r = {"idx": idx, "id": fid, "reason": "pre_existing_report",
+                 "detail": "pre-existing findings are excluded from auto-rec by §13.1 override"}
+            rejected.append(r)
+            _emit_auto_fix_hint_rejection(r)
+            continue
+
+        if finding.get("human_confirmation") is not None:
+            r = {"idx": idx, "id": fid, "reason": "already_promoted",
+                 "detail": "human_confirmation already set; auto_fix_hint moot"}
+            rejected.append(r)
+            _emit_auto_fix_hint_rejection(r)
+            continue
+
+        # Build the auto_fix_hint object. Stamp `ts` server-side; the
+        # caller doesn't supply it (Phase 5.5 generation/verification
+        # batch-times are the orchestrator's concern, but the on-disk
+        # ts is when this helper landed the value — the canonical
+        # "when did this finding gain its hint" answer).
+        afh = {
+            "hint": entry["hint"],
+            "confidence": entry["confidence"],
+            "second_opinion": entry["second_opinion"],
+            "ts": ts,
+        }
+        # `concerns` is non-empty array only when second_opinion=="concerns"
+        # AND the verifier supplied at least one concern. Empty array is
+        # equivalent to absence here, so omit the key entirely (per spec)
+        # to keep the on-disk shape compact.
+        concerns = entry.get("concerns")
+        if entry["second_opinion"] == "concerns" and concerns:
+            afh["concerns"] = list(concerns)
+        # `alternatives` is omitted when absent or empty.
+        alternatives = entry.get("alternatives")
+        if alternatives:
+            afh["alternatives"] = [
+                {"label": a["label"], "title": a["title"], "hint": a["hint"]}
+                for a in alternatives
+            ]
+
+        finding["auto_fix_hint"] = afh
+        accepted_ids.append(fid)
+
+    if not accepted_ids and rejected:
+        c.err_prompt(
+            f"--apply-auto-fix-hints: every input was rejected ({len(rejected)} of {len(rejected)})",
+            context=[
+                "no auto_fix_hint values landed; on-disk artifact unchanged.",
+                "per-rejection detail above (one `auto-fix-hints-rejected:` line per drop).",
+            ],
+            action=(
+                "investigate the rejection reasons. Common causes: stale ids from a "
+                "concurrent /adamsreview:add; findings already promoted between Phase "
+                "5.5 generation and patch-time; Phase 5.5 schema-fixer drift on hint/"
+                "confidence/second_opinion. Pass --overwrite to replace existing "
+                "auto_fix_hint values."
+            ),
+        )
+        # Best-effort summary stdout for orchestrator capture even on all-
+        # rejected (matches `--add-findings` behavior).
+        print(json.dumps({
+            "accepted": [],
+            "rejected": [{"id": r["id"], "reason": r["reason"]} for r in rejected],
+            "total": len(entries),
+        }))
+        return c.EXIT_ALL_REJECTED
+
+    if accepted_ids:
+        rc = _write_and_emit(args.path, artifact, silent=True)
+        if rc != c.EXIT_OK:
+            # _write_and_emit emitted its own error-as-prompt. The
+            # accepted batch is one transaction: every accepted hint
+            # lands or none do.
+            return rc
+        # Trace block on success (any accepted). Skip on no-write so we
+        # don't pollute trace.md with empty-batch entries.
+        rejected_ids = [r["id"] for r in rejected]
+        body = [
+            f"accepted={len(accepted_ids)} ({accepted_ids})",
+            f"rejected={len(rejected)}" + (f" ({rejected_ids})" if rejected_ids else ""),
+        ]
+        if rejected:
+            for r in rejected:
+                body.append(f"- {r['id']}: {r['reason']}")
+        _trace_append(_trace_path_for(args), f"auto_fix_hint ({ts})", body)
+
+    print(json.dumps({
+        "accepted": accepted_ids,
+        "rejected": [{"id": r["id"], "reason": r["reason"]} for r in rejected],
+        "total": len(entries),
+    }))
+    return c.EXIT_OK
+
+
+def cmd_apply_auto_rec_promotions(args):
+    """Phase 7.5 / walkthrough Step 4.5: batch wrapper around the single-finding
+    human_confirmation promotion (promote-core.md step 5/6).
+
+    First-fail-halt: matches --apply-decisions / --apply-fix-* semantics.
+    Preceding tuples stay committed; the orchestrator surfaces the failure
+    and re-renders the preflight against fresh state.
+    """
+    entries = read_json_arg(args.apply_auto_rec_promotions, "--apply-auto-rec-promotions")
+
+    if not isinstance(entries, list):
+        c.err_prompt(
+            f"--apply-auto-rec-promotions expects a JSON array, got {type(entries).__name__}",
+            action="pass an array of {id, reviewer, reason?} objects."
+        )
+        return c.EXIT_USAGE
+
+    if args.expected > 0 and len(entries) != args.expected:
+        received_ids = [
+            (t.get("id") if isinstance(t, dict) and t.get("id") else f"<#{i}>")
+            for i, t in enumerate(entries)
+        ]
+        c.err_prompt(
+            f"--apply-auto-rec-promotions expected {args.expected} entry(ies) but received {len(entries)}",
+            context=(
+                f"received entry ids: {received_ids}" if received_ids
+                else "received empty entry array"
+            ),
+            action=(
+                "the orchestrator's Phase 7.5 / Step 4.5 preflight names N candidate ids "
+                "explicitly; --expected N rejects mismatched batches so a dropped or "
+                "doubled entry doesn't silently shift the promote surface. Re-render "
+                "the preflight from fresh state and re-invoke."
+            )
+        )
+        return c.EXIT_EXPECTED_MISMATCH
+
+    # Duplicate-id guard — same rationale as --apply-decisions: two
+    # entries for the same finding would re-promote (clobbering reviewer/
+    # reason) and append two trace lines for one Phase-5.5 acceptance.
+    seen_ids = {}
+    duplicates = []
+    for i, t in enumerate(entries):
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("id")
+        if not tid:
+            continue
+        if tid in seen_ids:
+            duplicates.append(tid)
+        else:
+            seen_ids[tid] = i
+    if duplicates:
+        dup_unique = sorted(set(duplicates))
+        c.err_prompt(
+            f"--apply-auto-rec-promotions has duplicate finding id(s): {dup_unique}",
+            context="every entry in a batch must name a distinct finding id; duplicates would re-promote the same finding twice.",
+            action="strip the duplicate entries and re-invoke."
+        )
+        return c.EXIT_VALIDATION
+
+    promoted_ids = []
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reviewer_for_trace = None
+
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx}: must be a JSON object, got {type(entry).__name__}",
+                action="each array element is {id, reviewer, reason?}; see artifact-patch.py docstring."
+            )
+            return c.EXIT_VALIDATION
+
+        fid = entry.get("id")
+        if not fid:
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx}: 'id' is required",
+                action="every entry must name the finding it promotes."
+            )
+            return c.EXIT_VALIDATION
+
+        bad_keys = [k for k in entry.keys() if k not in ALLOWED_AUTO_REC_PROMOTION_KEYS]
+        if bad_keys:
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx} ({fid}): unknown keys {sorted(bad_keys)}",
+                valid_values=sorted(ALLOWED_AUTO_REC_PROMOTION_KEYS),
+                action="remove unknown keys; ts/promoted_from/fix_hint are derived by the helper."
+            )
+            return c.EXIT_VALIDATION
+
+        reviewer = entry.get("reviewer")
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx} ({fid}): 'reviewer' must be a non-empty string",
+                action="pass reviewer (e.g. 'auto-rec/<email>') so the human_confirmation block is auditable."
+            )
+            return c.EXIT_VALIDATION
+        # Capture for trace block (all entries share one reviewer in
+        # practice — auto-rec/<email>; if the batch mixes reviewers we
+        # show the first and note the count).
+        if reviewer_for_trace is None:
+            reviewer_for_trace = reviewer
+
+        # Load fresh per-tuple so preceding tuples' writes are visible
+        # (matches --apply-decisions / --apply-fix-* semantics).
+        artifact = _load_or_fail(args.path)
+        finding = _find_finding(artifact, fid)
+
+        afh = finding.get("auto_fix_hint")
+        if not afh or not isinstance(afh, dict) or not afh.get("hint"):
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx} ({fid}): finding has no auto_fix_hint to source fix_hint from",
+                context="auto-rec promotions require Phase 5.5 to have populated finding.auto_fix_hint.hint first.",
+                action="re-run /adamsreview:review (Phase 5.5 generates auto_fix_hint), or use /adamsreview:promote for a manual promote."
+            )
+            return c.EXIT_VALIDATION
+
+        if finding.get("human_confirmation") is not None:
+            existing = finding["human_confirmation"]
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx} ({fid}): finding already has human_confirmation",
+                context=(
+                    f"existing reviewer={existing.get('reviewer')!r} "
+                    f"ts={existing.get('ts')!r}; this batch would clobber the prior promote."
+                ),
+                action="re-render the preflight from fresh state — the orchestrator's promotable filter should already exclude this id."
+            )
+            return c.EXIT_VALIDATION
+
+        if finding.get("current_state") != "open":
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx} ({fid}): current_state='{finding.get('current_state')}' (expected 'open')",
+                context="auto-rec promotions only apply to open findings (eligibility filter, §5.5).",
+                action="re-render the preflight from fresh state."
+            )
+            return c.EXIT_INVALID_TRANSITION
+
+        disp = finding.get("disposition")
+        if disp not in _AUTO_REC_PROMOTABLE_DISPOSITIONS:
+            c.err_prompt(
+                f"--apply-auto-rec-promotions entry #{idx} ({fid}): disposition='{disp}' is not auto-rec promotable",
+                valid_values=sorted(_AUTO_REC_PROMOTABLE_DISPOSITIONS),
+                action="auto-rec eligibility (§5.5) requires confirmed_mechanical / confirmed_manual / confirmed_report. Use /adamsreview:promote for other dispositions."
+            )
+            return c.EXIT_VALIDATION
+
+        # Snapshot the promoted_from triple BEFORE the patch, mirroring
+        # promote-core.md step 5. score_phase4 may be null (e.g. a
+        # confirmed_report whose Phase-4 score was unscorable); schema
+        # accepts null on the snapshot field.
+        promoted_from = {
+            "disposition": disp,
+            "actionability": finding.get("actionability"),
+            "score_phase4": finding.get("score_phase4"),
+        }
+
+        reason = entry.get("reason") or "auto-accepted via :fix preflight (batch)"
+
+        hc = {
+            "reviewer": reviewer,
+            "reason": reason,
+            "ts": ts,
+            "promoted_from": promoted_from,
+            "fix_hint": afh["hint"],
+        }
+
+        # Patch via _apply_finding_set_json (same path promote-core.md step
+        # 6 uses), plus disposition+actionability sync via _apply_finding_set
+        # so is_actionable derives correctly. The schema's
+        # current_state↔disposition coupling means we can't transition the
+        # finding to confirmed_mechanical if it's already there
+        # (idempotent), and for confirmed_manual/confirmed_report we
+        # promote to confirmed_mechanical to make Phase 8 pick it up.
+        # _apply_finding_set is_actionable derivation handles the lockstep.
+        promotion_set_pairs = [
+            ("disposition", "confirmed_mechanical"),
+            ("actionability", "auto_fixable"),
+        ]
+        _apply_finding_set(finding, promotion_set_pairs)
+        _apply_finding_set_json(finding, [("human_confirmation", hc)])
+
+        rc = _write_and_emit(args.path, artifact, silent=True)
+        if rc != c.EXIT_OK:
+            # _write_and_emit emitted its own error-as-prompt; halt the
+            # batch and leave preceding tuples committed.
+            return rc
+
+        promoted_ids.append(fid)
+
+    # Trace block on success (skip on empty input).
+    if promoted_ids:
+        body = [
+            f"reviewer={reviewer_for_trace}",
+            f"promoted={len(promoted_ids)} ({promoted_ids})",
+        ]
+        _trace_append(_trace_path_for(args), f"auto_rec_promotions ({ts})", body)
+
+    print(json.dumps({
+        "promoted": promoted_ids,
+        "total": len(entries),
+    }))
+    return c.EXIT_OK
+
+
 def cmd_set_and_or_append(args):
     """Combined --set / --set-json / --append-fix-attempt (DESIGN §26).
 
@@ -1508,7 +2076,13 @@ def build_parser():
         type=int,
         default=0,
         metavar="N",
-        help="(--apply-decisions only) expected tuple count; rejects count mismatch (over- or under-sized batches) with EXIT_EXPECTED_MISMATCH (exit 6). Pass N=0 (default) or omit to skip the check (when caller doesn't know N)."
+        help="(--apply-decisions / --apply-auto-rec-promotions) expected entry count; rejects count mismatch (over- or under-sized batches) with EXIT_EXPECTED_MISMATCH (exit 6). Pass N=0 (default) or omit to skip the check (when caller doesn't know N)."
+    )
+    p.add_argument(
+        "--overwrite",
+        dest="overwrite",
+        action="store_true",
+        help="(--apply-auto-fix-hints only) replace an existing auto_fix_hint instead of rejecting; without this, a finding that already carries an auto_fix_hint is rejected (`reason=already_set`)."
     )
     mode = p.add_mutually_exclusive_group(required=False)
     mode.add_argument(
@@ -1552,6 +2126,18 @@ def build_parser():
         metavar="FIX_OUTCOMES_JSON",
         help="Stage 3 (Phase 9d): fix_attempt append + state transition per phase_9_outcome. Inline/@file/-."
     )
+    mode.add_argument(
+        "--apply-auto-fix-hints",
+        dest="apply_auto_fix_hints",
+        metavar="AUTO_FIX_HINTS_JSON",
+        help="Phase 5.5: bulk-set finding.auto_fix_hint (continue-on-error). Array of {id, hint, confidence, second_opinion, concerns?, alternatives?}. Inline/@file/-."
+    )
+    mode.add_argument(
+        "--apply-auto-rec-promotions",
+        dest="apply_auto_rec_promotions",
+        metavar="AUTO_REC_PROMOTIONS_JSON",
+        help="Phase 7.5 / walkthrough Step 4.5: batch-promote findings whose auto_fix_hint the user accepted. Array of {id, reviewer, reason?}. Inline/@file/-. First-fail-halt."
+    )
     return p
 
 
@@ -1559,13 +2145,18 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # --expected is meaningful only in --apply-decisions mode. Reject early
-    # if it's set without --apply-decisions so a typo doesn't silently
-    # become a no-op.
-    if args.expected and args.apply_decisions is None:
-        parser.error("--expected is only valid with --apply-decisions")
+    # --expected is meaningful only in --apply-decisions and
+    # --apply-auto-rec-promotions modes. Reject early if it's set without
+    # one of those so a typo doesn't silently become a no-op.
+    if args.expected and args.apply_decisions is None and args.apply_auto_rec_promotions is None:
+        parser.error("--expected is only valid with --apply-decisions or --apply-auto-rec-promotions")
     if args.expected < 0:
         parser.error("--expected must be >= 0")
+
+    # --overwrite is meaningful only in --apply-auto-fix-hints mode. Same
+    # rationale as --expected: silent no-op is a footgun.
+    if args.overwrite and args.apply_auto_fix_hints is None:
+        parser.error("--overwrite is only valid with --apply-auto-fix-hints")
 
     try:
         if args.init is not None:
@@ -1624,6 +2215,26 @@ def main():
             if args.dry_run:
                 parser.error("--apply-fix-outcomes does not support --dry-run (batched per-tuple writes; validate tuples upstream or use a throwaway path)")
             return cmd_apply_fix_outcomes(args)
+        if args.apply_auto_fix_hints is not None:
+            if args.set or args.set_json or args.append_fix_attempt or args.finding_id:
+                c.err_prompt(
+                    "--apply-auto-fix-hints cannot combine with --set / --set-json / --append-fix-attempt / --finding-id (each entry carries its own finding id)",
+                    action="remove the conflicting flag(s); --apply-auto-fix-hints is a batched mutate."
+                )
+                return c.EXIT_USAGE
+            if args.dry_run:
+                c.err_prompt(
+                    "--apply-auto-fix-hints does not support --dry-run",
+                    action="use a throwaway --path to preflight (e.g., a tempfile)."
+                )
+                return c.EXIT_USAGE
+            return cmd_apply_auto_fix_hints(args)
+        if args.apply_auto_rec_promotions is not None:
+            if args.set or args.set_json or args.append_fix_attempt or args.finding_id:
+                parser.error("--apply-auto-rec-promotions cannot combine with --set / --set-json / --append-fix-attempt / --finding-id (entries carry their own finding ids)")
+            if args.dry_run:
+                parser.error("--apply-auto-rec-promotions does not support --dry-run (batched per-tuple writes; validate entries upstream or use a throwaway path)")
+            return cmd_apply_auto_rec_promotions(args)
         if args.set or args.set_json or args.append_fix_attempt is not None:
             return cmd_set_and_or_append(args)
     except SystemExit:
@@ -1636,7 +2247,7 @@ def main():
         traceback.print_exc(file=sys.stderr)
         return c.EXIT_UNEXPECTED
 
-    parser.error("no mode selected (use --init, --add-finding, --add-findings, --delete-finding, --apply-decisions, --apply-fix-start, --apply-fix-outcomes, --set, --set-json, or --append-fix-attempt)")
+    parser.error("no mode selected (use --init, --add-finding, --add-findings, --delete-finding, --apply-decisions, --apply-fix-start, --apply-fix-outcomes, --apply-auto-fix-hints, --apply-auto-rec-promotions, --set, --set-json, or --append-fix-attempt)")
 
 
 if __name__ == "__main__":
