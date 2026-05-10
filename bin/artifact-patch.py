@@ -1636,6 +1636,17 @@ def cmd_apply_auto_fix_hints(args):
     may be rejected for: not_found / already_set (without --overwrite) /
     state_not_open / pre_existing_report / already_promoted /
     schema_invalid. The wave still commits the surviving subset.
+
+    Note on eligibility: this helper does NOT recheck the umbrella's
+    disposition predicate (confirmed_manual / confirmed_report /
+    light-lane confirmed_mechanical) or the score gate (score_phase4
+    >= 60). The Phase 5.5 fragment in fragments/06b-auto-fix-hint.md
+    is the sole legitimate caller and applies that filter upstream
+    (single-writer invariant). Sister mode --apply-auto-rec-promotions
+    DOES enforce the disposition predicate via
+    _AUTO_REC_PROMOTABLE_DISPOSITIONS — if a second caller of THIS
+    helper ever appears, mirror that pattern here rather than relying
+    on the upstream filter.
     """
     entries = read_json_arg(args.apply_auto_fix_hints, "--apply-auto-fix-hints")
 
@@ -1711,6 +1722,14 @@ def cmd_apply_auto_fix_hints(args):
         # AND the verifier supplied at least one concern. Empty array is
         # equivalent to absence here, so omit the key entirely (per spec)
         # to keep the on-disk shape compact.
+        #
+        # Note: schema-v1.json does NOT enforce this concerns ↔ second_opinion
+        # coupling — it accepts any combination. The contract is enforced
+        # here at apply-time and assumed by the renderer's truthiness guard.
+        # auto_fix_hint isn't in JSON_SETTABLE_FINDING_FIELDS, so this helper
+        # is the sole writer and the schema gap is defense-in-depth-only.
+        # If a second writer ever lands (hand-edits, a paste-injection flow),
+        # encode the rule as a JSON Schema if/then or oneOf at that point.
         concerns = entry.get("concerns")
         if entry["second_opinion"] == "concerns" and concerns:
             afh["concerns"] = list(concerns)
