@@ -215,6 +215,19 @@ def render_summary(buckets):
 
     pre_existing_n = len(buckets.get("pre_existing_report", []))
 
+    # Findings the renderer doesn't put in any actionable table: Phase 4 rejected
+    # them (disproven) or Phase 3 scored them under the gate (below_gate). Pre-fix,
+    # these counted toward findings_count but had no bullet — readers saw "Found 9"
+    # but only 2 listed, with no accounting for the missing 7. Same class as the
+    # 2025 ray-finance light-lane-uncertain drop noted above.
+    filtered_bits = []
+    disproven_n = len(buckets.get("disproven", []))
+    below_gate_n = len(buckets.get("below_gate", []))
+    if disproven_n:
+        filtered_bits.append(f"{disproven_n} disproven")
+    if below_gate_n:
+        filtered_bits.append(f"{below_gate_n} below score gate (<45)")
+
     lines = [f"Found {findings_count} finding{'s' if findings_count != 1 else ''} across all lanes:"]
     if deep_bits:
         lines.append(f"- Deep lane (correctness/security): {', '.join(deep_bits)}")
@@ -222,6 +235,8 @@ def render_summary(buckets):
         lines.append(f"- Light lane (ux/policy/architecture): {', '.join(light_bits)}")
     if pre_existing_n:
         lines.append(f"- Pre-existing (high-confidence origin, report-only): {pre_existing_n}")
+    if filtered_bits:
+        lines.append(f"- Filtered out: {', '.join(filtered_bits)}")
     return "\n".join(lines)
 
 
@@ -706,7 +721,7 @@ def render_fix_runs(artifact):
 
 
 def render_footer(artifact):
-    return "🤖 Generated with Adam's Claude Code Review Command"
+    return "🤖 Generated with the [adamsreview](https://github.com/adamjgmiller/adamsreview) Claude Code Review Plugin"
 
 
 # ----- Assembly ---------------------------------------------------------
