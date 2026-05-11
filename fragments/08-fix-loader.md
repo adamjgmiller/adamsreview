@@ -386,9 +386,11 @@ printf 'phase_7_ready run_id=%s input_sha=%s threshold=%s granular=%s staleness=
 ## Phase 7.5 — Auto-recommendation preflight (fix command)
 
 Phase 5.5 (review-time) populates `auto_fix_hint` on findings whose
-disposition would otherwise force the user into `:walkthrough`
-(`confirmed_manual`, `confirmed_report`, light-lane
-`confirmed_mechanical`). Phase 7.5 surfaces those hints to the user
+disposition might otherwise force the user into `:walkthrough`
+(`confirmed_manual`, `confirmed_report`, `confirmed_mechanical` —
+the latter regardless of lane, so dedup-induced lane/impact_type
+mismatches don't fall into the gap between Phase 5.5 and Phase 8).
+Phase 7.5 surfaces those hints to the user
 *before* Phase 8 dispatch so a single batch-confirm covers the typical
 ~90% acceptance case — without the per-finding interactive loop. The
 filter computes against the on-disk artifact at `:fix` time, not the

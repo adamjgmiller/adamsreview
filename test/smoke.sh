@@ -2929,6 +2929,69 @@ else
     fail "AFH-10: integration wiring missing — re-grep the assertion to find the dropped reference"
 fi
 
+# AFH-11: Phase 5.5 eligibility predicate covers confirmed_mechanical
+# regardless of lane (v0.4.2 widening). Runs the exact jq filter from
+# fragments/06b-auto-fix-hint.md against a synthetic 9-finding artifact
+# and asserts the selected set matches the predicate's intent.
+#
+# Why: dedup's "deep wins over light" rule produces findings with
+# lane=deep + impact_type=ux when two lenses with different lanes
+# collide on the same root cause. Pre-v0.4.2 these fell through both
+# Phase 8 (impact_type filter excludes ux) and Phase 5.5 (lane filter
+# excluded deep+mechanical). Real-world hit: F031 on
+# user-research-invite PR #267, surfaced 2026-05-11.
+#
+# Expected selected ids: F-DM, F-LM, F-MAN, F-REP (4 of 9).
+afh11_synth=$(jq -nc '{
+    findings: [
+        {id:"F-DM",  disposition:"confirmed_mechanical", validation_lane:"deep",  score_phase4:70, current_state:"open",     human_confirmation:null, auto_fix_hint:null},
+        {id:"F-LM",  disposition:"confirmed_mechanical", validation_lane:"light", score_phase4:70, current_state:"open",     human_confirmation:null, auto_fix_hint:null},
+        {id:"F-MAN", disposition:"confirmed_manual",     validation_lane:"deep",  score_phase4:80, current_state:"open",     human_confirmation:null, auto_fix_hint:null},
+        {id:"F-REP", disposition:"confirmed_report",     validation_lane:"light", score_phase4:65, current_state:"open",     human_confirmation:null, auto_fix_hint:null},
+        {id:"F-LO",  disposition:"confirmed_mechanical", validation_lane:"light", score_phase4:50, current_state:"open",     human_confirmation:null, auto_fix_hint:null},
+        {id:"F-PRE", disposition:"pre_existing_report",  validation_lane:"deep",  score_phase4:80, current_state:"open",     human_confirmation:null, auto_fix_hint:null},
+        {id:"F-RES", disposition:"confirmed_mechanical", validation_lane:"deep",  score_phase4:80, current_state:"resolved", human_confirmation:null, auto_fix_hint:null},
+        {id:"F-HC",  disposition:"confirmed_mechanical", validation_lane:"light", score_phase4:70, current_state:"open",     human_confirmation:{reviewer:"x",ts:"t",reason:"r"}, auto_fix_hint:null},
+        {id:"F-AFH", disposition:"confirmed_mechanical", validation_lane:"deep",  score_phase4:70, current_state:"open",     human_confirmation:null, auto_fix_hint:{hint:"h",confidence:"high",second_opinion:"concurs",ts:"t"}}
+    ]
+}')
+
+# Exact predicate copied from fragments/06b-auto-fix-hint.md §5.5.0.
+afh11_selected=$(printf '%s' "$afh11_synth" | jq -r '
+    [.findings[]
+       | select(.current_state == "open")
+       | select(.human_confirmation == null)
+       | select(.auto_fix_hint == null)
+       | select(.disposition != "pre_existing_report")
+       | select(
+           (.disposition == "confirmed_manual")
+           or (.disposition == "confirmed_report")
+           or (.disposition == "confirmed_mechanical")
+         )
+       | select(.score_phase4 != null and .score_phase4 >= 60)
+       | .id]
+    | sort | join(",")
+')
+
+if [[ "$afh11_selected" == "F-DM,F-LM,F-MAN,F-REP" ]]; then
+    pass "AFH-11 (v0.4.2): Phase 5.5 predicate selects confirmed_mechanical regardless of lane (covers dedup-induced deep+ux gap, F031-style); correctly excludes below-gate, pre_existing_report, resolved, already-promoted, already-hinted"
+else
+    fail "AFH-11: predicate mismatch — expected 'F-DM,F-LM,F-MAN,F-REP'; got '$afh11_selected'" "the predicate in fragments/06b-auto-fix-hint.md may have drifted from the v0.4.2 widening — re-check §5.5.0"
+fi
+
+# AFH-12: fragment source must not re-introduce the lane gate on
+# confirmed_mechanical (regression guard for v0.4.2). Pairs with AFH-11:
+# AFH-11 checks the predicate's runtime behavior on a synthetic
+# artifact, AFH-12 checks the predicate's textual form in the fragment
+# (so a partial revert that only touches the prose still trips one of
+# the two).
+afh12_frag="$REPO/fragments/06b-auto-fix-hint.md"
+if grep -q 'confirmed_mechanical" and \.validation_lane == "light"' "$afh12_frag"; then
+    fail "AFH-12: fragments/06b-auto-fix-hint.md re-introduces the light-lane gate on confirmed_mechanical — see v0.4.2 release notes / F031 incident"
+else
+    pass "AFH-12 (v0.4.2 regression guard): fragments/06b-auto-fix-hint.md predicate has no light-lane gate on confirmed_mechanical"
+fi
+
 # ---------------------------------------------------------------- walkthrough
 #
 # WT-* cover the /adamsreview:walkthrough command surface. WT-1..WT-4 exercise
