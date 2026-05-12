@@ -25,7 +25,7 @@ Per-stage history: `plans/`. Historical backlog: `plans/old-backlog.md` (frozen 
 - **Disposition** is the routing key (11 values, set by Phase 3 / 4 / 9). `is_actionable` derives from disposition; never set independently.
 - **Score gates.** Phase 3: 45 (single source-family demote to `below_gate`; ≥2 families auto-graduate). Phase 4 bands: 45 / 60 / 75 → `disproven` / `uncertain` / `confirmed_*` (strength: moderate 60–74, strong 75+). Phase 8 fix gate is a composite: state + disposition + lane filter + threshold; `human_confirmation != null` bypasses both lane and threshold.
 - **Pre-existing override** (highest priority): `origin == pre_existing AND origin_confidence == high` → `pre_existing_report` regardless of score; set in Phase 3, re-asserted Phase 4.
-- **Lanes.** Deep = `correctness` / `security` (Opus 4a, passes through Phase 5). Light = `ux` / `policy` / `architecture` (Sonnet 4b, report-biased; Phase 8 excludes light-lane `confirmed_mechanical` unless promoted via `:promote` or `:walkthrough`, or surfaced via `:fix` Phase 7.5 auto-recommendation preflight).
+- **Lanes.** Deep = `correctness` / `security` (Opus 4a, passes through Phase 5). Light = `ux` / `policy` / `architecture` (Sonnet 4b, report-biased; Phase 8 excludes light-lane `confirmed_mechanical` unless promoted via `:promote` or `:walkthrough`, or accepted in `:fix` Phase 7.5 auto-recommendation preflight).
 
 Full normative spec — disposition table, gate-rule code blocks, invariants, Phase 9 outcome map: `docs/state-and-gates.md`.
 

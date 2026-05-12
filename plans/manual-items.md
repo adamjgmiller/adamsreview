@@ -50,9 +50,11 @@ runs correctly, F031-class findings get covered.
 - `.claude-plugin/plugin.json` — bump 0.4.0 → 0.4.2 (0.4.1 reserved for a
   parallel PR).
 - `test/smoke.sh` — add AFH-11 (runtime predicate behavior against a
-  synthetic 9-finding artifact, expected selection `F-DM,F-LM,F-MAN,F-REP`)
-  and AFH-12 (textual regression guard against re-introducing the lane
-  gate).
+  synthetic 9-finding artifact, expected selection `F-DM,F-LM,F-MAN,F-REP`),
+  AFH-12 (textual regression guard against re-introducing the lane
+  gate), and AFH-13 (canonical fragment block extracted between
+  fence markers and executed against the AFH-11 synthetic, catching
+  predicate drift the inline-copy AFH-11 would miss).
 
 ## Blast radius (verified)
 
@@ -91,9 +93,9 @@ Cost is one extra Sonnet generation+verify chunk per ~10 such findings.
 
 ## Test result
 
-`./test/smoke.sh` → `smoke: PASS (328 assertions)` (up from 326; +AFH-11,
-+AFH-12). CR-8 also flips from `version >= 0.3.0` checking 0.4.0 to
-checking 0.4.2 — passes.
+`./test/smoke.sh` → `smoke: PASS (329 assertions)` (up from 326; +AFH-11,
++AFH-12, +AFH-13). CR-8 also flips from `version >= 0.3.0` checking 0.4.0
+to checking 0.4.2 — passes.
 
 ## Follow-ups (not in this branch)
 

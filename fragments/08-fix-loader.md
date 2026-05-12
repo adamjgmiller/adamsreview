@@ -397,10 +397,12 @@ Phase 7.5 surfaces those hints to the user
 Gap-closure for mismatched cases (e.g. deep+ux `confirmed_mechanical`)
 is **conditional on the user accepting at Phase 7.5**: acceptance sets
 `human_confirmation`, which bypasses Phase 8's `impact_type` filter
-and threshold. On `Skip` or `Cancel`, those findings remain at
-`current_state=open` — Phase 8's `impact_type ∈ {correctness,
-security}` filter still excludes the lane/impact_type-mismatched
-ones — and the user must resolve them via `:walkthrough` or
+and threshold. On `Skip`, Phase 8 still runs but its `impact_type ∈
+{correctness, security}` filter excludes the lane/impact_type-mismatched
+findings, so they remain at `current_state=open` for the next run. On
+`Cancel`, `:fix` aborts before Phase 8 dispatches at all — no filter
+runs, and the findings stay at `current_state=open` for the next run.
+Either way, the user must resolve them via `:walkthrough` or
 `:promote`. The
 filter computes against the on-disk artifact at `:fix` time, not the
 review-time eligibility, so state shifts since `:review` (e.g. an
@@ -427,7 +429,7 @@ auto_rec_promotable=$(artifact-read.sh \
          | select(.human_confirmation == null)
          | select(.disposition != "pre_existing_report")
          | select(.score_phase4 != null and .score_phase4 >= '"$threshold"')
-         | {id, file, line_range, claim, disposition, score_phase4, auto_fix_hint}]
+         | {id, file, line_range, claim, disposition, impact_type, score_phase4, auto_fix_hint}]
     ')
 auto_rec_count=$(printf '%s\n' "$auto_rec_promotable" | jq 'length')
 ```
