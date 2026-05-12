@@ -105,3 +105,15 @@ to checking 0.4.2 — passes.
 2. Consider a dedup-time invariant or warning when a merged finding's
    `validation_lane` and `impact_type` mismatch (deep+ux, deep+policy,
    deep+architecture, light+correctness, light+security).
+
+## Merge log
+
+- 2026-05-12 — merged `main` (`git merge`, commit `1ebaf39`). Brought in
+  PR #37 `d462c22` ("PR-comment polish: signature line + filtered-findings
+  accounting", v0.4.1). Only conflict was the `version` field in
+  `.claude-plugin/plugin.json` (`0.4.1` vs `0.4.2`); resolved to `0.4.2`
+  as anticipated by Changes §50 ("0.4.1 reserved for a parallel PR").
+  `test/smoke.sh` auto-merged (main's F100/Y2 additions at ~L73/L178/L817,
+  manual-items' AFH-11/12/13 at ~L2932 — different chapters of the file).
+  Post-merge: `smoke: PASS (331 assertions)` (326 base + 2 main + 3
+  manual-items).
