@@ -70,12 +70,24 @@ generation-side widening is the only place that changes:
 
 ## UX trade
 
-Deep-lane `confirmed_mechanical` findings that Phase 8 would have
-auto-fixed anyway now also generate a Phase 5.5 hint and surface in the
-Phase 7.5 batch confirm. User accepts → `human_confirmation` set → Phase 8
-applies. User skips → no `human_confirmation`, but Phase 8's lane+threshold
-filter still picks them up. Either way the finding gets fixed. Cost is one
-extra Sonnet generation+verify chunk per ~10 such findings.
+`confirmed_mechanical` findings that previously fell into the
+dedup-induced gap (e.g. `validation_lane=deep` +
+`impact_type=ux`) now generate a Phase 5.5 hint and surface in the
+Phase 7.5 batch confirm. Outcome depends on user action:
+
+- **User accepts at Phase 7.5** → `human_confirmation` is set, Phase 8's
+  `impact_type` filter is bypassed, finding gets fixed in this run.
+- **User skips at Phase 7.5** → no `human_confirmation` set. Phase 8's
+  `impact_type ∈ {correctness, security}` filter still excludes the
+  finding for mismatched cases (e.g. deep+ux). The finding remains at
+  `current_state=open` and the user must run `:walkthrough` or
+  `:promote` to fix it later.
+
+For deep-lane `confirmed_mechanical` findings whose `impact_type` is
+already `correctness` or `security`, the skip path is still covered by
+Phase 8's filter — the gap is specific to lane/impact_type mismatches.
+
+Cost is one extra Sonnet generation+verify chunk per ~10 such findings.
 
 ## Test result
 

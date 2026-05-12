@@ -389,10 +389,19 @@ Phase 5.5 (review-time) populates `auto_fix_hint` on findings whose
 disposition might otherwise force the user into `:walkthrough`
 (`confirmed_manual`, `confirmed_report`, `confirmed_mechanical` —
 the latter regardless of lane, so dedup-induced lane/impact_type
-mismatches don't fall into the gap between Phase 5.5 and Phase 8).
+mismatches can be surfaced for batch acceptance instead of being
+locked out of Phase 8's `impact_type` filter).
 Phase 7.5 surfaces those hints to the user
 *before* Phase 8 dispatch so a single batch-confirm covers the typical
-~90% acceptance case — without the per-finding interactive loop. The
+~90% acceptance case — without the per-finding interactive loop.
+Gap-closure for mismatched cases (e.g. deep+ux `confirmed_mechanical`)
+is **conditional on the user accepting at Phase 7.5**: acceptance sets
+`human_confirmation`, which bypasses Phase 8's `impact_type` filter
+and threshold. On `Skip` or `Cancel`, those findings remain at
+`current_state=open` — Phase 8's `impact_type ∈ {correctness,
+security}` filter still excludes the lane/impact_type-mismatched
+ones — and the user must resolve them via `:walkthrough` or
+`:promote`. The
 filter computes against the on-disk artifact at `:fix` time, not the
 review-time eligibility, so state shifts since `:review` (e.g. an
 intervening `:promote`, an `:add` mutating a finding, or a different
@@ -470,15 +479,17 @@ or skip if you want a closer look.
 |---|---|---|---|---|---|---|
 | F003 | 75 | confirmed_manual | src/foo.py:42-58 | high | Update docstring to match the implementation… | — |
 | F008 | 68 | confirmed_report | src/bar.ts:120-134 | low | Add validation for the empty-array case… | _verify covers .filter() chain_ |
-| F012 | 80 | confirmed_mechanical (light) | docs/api.md:200-215 | medium | Tighten the typo + casing in the example… | — |
+| F012 | 80 | confirmed_mechanical (ux) | docs/api.md:200-215 | medium | Tighten the typo + casing in the example… | — |
 ```
 
 Build the rows from `$auto_rec_promotable` via jq. Columns:
 - `id` — finding id.
 - `score` — `score_phase4` (always non-null per filter).
-- `disp` — `disposition` (suffixed with `(light)` when
-  `disposition == "confirmed_mechanical"` to disambiguate from deep-
-  lane mechanical, which auto-fixes today without a hint).
+- `disp` — `disposition` (suffixed with `(<impact_type>)` when
+  `disposition == "confirmed_mechanical"` AND `impact_type` is not
+  `correctness` or `security`, so the user can spot which mechanical
+  findings are in the gap-case bucket — e.g. `confirmed_mechanical (ux)`
+  for a deep+ux dedup-merge that needs the Phase 7.5 batch bypass).
 - `file:line` — `file` + `line_range[0]-line_range[1]`.
 - `confidence` — `auto_fix_hint.confidence` (`high` / `medium` / `low`).
 - `hint` — `auto_fix_hint.hint`, truncated to ~80 chars + ellipsis if

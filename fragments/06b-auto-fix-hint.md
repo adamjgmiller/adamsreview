@@ -33,16 +33,20 @@ Read findings that qualify per the umbrella's predicate
 `confirmed_report`, `confirmed_mechanical`} AND `score_phase4 >= 60`
 AND disposition ≠ `pre_existing_report`):
 
-Lane is **not** gated here. Deep-lane `confirmed_mechanical` findings
-that already qualify for Phase 8's auto-fix path also get hints —
-Phase 7.5 surfaces them in the batch preflight, and if the user
-declines the preflight the lane+threshold filter still picks them up.
-Without this, dedup-induced lane/impact_type mismatches (a finding
-deduplicated from both a security lens and a ux lens lands with
-`lane=deep` + `impact_type=ux`) fall into a gap: Phase 8 excludes them
-via the impact_type filter, Phase 5.5 used to exclude them via the
-lane filter.
+Lane is **not** gated here. Without this widening, dedup-induced
+lane/impact_type mismatches (a finding deduplicated from both a
+security lens and a ux lens lands with `lane=deep` + `impact_type=ux`)
+fall into a gap: Phase 8 excludes them via the `impact_type` filter,
+and Phase 5.5 used to exclude them via the lane filter — leaving
+no automated path to fix them. Generating a hint here lets Phase 7.5
+surface those findings in the batch preflight: if the user accepts,
+`human_confirmation` is set and Phase 8 bypasses the `impact_type`
+filter; if the user declines, the finding stays at `current_state=open`
+and must be resolved via `:walkthrough` or `:promote` (Phase 8's
+`impact_type` filter alone does NOT pick up mismatched cases on the
+decline path).
 
+<!-- AFH-PREDICATE-START -->
 ```bash
 eligible_findings=$(artifact-read.sh \
   --path "$artifact_path" \
@@ -62,6 +66,15 @@ eligible_findings=$(artifact-read.sh \
   ')
 eligible_count=$(printf '%s' "$eligible_findings" | jq 'length')
 ```
+<!-- AFH-PREDICATE-END -->
+
+The block above is the canonical Phase 5.5 eligibility predicate.
+Fence markers (`AFH-PREDICATE-START` / `AFH-PREDICATE-END`) are
+load-bearing — `test/smoke.sh` AFH-13 extracts this block via awk and
+executes it against a synthetic artifact, so any drift in the
+predicate is caught behaviorally rather than by string match. Keep
+the fences exactly as written; relocate the predicate only by moving
+both fences together.
 
 If `eligible_count == 0`, skip the rest of this phase:
 
