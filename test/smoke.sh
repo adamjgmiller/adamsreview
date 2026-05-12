@@ -73,6 +73,18 @@ else
     fail "--add-finding F099"
 fi
 
+# 2b. --add-finding F100 (disproven; schema-valid). Pairs with F099 to exercise
+# both halves of render_summary's "Filtered out:" bullet (Y2 regression guard
+# below for the Xilem #1791 silent-drop class). Not in the seed itself —
+# AF-* assertions hardcode the seed ID list, so introducing it here keeps
+# their fixtures clean.
+F100='{"id":"F100","sources":["detection"],"source_families":["code-review"],"impact_type":"correctness","origin":"introduced_by_pr","origin_confidence":"medium","actionability":"report_only","validation_lane":"deep","current_state":"open","disposition":"disproven","is_actionable":false,"reason":"Phase 4 validation refuted the claim against the actual code","confirmed_strength":null,"file":"src/auth/session.ts","line_range":[10,10],"claim":"Race condition on session refresh","score_phase3":65,"score_phase4":25,"score_history":[{"phase":"phase_3","score":65},{"phase":"phase_4","score":25}],"validation_result":null,"fix_attempts":[],"introduced_in_sha":null,"suggested_follow_up":null,"related_parent_finding_id":null}'
+if "$TOOLS/artifact-patch.py" --path "$ART" --add-finding "$F100" >/dev/null; then
+    pass "--add-finding F100 (disproven) succeeds"
+else
+    fail "--add-finding F100"
+fi
+
 # 3. standalone validate
 if "$TOOLS/artifact-validate.sh" --path "$ART" >/dev/null; then
     pass "artifact-validate.sh reports valid"
@@ -166,7 +178,11 @@ fi
 # ---------------------------------------------------------------- sidecars
 
 # A. artifact-read.sh --summary returns expected counts
-expected_counts='{"findings_total":7,"by_disposition":{"below_gate":1,"confirmed_manual":1,"confirmed_mechanical":1,"pre_existing_report":1,"resolved":1,"uncertain":2}}'
+expected_counts='{"findings_total":8,"by_disposition":{"below_gate":1,"confirmed_manual":1,"confirmed_mechanical":1,"disproven":1,"pre_existing_report":1,"resolved":1,"uncertain":2}}'
+# NB: --add-finding F100 in step 2b below introduces the disproven case.
+# AF-* assertions further down init their own copies from the same seed
+# (without that step), so leaving disproven out of the seed itself keeps
+# their hardcoded ID lists (F001..F006 + F1xx) accurate.
 actual=$("$TOOLS/artifact-read.sh" --path "$ART" --summary \
     | jq -c '{findings_total, by_disposition: .counts_by_disposition}')
 if [[ "$actual" == "$expected_counts" ]]; then
@@ -799,6 +815,20 @@ if grep -q "^| F006 | 48 | architecture |" "$MD" \
     pass "Y: Light-lane uncertain finding renders in table + summary (Stage 2.5.D)"
 else
     fail "Y: expected F006 row + '1 auto-fixable, 1 uncertain' in $MD" "$(cat "$MD")"
+fi
+
+# Y2. Same data-loss pattern, second class: disproven + below_gate findings used
+# to count toward "Found N findings" but had no breakdown bullet — Xilem
+# #1791 showed "Found 9 findings" with only 2 explained, leaving 7 silently
+# unaccounted. Steps 2 and 2b add F099 (below_gate) and F100 (disproven) to
+# this artifact; this assertion + the expected.md byte-diff (step 9)
+# belt-and-suspenders the headline-vs-bullet identity so a future
+# allow-list omission surfaces here.
+if grep -q "^Found 8 findings across all lanes:" "$MD" \
+    && grep -q "Filtered out: 1 disproven, 1 below score gate (<45)" "$MD"; then
+    pass "Y2: disproven + below_gate counted in 'Filtered out' summary bullet (regression guard for Xilem #1791 silent-drop)"
+else
+    fail "Y2: expected 'Found 8 findings' headline + 'Filtered out: 1 disproven, 1 below score gate (<45)' bullet in $MD" "$(cat "$MD")"
 fi
 
 # X. --apply-decisions rejects a confirmed-band tuple that omits actionability.

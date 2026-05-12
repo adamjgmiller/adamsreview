@@ -7,10 +7,11 @@
 **Review ID:** `rev_stage1smoke`
 **Sub-agent tokens:** 12,000 across 8 invocations
 
-Found 7 findings across all lanes:
+Found 8 findings across all lanes:
 - Deep lane (correctness/security): 1 resolved, 1 manual, 1 uncertain
 - Light lane (ux/policy/architecture): 1 auto-fixable, 1 uncertain
 - Pre-existing (high-confidence origin, report-only): 1
+- Filtered out: 1 disproven, 1 below score gate (<45)
 
 ---
 
@@ -80,4 +81,4 @@ Shown only when `origin_confidence: high`. Never auto-fixed in v1 (§13.1 pre-ex
 
 ---
 
-🤖 Generated with Adam's Claude Code Review Command
+🤖 Generated with the [adamsreview](https://github.com/adamjgmiller/adamsreview) Claude Code Review Plugin

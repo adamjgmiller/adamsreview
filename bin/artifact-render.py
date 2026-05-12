@@ -32,6 +32,21 @@ MARKER = "<!-- adams-review-v1 -->"
 # `section label` titles sections; `short label` appears in summary bullets and
 # the Light-lane Disposition cell. Raw enum values never appear in rendered
 # output — they stay machine-facing in artifact.json.
+#
+# `bin/schema-v1.json` defines 11 disposition enum values; the 8 mapped here
+# are all the ones that render into actionable / report sections. The three
+# omitted on purpose are:
+#   - `disproven`         — Phase-4 rejected, surfaced via the summary's
+#                           "Filtered out" bullet, no per-finding section.
+#   - `below_gate`        — Phase-3 nit, surfaced via summary "Filtered out"
+#                           + optional `render_polish_clusters` table.
+#   - `pending_validation` — Phase-1 parking value; should never survive past
+#                           Phase 6 finalize. If it leaks through, the
+#                           Uncategorized residual bullet in render_summary
+#                           surfaces it rather than silently absorbing the
+#                           count. Any future enum addition lands the same
+#                           way until SECTION_LABEL + render_summary are
+#                           extended.
 SECTION_LABEL = {
     "confirmed_mechanical": ("01", "Auto-fixable", "✓", "auto-fixable"),
     "confirmed_manual": ("02", "Requires manual attention", "⚠", "manual"),
@@ -102,6 +117,45 @@ def thousands(n):
         return f"{int(n):,}"
     except (TypeError, ValueError):
         return str(n)
+
+
+def _clustered_below_gate(buckets):
+    """Return {file_path: [sorted_clustered_findings]} for below_gate findings.
+
+    Shared by `render_summary` (to split the "Filtered out" bullet between
+    findings that surface in a polish cluster vs. those that don't) and
+    `render_polish_clusters` (to render the table). Detection rule: per
+    file, any sliding window of ≥3 below_gate findings whose `line_range[0]`
+    span is ≤ 100 lines produces a cluster; findings inside at least one
+    such window get included. Findings without a usable `line_range[0]` are
+    skipped — they can't anchor a cluster.
+    """
+    below = [f for f in buckets.get("below_gate", [])
+             if (f.get("line_range") or [0])[0]]
+    if len(below) < 3:
+        return {}
+
+    by_file = defaultdict(list)
+    for f in below:
+        by_file[f.get("file") or "?"].append(f)
+
+    clustered_by_file = {}
+    for file_path, ffs in by_file.items():
+        if len(ffs) < 3:
+            continue
+        sorted_ffs = sorted(ffs, key=lambda f: (f.get("line_range") or [0])[0])
+        in_cluster = set()
+        left = 0
+        for right in range(len(sorted_ffs)):
+            right_line = (sorted_ffs[right].get("line_range") or [0])[0]
+            while (right_line - (sorted_ffs[left].get("line_range") or [0])[0]) > 100:
+                left += 1
+            if right - left + 1 >= 3:
+                for i in range(left, right + 1):
+                    in_cluster.add(i)
+        if in_cluster:
+            clustered_by_file[file_path] = [sorted_ffs[i] for i in sorted(in_cluster)]
+    return clustered_by_file
 
 
 # ----- Section renderers ------------------------------------------------
@@ -208,12 +262,60 @@ def render_summary(buckets):
     # regardless of lane. Light-lane uncertain findings were silently dropped
     # from both this summary and render_light_lane's table prior to Stage 2.5.D —
     # the C13 ray-finance run quietly lost 3 findings from its PR comment.
-    for disp in ("confirmed_mechanical", "confirmed_manual", "confirmed_report", "uncertain"):
+    # `partial` / `regression` / `resolved` included for lane symmetry with
+    # deep_bits: a light-lane finding promoted via :promote and then run through
+    # :fix can land in any of these states, and would otherwise drop from the
+    # summary count (same Xilem #1791 silent-drop class).
+    for disp in ("confirmed_mechanical", "partial", "regression", "resolved",
+                 "confirmed_manual", "confirmed_report", "uncertain"):
         n = len(light(disp))
         if n:
             light_bits.append(f"{n} {SECTION_LABEL[disp][3]}")
 
     pre_existing_n = len(buckets.get("pre_existing_report", []))
+
+    # Findings the renderer doesn't put in an actionable lane table: Phase 4
+    # rejected them (disproven) or Phase 3 scored them under the gate
+    # (below_gate). Pre-fix, these counted toward findings_count but had no
+    # bullet — readers saw "Found 9" but only 2 listed, with no accounting
+    # for the missing 7. Lane symmetry (light_bits now mirrors deep_bits) +
+    # the Uncategorized residual below close the full silent-drop class
+    # (deep & light fix-state dropouts, disproven, below_gate, and any
+    # future disposition enum value or stray pending_validation).
+    #
+    # below_gate is split: findings surfaced by render_polish_clusters
+    # appear visibly downstream, so labeling them "filtered out" without
+    # qualification contradicts the polish table. The split bullet keeps
+    # the headline label honest while preserving the "<45" affordance.
+    filtered_bits = []
+    disproven_n = len(buckets.get("disproven", []))
+    below_gate_findings = buckets.get("below_gate", [])
+    below_gate_n = len(below_gate_findings)
+    # Count from the cluster dict directly rather than via an ID set:
+    # schema doesn't enforce uniqueness of `findings[].id`, so an
+    # ID-membership check could miscount a non-clustered finding that
+    # shares an ID with a clustered one (defensive; artifact-patch.py
+    # rejects duplicates on add/set, but hand-edited or third-party
+    # writers could land here).
+    below_gate_clustered = sum(
+        len(v) for v in _clustered_below_gate(buckets).values()
+    )
+    below_gate_filtered = below_gate_n - below_gate_clustered
+    if disproven_n:
+        filtered_bits.append(f"{disproven_n} disproven")
+    if below_gate_n:
+        if below_gate_clustered and below_gate_filtered:
+            filtered_bits.append(
+                f"{below_gate_filtered} below score gate (<45); "
+                f"{below_gate_clustered} surfaced in Polish clusters below"
+            )
+        elif below_gate_clustered:
+            filtered_bits.append(
+                f"{below_gate_clustered} below score gate (<45), "
+                "surfaced in Polish clusters below"
+            )
+        else:
+            filtered_bits.append(f"{below_gate_n} below score gate (<45)")
 
     lines = [f"Found {findings_count} finding{'s' if findings_count != 1 else ''} across all lanes:"]
     if deep_bits:
@@ -222,6 +324,35 @@ def render_summary(buckets):
         lines.append(f"- Light lane (ux/policy/architecture): {', '.join(light_bits)}")
     if pre_existing_n:
         lines.append(f"- Pre-existing (high-confidence origin, report-only): {pre_existing_n}")
+    if filtered_bits:
+        lines.append(f"- Filtered out: {', '.join(filtered_bits)}")
+
+    # Uncategorized residual: any finding whose disposition isn't covered by
+    # the bullets above counts here. In steady state this is 0 — the pipeline
+    # intends `pending_validation` not to survive past Phase 6, and Phase 4
+    # overwrites every `pending_validation` survivor with a Phase-4 disposition
+    # — but the schema still allows the enum value (no finalize-time assert
+    # rejects it). This bullet is the safety net: rendering it whenever the
+    # sum doesn't reconcile prevents the silent-drop class from re-emerging
+    # if a `pending_validation` finding leaks through or a future disposition
+    # enum value lands without a corresponding renderer update. See
+    # SECTION_LABEL header comment for the catalog of intentionally-omitted
+    # dispositions.
+    deep_accounted = sum(len(deep(d)) for d in (
+        "confirmed_mechanical", "partial", "regression", "resolved",
+        "confirmed_manual", "confirmed_report", "uncertain",
+    ))
+    light_accounted = sum(len(light(d)) for d in (
+        "confirmed_mechanical", "partial", "regression", "resolved",
+        "confirmed_manual", "confirmed_report", "uncertain",
+    ))
+    accounted_total = (
+        deep_accounted + light_accounted + pre_existing_n + disproven_n + below_gate_n
+    )
+    uncategorized_n = findings_count - accounted_total
+    if uncategorized_n > 0:
+        lines.append(f"- Uncategorized: {uncategorized_n}")
+
     return "\n".join(lines)
 
 
@@ -492,7 +623,13 @@ def render_light_lane(buckets):
     # existing shape; no section split needed (deep lane uses render_deep_other
     # for Uncertain, but the light lane's single-table design accommodates all
     # confirmed/uncertain dispositions in one rendering pass).
-    for disp in ("confirmed_mechanical", "confirmed_manual", "confirmed_report", "uncertain"):
+    # `partial` / `regression` / `resolved` included for lane symmetry with
+    # the deep-lane fix-attempt path: light-lane findings promoted via :promote
+    # and then fixed by :fix can land in any of these states, and would
+    # otherwise be absent from the rendered table while still counted in the
+    # headline (silent-drop class).
+    for disp in ("confirmed_mechanical", "partial", "regression", "resolved",
+                 "confirmed_manual", "confirmed_report", "uncertain"):
         for f in buckets.get(disp, []):
             if f.get("validation_lane") == "light":
                 rows.append(f)
@@ -534,38 +671,12 @@ def render_polish_clusters(buckets):
     Phase 3 parks nits under `below_gate` so they don't flood the report,
     and the existing section renderers drop them entirely. But a dense
     run of nits in one area is its own signal — ultrareview-style "nit"
-    lists exist for exactly this case. Detection rule: per file, any
-    sliding window of ≥3 below_gate findings whose `line_range[0]` span
-    is ≤ 100 lines produces a cluster. Findings that fall into at least
-    one such window get rendered; files with only 1-2 below_gate
-    findings contribute nothing (keeps floodgates closed).
+    lists exist for exactly this case. Cluster detection is shared with
+    `render_summary` via `_clustered_below_gate` so the summary's
+    "Filtered out" bullet can split below_gate counts between findings
+    that show up here vs. those that stay fully filtered.
     """
-    below = [f for f in buckets.get("below_gate", [])
-             if (f.get("line_range") or [0])[0]]
-    if len(below) < 3:
-        return ""
-
-    by_file = defaultdict(list)
-    for f in below:
-        by_file[f.get("file") or "?"].append(f)
-
-    clustered_by_file = {}
-    for file_path, ffs in by_file.items():
-        if len(ffs) < 3:
-            continue
-        sorted_ffs = sorted(ffs, key=lambda f: (f.get("line_range") or [0])[0])
-        in_cluster = set()
-        left = 0
-        for right in range(len(sorted_ffs)):
-            right_line = (sorted_ffs[right].get("line_range") or [0])[0]
-            while (right_line - (sorted_ffs[left].get("line_range") or [0])[0]) > 100:
-                left += 1
-            if right - left + 1 >= 3:
-                for i in range(left, right + 1):
-                    in_cluster.add(i)
-        if in_cluster:
-            clustered_by_file[file_path] = [sorted_ffs[i] for i in sorted(in_cluster)]
-
+    clustered_by_file = _clustered_below_gate(buckets)
     if not clustered_by_file:
         return ""
 
@@ -706,7 +817,7 @@ def render_fix_runs(artifact):
 
 
 def render_footer(artifact):
-    return "🤖 Generated with Adam's Claude Code Review Command"
+    return "🤖 Generated with the [adamsreview](https://github.com/adamjgmiller/adamsreview) Claude Code Review Plugin"
 
 
 # ----- Assembly ---------------------------------------------------------
