@@ -158,17 +158,6 @@ def _clustered_below_gate(buckets):
     return clustered_by_file
 
 
-def _clustered_ids(buckets):
-    """Set of finding IDs that `render_polish_clusters` will surface."""
-    ids = set()
-    for ffs in _clustered_below_gate(buckets).values():
-        for f in ffs:
-            fid = f.get("id")
-            if fid:
-                ids.add(fid)
-    return ids
-
-
 # ----- Section renderers ------------------------------------------------
 
 def render_freshness_line(artifact):
@@ -302,9 +291,14 @@ def render_summary(buckets):
     disproven_n = len(buckets.get("disproven", []))
     below_gate_findings = buckets.get("below_gate", [])
     below_gate_n = len(below_gate_findings)
-    clustered_ids = _clustered_ids(buckets)
+    # Count from the cluster dict directly rather than via an ID set:
+    # schema doesn't enforce uniqueness of `findings[].id`, so an
+    # ID-membership check could miscount a non-clustered finding that
+    # shares an ID with a clustered one (defensive; artifact-patch.py
+    # rejects duplicates on add/set, but hand-edited or third-party
+    # writers could land here).
     below_gate_clustered = sum(
-        1 for f in below_gate_findings if f.get("id") in clustered_ids
+        len(v) for v in _clustered_below_gate(buckets).values()
     )
     below_gate_filtered = below_gate_n - below_gate_clustered
     if disproven_n:
