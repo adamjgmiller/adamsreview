@@ -334,12 +334,16 @@ def render_summary(buckets):
         lines.append(f"- Filtered out: {', '.join(filtered_bits)}")
 
     # Uncategorized residual: any finding whose disposition isn't covered by
-    # the bullets above counts here. In steady state this is 0 (Phase 6
-    # finalize asserts no pending_validation leaks past it), but rendering
-    # the bullet whenever the sum doesn't reconcile prevents the silent-drop
-    # class from re-emerging if a future disposition enum value lands
-    # without a corresponding renderer update. See SECTION_LABEL header
-    # comment for the catalog of intentionally-omitted dispositions.
+    # the bullets above counts here. In steady state this is 0 — the pipeline
+    # intends `pending_validation` not to survive past Phase 6, and Phase 4
+    # overwrites every `pending_validation` survivor with a Phase-4 disposition
+    # — but the schema still allows the enum value (no finalize-time assert
+    # rejects it). This bullet is the safety net: rendering it whenever the
+    # sum doesn't reconcile prevents the silent-drop class from re-emerging
+    # if a `pending_validation` finding leaks through or a future disposition
+    # enum value lands without a corresponding renderer update. See
+    # SECTION_LABEL header comment for the catalog of intentionally-omitted
+    # dispositions.
     deep_accounted = sum(len(deep(d)) for d in (
         "confirmed_mechanical", "partial", "regression", "resolved",
         "confirmed_manual", "confirmed_report", "uncertain",
