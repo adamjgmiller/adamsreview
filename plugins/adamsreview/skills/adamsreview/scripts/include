@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# include — print a bundled adamsreview reference file.
+# Used by command-markdown `!`include <name>`` preprocessor lines to
+# inline shared phase fragments into top-level command files.
+set -euo pipefail
+[ $# -eq 1 ] || { echo "Usage: include <fragment-name>" >&2; exit 64; }
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+skill_dir="$(cd "$script_dir/.." && pwd)"
+references_dir="$skill_dir/references"
+target="$references_dir/$1"
+[ -f "$target" ] || { echo "ERROR: fragment '$1' not found at $target" >&2; exit 64; }
+cat "$target"

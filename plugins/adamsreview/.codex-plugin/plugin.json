@@ -1,0 +1,27 @@
+{
+  "name": "adamsreview",
+  "version": "1.0.0",
+  "description": "Parallel Codex code review workflow with persistent artifacts, PR bot-comment enrichment, walkthrough, promote, and fix modes.",
+  "author": {
+    "name": "Adam Miller",
+    "url": "https://github.com/adamjgmiller"
+  },
+  "repository": "https://github.com/adamjgmiller/adamsreview",
+  "license": "MIT",
+  "keywords": ["code-review", "pr-review", "parallel-review", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Adamsreview",
+    "shortDescription": "Parallel Codex review and fix workflow",
+    "longDescription": "Runs multi-lens Codex code reviews with persistent artifacts, default GitHub PR bot-comment enrichment, batched validation, walkthrough/promote flows, and parallel fix-group workers.",
+    "developerName": "Adam Miller",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Use $adamsreview to review this PR in parallel.",
+      "Use $adamsreview to fix eligible review findings.",
+      "Use $adamsreview to walk through skipped findings."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

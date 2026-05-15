@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adamsreview"
+  short_description: "Parallel Codex PR review workflow"
+  default_prompt: "Use $adamsreview to review this PR in parallel."

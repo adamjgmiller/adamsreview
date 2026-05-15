@@ -1,0 +1,12 @@
+{
+  "name": "adamsreview",
+  "source": {
+    "source": "local",
+    "path": "./plugins/adamsreview"
+  },
+  "policy": {
+    "installation": "AVAILABLE",
+    "authentication": "ON_INSTALL"
+  },
+  "category": "Productivity"
+}

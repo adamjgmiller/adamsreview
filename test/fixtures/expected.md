@@ -36,7 +36,7 @@ Found 8 findings across all lanes:
 
 ### ⚠ Requires manual attention (1)
 
-_Not auto-applied by `/adamsreview:fix` directly — these need a confirmation step. Findings with an auto-recommendation get batch-confirmed at `:fix`'s Phase 7.5 preflight (or `:walkthrough` Step 4.5); use `/adamsreview:promote <finding_id>` for a single-finding manual override._
+_Not auto-applied by `$adamsreview fix` directly — these need a confirmation step. Findings with an auto-recommendation get batch-confirmed at fix's Phase 7.5 preflight (or walkthrough Step 4.5); use `$adamsreview promote <finding_id>` for a single-finding manual override._
 
 | # | Score | Impact | File | Issue | Why manual |
 |---|-------|--------|------|-------|-------------|
@@ -48,12 +48,12 @@ _Not auto-applied by `/adamsreview:fix` directly — these need a confirmation s
 |---|-------|--------|------|-------|
 | F003 | 55 | correctness | `src/api/search.ts:33` | Query string possibly not escaped |
 
-Phase 4 couldn't confirm decisively. Re-run `/adamsreview:review` if you suspect this deserves
+Phase 4 couldn't confirm decisively. Re-run `$adamsreview review` if you suspect this deserves
 further investigation with fresh context.
 
 ## Light lane — ux, policy, architecture
 
-_Light-lane findings — including rows labeled auto-fixable — aren't applied by `/adamsreview:fix` directly. Findings with an auto-recommendation get batch-confirmed at `:fix`'s Phase 7.5 preflight (or `:walkthrough` Step 4.5); use `/adamsreview:promote <finding_id>` for a single-finding manual override._
+_Light-lane findings — including rows labeled auto-fixable — aren't applied by `$adamsreview fix` directly. Findings with an auto-recommendation get batch-confirmed at fix's Phase 7.5 preflight (or walkthrough Step 4.5); use `$adamsreview promote <finding_id>` for a single-finding manual override._
 
 | # | Score | Impact | File | Finding | Disposition |
 |---|-------|--------|------|---------|-------------|
@@ -81,4 +81,4 @@ Shown only when `origin_confidence: high`. Never auto-fixed in v1 (§13.1 pre-ex
 
 ---
 
-🤖 Generated with the [adamsreview](https://github.com/adamjgmiller/adamsreview) Claude Code Review Plugin
+Generated with the [adamsreview](https://github.com/adamjgmiller/adamsreview) Codex Review Plugin
