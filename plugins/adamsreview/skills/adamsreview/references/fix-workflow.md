@@ -18,7 +18,9 @@ Read `references/parallel-contract.md`.
 
 Apply `open -> attempted` for all eligible findings with one `scripts/artifact-patch.py --apply-fix-start` call.
 
-When parallel agents are authorized, spawn one `worker` per fix group in one batch. Each worker gets:
+When parallel agents are authorized, queue one `worker` per fix group and run
+them through the 6-agent rolling window from `parallel-contract.md`. Each
+worker gets:
 
 - Its finding JSON and validation context.
 - Human `fix_hint`, when present.
@@ -33,7 +35,8 @@ Worker constraints:
 - Do not delete or rename files.
 - Return `files_modified`, `files_created`, per-finding verification results, and a concise summary.
 
-The parent integrates worker results in deterministic group order and rejects deletes/renames before continuing.
+After all queued workers finish, the parent integrates worker results in
+deterministic group order and rejects deletes/renames before continuing.
 
 ## Post-Fix Review
 

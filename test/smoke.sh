@@ -77,13 +77,21 @@ else
 fi
 
 PAR="$SKILL/references/parallel-contract.md"
-if grep -q 'Launch every applicable detection lens as a parallel' "$PAR" \
+if grep -q 'Never run more than 6 live Codex sub-agents' "$PAR" \
+   && grep -q 'Do not launch child 7 until one of the first 6 has completed' "$PAR" \
    && grep -q 'at most 25 findings' "$PAR" \
-   && grep -q 'one `worker` per fix group' "$PAR" \
-   && grep -q 'max(child_duration)' "$PAR"; then
-    pass "parallel contract pins detection, validation, fix, and timing"
+   && grep -q 'Queue one `worker`' "$PAR" \
+   && grep -q 'rolling-window elapsed time' "$PAR"; then
+    pass "parallel contract pins six-agent rolling windows"
 else
     fail "parallel contract missing required invariants"
+fi
+
+if grep -q '6-agent rolling window' "$SKILL/references/review-workflow.md" \
+   && grep -q '6-agent rolling window' "$SKILL/references/fix-workflow.md"; then
+    pass "review and fix workflows use the six-agent window"
+else
+    fail "workflow references do not use the six-agent window"
 fi
 
 if grep -q 'always attempts PR bot-comment scrape' "$SKILL/references/review-workflow.md" \

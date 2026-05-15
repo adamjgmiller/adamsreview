@@ -50,11 +50,11 @@ another marketplace checkout.
 
 Parallelism is part of the design, not a convenience:
 
-- Detection lenses run as one parallel batch.
+- Detection lenses run through a rolling window capped at 6 live agents.
 - PR bot-comment scraping runs while detection is active when a GitHub PR exists.
-- Deep validation runs one validator per finding, batched together.
-- Light validation runs balanced chunks of at most 25 findings, batched together.
-- Fix mode runs one worker per disjoint fix group, batched together.
+- Deep validation runs one validator per finding, capped at 6 live agents.
+- Light validation runs balanced chunks of at most 25 findings, capped at 6 live agents.
+- Fix mode runs one worker per disjoint fix group, capped at 6 live workers.
 
 See `plugins/adamsreview/skills/adamsreview/references/parallel-contract.md`.
 

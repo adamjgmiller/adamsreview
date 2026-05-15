@@ -15,7 +15,7 @@ This repo now targets Codex plugins. The installable app lives under
 
 - Preserve schema v1 unless a migration is explicitly planned.
 - Keep `~/.adams-reviews` as the default review-state root.
-- Treat parallelism as load-bearing: detection lenses, validation batches, and fix groups must be dispatched in batches, not serialized.
+- Treat parallelism as load-bearing: detection lenses, validation batches, and fix groups must use a rolling window capped at 6 live Codex sub-agents or workers, not unbounded fan-out or serial execution.
 - PR bot-comment scraping is default in PR mode and fail-open on GitHub/auth/rate-limit failures.
 - Keep helper scripts Bash 3.2 portable where practical.
 - Use `uv` inline-script shebangs for Python helpers with dependencies.

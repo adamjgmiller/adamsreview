@@ -41,4 +41,7 @@ Before mutating files in `fix`, require a clean or intentionally stashed working
 
 Parallelism is a correctness and latency requirement. If the user has not clearly authorized parallel sub-agents, ask once for permission to run the parallel workflow; recommend parallel. Serial execution is only a fallback.
 
-Use Codex sub-agents only when the user explicitly authorizes parallel agent work in the current request or response. When authorized, follow `references/parallel-contract.md` exactly.
+Use Codex sub-agents only when the user explicitly authorizes parallel agent
+work in the current request or response. When authorized, follow
+`references/parallel-contract.md` exactly, including its hard cap of 6 live
+Codex sub-agents or workers at once.

@@ -20,7 +20,9 @@ Read `references/parallel-contract.md`.
 
 Prepare lens prompts from `references/lens-prompts/_shared-invariants.md` plus each applicable `L<N>.md`. Replace `$comparison_ref`, `$reviewed_sha`, and `$claude_md_paths` placeholders with the current values. The field name stays `claude_md_paths` for schema-v1 compatibility, but the values come from `instruction-paths.sh`.
 
-If parallel agents are authorized, dispatch all applicable lenses as read-only `explorer` agents in one batch.
+If parallel agents are authorized, dispatch all applicable lenses as read-only
+`explorer` agents through the 6-agent rolling window from
+`parallel-contract.md`.
 
 When `mode == pr` and `pr_number` exists, run PR enrichment while lenses are active:
 
@@ -36,7 +38,10 @@ Normalize actionable PR bot comments into normal candidates with `sources: ["ext
 
 Wait for every lens and PR-enrichment source. Combine candidates, run `scripts/line-range-check.sh`, assign IDs with `scripts/assign-finding-ids.sh`, and add accepted findings in one batched `scripts/artifact-patch.py --add-findings` call.
 
-Dedup, score, validate, generate auto-fix hints, render, and publish using the existing helper contracts. Keep deep validation and light validation parallel as described in `parallel-contract.md`.
+Dedup, score, validate, generate auto-fix hints, render, and publish using the
+existing helper contracts. Keep deep validation, light validation, and
+auto-fix-hint sub-agent work parallel through the 6-agent rolling window
+described in `parallel-contract.md`.
 
 ## Output
 
