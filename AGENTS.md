@@ -15,7 +15,7 @@ This repo now targets Codex plugins. The installable app lives under
 
 - Preserve schema v1 unless a migration is explicitly planned.
 - Keep `~/.adams-reviews` as the default review-state root.
-- Treat parallelism as load-bearing: detection lenses, validation batches, and fix groups must use a rolling window capped at 6 live Codex sub-agents or workers, not unbounded fan-out or serial execution.
+- Treat parallelism as load-bearing: detection lenses, validation batches, and fix groups should fan out in parallel. If Codex reports the user's configured concurrent-agent limit, keep work moving with the bounded rolling-window fallback documented in the skill, and tell the user they can raise `[agents].max_threads` in their Codex config.
 - PR bot-comment scraping is default in PR mode and fail-open on GitHub/auth/rate-limit failures.
 - Keep helper scripts Bash 3.2 portable where practical.
 - Use `uv` inline-script shebangs for Python helpers with dependencies.

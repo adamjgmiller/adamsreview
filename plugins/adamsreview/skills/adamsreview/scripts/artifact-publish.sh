@@ -160,14 +160,14 @@ resolve_md_path() {
         if [[ ! -f "$latest_file" ]]; then
             echo "ERROR: latest.txt not found at $latest_file" >&2
             echo "Context: expected for --repo-slug=$REPO_SLUG --branch=$BRANCH" >&2
-            echo "Action: run $adamsreview review against this branch first, or pass --md-path explicitly." >&2
+            echo "Action: run \$adamsreview review against this branch first, or pass --md-path explicitly." >&2
             exit 1
         fi
         local resolved_id
         resolved_id=$(tr -d '[:space:]' < "$latest_file")
         if [[ -z "$resolved_id" ]]; then
             echo "ERROR: latest.txt at $latest_file is empty" >&2
-            echo "Action: rerun $adamsreview review to repopulate, or pass --md-path explicitly." >&2
+            echo "Action: rerun \$adamsreview review to repopulate, or pass --md-path explicitly." >&2
             exit 1
         fi
         if [[ "$resolved_id" != "$REVIEW_ID" ]]; then

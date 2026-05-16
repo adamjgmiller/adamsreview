@@ -1,6 +1,6 @@
 {
   "name": "adamsreview",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Parallel Codex code review workflow with persistent artifacts, PR bot-comment enrichment, walkthrough, promote, and fix modes.",
   "author": {
     "name": "Adam Miller",

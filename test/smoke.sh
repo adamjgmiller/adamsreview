@@ -64,10 +64,25 @@ else
     fail "repo marketplace missing adamsreview entry"
 fi
 
-if python3 /home/dev/.codex/skills/.system/skill-creator/scripts/quick_validate.py "$SKILL" >/dev/null; then
-    pass "SKILL.md validates"
+QUICK_VALIDATE="${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py"
+if [[ -f "$QUICK_VALIDATE" ]]; then
+    if python3 "$QUICK_VALIDATE" "$SKILL" >/dev/null; then
+        pass "SKILL.md validates"
+    else
+        fail "SKILL.md failed quick_validate.py"
+    fi
 else
-    fail "SKILL.md failed quick_validate.py"
+    if awk '
+        NR == 1 && $0 == "---" { started = 1; in_fm = 1; next }
+        in_fm && $0 == "---" { closed = 1; exit !(seen_name && seen_description) }
+        in_fm && /^name:[[:space:]]*adamsreview[[:space:]]*$/ { seen_name = 1 }
+        in_fm && /^description:[[:space:]]*./ { seen_description = 1 }
+        END { exit !(started && closed && seen_name && seen_description) }
+    ' "$SKILL/SKILL.md"; then
+        pass "SKILL.md has required metadata"
+    else
+        fail "SKILL.md missing required metadata"
+    fi
 fi
 
 if ! grep -R -nE 'allowed-tools|AskUserQuestion|CLAUDE_PLUGIN_ROOT|/adamsreview:' "$PLUGIN" >/tmp/adamsreview-smoke-grep.txt; then
@@ -77,21 +92,22 @@ else
 fi
 
 PAR="$SKILL/references/parallel-contract.md"
-if grep -q 'Never run more than 6 live Codex sub-agents' "$PAR" \
-   && grep -q 'Do not launch child 7 until one of the first 6 has completed' "$PAR" \
+if grep -q 'Launch all independent work in parallel whenever Codex accepts' "$PAR" \
+   && grep -q 'bounded rolling window at the accepted concurrency' "$PAR" \
+   && grep -Fq '[agents].max_threads' "$PAR" \
    && grep -q 'at most 25 findings' "$PAR" \
    && grep -q 'Queue one `worker`' "$PAR" \
    && grep -q 'rolling-window elapsed time' "$PAR"; then
-    pass "parallel contract pins six-agent rolling windows"
+    pass "parallel contract documents bounded fallback without fixed cap"
 else
     fail "parallel contract missing required invariants"
 fi
 
-if grep -q '6-agent rolling window' "$SKILL/references/review-workflow.md" \
-   && grep -q '6-agent rolling window' "$SKILL/references/fix-workflow.md"; then
-    pass "review and fix workflows use the six-agent window"
+if grep -q 'concurrent-agent limit' "$SKILL/references/review-workflow.md" \
+   && grep -q 'concurrent-agent limit' "$SKILL/references/fix-workflow.md"; then
+    pass "review and fix workflows describe configured-limit fallback"
 else
-    fail "workflow references do not use the six-agent window"
+    fail "workflow references do not describe configured-limit fallback"
 fi
 
 if grep -q 'always attempts PR bot-comment scrape' "$SKILL/references/review-workflow.md" \

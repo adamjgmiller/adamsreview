@@ -43,5 +43,7 @@ Parallelism is a correctness and latency requirement. If the user has not clearl
 
 Use Codex sub-agents only when the user explicitly authorizes parallel agent
 work in the current request or response. When authorized, follow
-`references/parallel-contract.md` exactly, including its hard cap of 6 live
-Codex sub-agents or workers at once.
+`references/parallel-contract.md` exactly. If Codex refuses a fan-out because
+the user's configured agent limit is lower than the queued work, tell the user
+they can raise `[agents].max_threads` in their Codex config, then continue with
+the bounded rolling-window fallback described there.

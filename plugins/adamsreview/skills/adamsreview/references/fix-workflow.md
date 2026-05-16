@@ -19,8 +19,9 @@ Read `references/parallel-contract.md`.
 Apply `open -> attempted` for all eligible findings with one `scripts/artifact-patch.py --apply-fix-start` call.
 
 When parallel agents are authorized, queue one `worker` per fix group and run
-them through the 6-agent rolling window from `parallel-contract.md`. Each
-worker gets:
+them in parallel, using the bounded rolling-window fallback from
+`parallel-contract.md` only if Codex reports the user's configured
+concurrent-agent limit. Each worker gets:
 
 - Its finding JSON and validation context.
 - Human `fix_hint`, when present.

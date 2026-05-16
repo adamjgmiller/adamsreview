@@ -50,11 +50,15 @@ another marketplace checkout.
 
 Parallelism is part of the design, not a convenience:
 
-- Detection lenses run through a rolling window capped at 6 live agents.
+- Detection lenses run in one Codex fan-out.
 - PR bot-comment scraping runs while detection is active when a GitHub PR exists.
-- Deep validation runs one validator per finding, capped at 6 live agents.
-- Light validation runs balanced chunks of at most 25 findings, capped at 6 live agents.
-- Fix mode runs one worker per disjoint fix group, capped at 6 live workers.
+- Deep validation runs one validator per finding.
+- Light validation runs balanced chunks of at most 25 findings.
+- Fix mode runs one worker per disjoint fix group.
+
+If a user's Codex config limits concurrent agents, Adamsreview keeps using a
+bounded rolling window at the accepted concurrency. Users who hit that limit can
+increase `[agents].max_threads` in their Codex config.
 
 See `plugins/adamsreview/skills/adamsreview/references/parallel-contract.md`.
 
