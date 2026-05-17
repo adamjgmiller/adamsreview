@@ -181,6 +181,13 @@ if [[ "$codex_ready" != "true" ]]; then
         exit 1
     fi
     # Cold-start bypass — proceed silently; first lens warms the broker.
+    # NOTE: silent on purpose. fragments/01-detection.md step 1.2a logs the
+    # equivalent bypass decision to $review_dir/trace.md, but this gate
+    # runs BEFORE Phase 0 so $review_dir doesn't exist yet — there's no
+    # file to append to. Don't "fix" this asymmetry by adding a write
+    # here; it will fail. If a bypass-decision audit trail is needed for
+    # codex-review, defer the trace-line emission to a Phase 0.15 step
+    # that re-checks the gate outcome after Phase 0 creates $review_dir.
 fi
 ```
 
