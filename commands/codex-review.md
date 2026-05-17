@@ -185,8 +185,12 @@ fi
 ```
 
 Capture `CODEX_COMPANION` in working context. Codex is the engine —
-no fallback to Claude lenses; failing here exits cleanly so the user
-can fix setup before any token spend.
+no fallback to Claude lenses. Failing here (any not-ready shape
+outside the documented cold-start broker-ENOENT bypass) exits
+cleanly so the user can fix setup before any token spend; the
+bypass itself proceeds silently and the first lens dispatch warms
+the broker (or surfaces a real auth failure if the saved session
+is stale).
 
 ---
 
@@ -250,7 +254,9 @@ the instructions inside.
   user-visible message.
 - No fallback to Claude lenses if Codex is unavailable — codex-review
   is Codex-only by design. The readiness gate above exits cleanly with
-  a setup hint.
+  a setup hint for any not-ready shape outside the documented
+  shared-mode cold-start broker-ENOENT bypass (which surfaces at first
+  lens dispatch instead).
 - No Phase 1.5 external-source pooling (PR-comment scrape, secondary
   Codex CLI). Run `/adamsreview:review --ensemble` if you want that on
   top of internal Claude lenses.
