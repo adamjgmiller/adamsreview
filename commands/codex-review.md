@@ -144,7 +144,8 @@ Set the following working-context values BEFORE executing Phase 0:
 Before Phase 0, probe codex-companion availability. This mirrors
 `fragments/01-detection.md` step 1.2a's Codex probe but is **fatal**
 in codex-review (vs. the soft `proceed-without` option in `:review
---ensemble`):
+--ensemble`) — except for the documented shared-mode cold-start
+broker-ENOENT shape detailed below, which is bypassed in both gates:
 
 ```bash
 CODEX_COMPANION="$(find ~/.claude/plugins -type f -name codex-companion.mjs -path '*codex*' 2>/dev/null | head -1)"
