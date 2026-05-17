@@ -144,7 +144,8 @@ Set the following working-context values BEFORE executing Phase 0:
 Before Phase 0, probe codex-companion availability. This mirrors
 `fragments/01-detection.md` step 1.2a's Codex probe but is **fatal**
 in codex-review (vs. the soft `proceed-without` option in `:review
---ensemble`):
+--ensemble`) — except for the documented shared-mode cold-start
+broker-ENOENT shape detailed below, which is bypassed in both gates:
 
 ```bash
 CODEX_COMPANION="$(find ~/.claude/plugins -type f -name codex-companion.mjs -path '*codex*' 2>/dev/null | head -1)"
@@ -155,17 +156,48 @@ if [[ -z "$CODEX_COMPANION" ]]; then
 fi
 
 codex_setup_json=$(node "$CODEX_COMPANION" setup --json 2>&1)
-if [[ "$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)" != "true" ]]; then
-    echo "ERROR: codex-companion setup --json reports not-ready." >&2
-    echo "Action: run /codex:setup to diagnose." >&2
-    echo "$codex_setup_json" >&2
-    exit 1
+codex_ready=$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)
+if [[ "$codex_ready" != "true" ]]; then
+    # Cold-start false-negative bypass (shared session mode) — see
+    # `fragments/01-detection.md` step 1.2a for the full shape
+    # rationale and edge-case discussion. Summary: in
+    # sessionRuntime.mode == "shared", a fresh probe sees ENOENT on
+    # /tmp/cxc-*/broker.sock because the broker only materializes once
+    # a task is running. `.codex.available` (CLI binary present) is
+    # true in that case; the first lens dispatch warms the broker.
+    # `.auth.available` is intentionally NOT checked — it's hardcoded
+    # true in the companion's auth-status builder. A stale saved
+    # broker-session file from a logged-out user also matches this
+    # shape; the first lens dispatch surfaces the auth failure with
+    # an actionable error. Any other not-ready shape stays fatal.
+    cx_mode=$(jq -r '.sessionRuntime.mode // ""' <<<"$codex_setup_json" 2>/dev/null)
+    cx_cli=$(jq -r '.codex.available // false' <<<"$codex_setup_json" 2>/dev/null)
+    cx_auth_detail=$(jq -r '.auth.detail // ""' <<<"$codex_setup_json" 2>/dev/null)
+    if ! [[ "$cx_mode" == "shared" && "$cx_cli" == "true" \
+            && "$cx_auth_detail" == *"ENOENT"*"broker.sock"* ]]; then
+        echo "ERROR: codex-companion setup --json reports not-ready." >&2
+        echo "Action: run /codex:setup to diagnose." >&2
+        printf '%s\n' "$codex_setup_json" >&2
+        exit 1
+    fi
+    # Cold-start bypass — proceed silently; first lens warms the broker.
+    # NOTE: silent on purpose. fragments/01-detection.md step 1.2a logs the
+    # equivalent bypass decision to $review_dir/trace.md, but this gate
+    # runs BEFORE Phase 0 so $review_dir doesn't exist yet — there's no
+    # file to append to. Don't "fix" this asymmetry by adding a write
+    # here; it will fail. If a bypass-decision audit trail is needed for
+    # codex-review, defer the trace-line emission to a Phase 0.15 step
+    # that re-checks the gate outcome after Phase 0 creates $review_dir.
 fi
 ```
 
 Capture `CODEX_COMPANION` in working context. Codex is the engine —
-no fallback to Claude lenses; failing here exits cleanly so the user
-can fix setup before any token spend.
+no fallback to Claude lenses. Failing here (any not-ready shape
+outside the documented cold-start broker-ENOENT bypass) exits
+cleanly so the user can fix setup before any token spend; the
+bypass itself proceeds silently and the first lens dispatch warms
+the broker (or surfaces a real auth failure if the saved session
+is stale).
 
 ---
 
@@ -229,7 +261,9 @@ the instructions inside.
   user-visible message.
 - No fallback to Claude lenses if Codex is unavailable — codex-review
   is Codex-only by design. The readiness gate above exits cleanly with
-  a setup hint.
+  a setup hint for any not-ready shape outside the documented
+  shared-mode cold-start broker-ENOENT bypass (which surfaces at first
+  lens dispatch instead).
 - No Phase 1.5 external-source pooling (PR-comment scrape, secondary
   Codex CLI). Run `/adamsreview:review --ensemble` if you want that on
   top of internal Claude lenses.

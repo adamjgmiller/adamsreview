@@ -163,11 +163,46 @@ else
     # The older `ready` subcommand does not exist — parse the JSON's
     # `.ready` boolean instead of grep-matching a literal string.
     codex_setup_json=$(node "$CODEX_COMPANION" setup --json 2>&1)
-    if [[ "$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)" == "true" ]]; then
+    codex_ready=$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)
+    if [[ "$codex_ready" == "true" ]]; then
         codex_available=true
     else
-        codex_available=false
-        codex_reason="setup --json reported not-ready — run /codex:setup to diagnose"
+        # Cold-start false-negative bypass (shared session mode):
+        # `.ready` rolls up `.auth.loggedIn`, which is verified through
+        # the broker socket. The broker only materializes once a task
+        # is running, so a fresh probe sees ENOENT on
+        # /tmp/cxc-*/broker.sock and reports not-ready even though
+        # `.codex.available` (CLI binary present) is true. Treat that
+        # exact shape as ready; the first lens dispatch warms the
+        # broker. (`.auth.available` is intentionally NOT checked — the
+        # companion's auth-status builder hardcodes it true regardless
+        # of credential state, so it's cargo-cult; `.auth.loggedIn` is
+        # the real auth signal and is what the broker round-trip
+        # gates.)
+        #
+        # Edge case: if the user has logged out but a stale saved
+        # broker-session file remains, the probe is structurally
+        # indistinguishable from a legitimate cold start (same ENOENT
+        # path), so this bypass also fires. The first lens dispatch
+        # then surfaces the auth failure with an actionable error.
+        # Acceptable trade-off; the alternative (active warm-up +
+        # re-probe) costs a Codex turn on every cold start.
+        #
+        # Any other not-ready shape (missing CLI, direct-mode failure,
+        # malformed payload) falls through to the AskUserQuestion
+        # prompt below.
+        cx_mode=$(jq -r '.sessionRuntime.mode // ""' <<<"$codex_setup_json" 2>/dev/null)
+        cx_cli=$(jq -r '.codex.available // false' <<<"$codex_setup_json" 2>/dev/null)
+        cx_auth_detail=$(jq -r '.auth.detail // ""' <<<"$codex_setup_json" 2>/dev/null)
+        if [[ "$cx_mode" == "shared" && "$cx_cli" == "true" \
+              && "$cx_auth_detail" == *"ENOENT"*"broker.sock"* ]]; then
+            codex_available=true
+            printf '%s\n' "Phase 1 readiness: shared-mode cold-start broker ENOENT — bypassed (first lens warms the broker)" \
+                >> "$review_dir/trace.md"
+        else
+            codex_available=false
+            codex_reason="setup --json reported not-ready — run /codex:setup to diagnose"
+        fi
     fi
 fi
 ```

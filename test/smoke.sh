@@ -5854,8 +5854,9 @@ fi
 
 # CR-3: codex-review.md has the codex-companion readiness gate before
 # Phase 0 — fail-fast behavior when the companion script is missing or
-# `setup --json` reports not-ready. Plan §2 (no fallback to Claude
-# lenses) hinges on this gate firing.
+# `setup --json` reports a not-ready shape outside the documented
+# cold-start bypass (shared-mode + cli=true + ENOENT+broker.sock). Plan §2
+# (no fallback to Claude lenses) hinges on this gate firing.
 if grep -qF 'codex-companion script not found' "$CR_CMD" \
     && grep -qF 'setup --json reports not-ready' "$CR_CMD" \
     && grep -qF '/codex:setup' "$CR_CMD"; then
@@ -6390,6 +6391,51 @@ if grep -qE 'only when the upstream parser actually owns the flag' "$REPO/fragme
     pass "CR-14: fragments/00-preflight.md gates --effort skip on working-context effort being set (\`/adamsreview:review --effort\` falls through to clarify, not silent-consume)"
 else
     fail "CR-14: fragments/00-preflight.md missing the working-context-effort gate around --effort skip"
+fi
+
+# CR-16a — fragments/01-detection.md Phase 1.2a cold-start bypass
+# predicate must stay narrow: requires sessionRuntime.mode == "shared"
+# AND the ENOENT+broker.sock failure signature, and must NOT
+# re-introduce the redundant `cx_auth` check (`.auth.available` is
+# hardcoded true in the companion's auth-status builder regardless of
+# credential state — gating on it is cargo-cult that masks the actual
+# bypass shape).
+CR16A_FRAGMENT="$REPO/fragments/01-detection.md"
+if grep -qE '"\$cx_mode" == "shared"' "$CR16A_FRAGMENT" \
+   && grep -qE '"\$cx_cli" == "true"' "$CR16A_FRAGMENT" \
+   && grep -qE '\*"ENOENT"\*"broker\.sock"\*' "$CR16A_FRAGMENT" \
+   && ! grep -qE '"\$cx_auth" == "true"' "$CR16A_FRAGMENT"; then
+    pass "CR-16a: fragments/01-detection.md Phase 1.2a bypass predicate stays narrow (mode=shared + cli=true + ENOENT+broker.sock; no cx_auth cargo-cult)"
+else
+    fail "CR-16a: fragments/01-detection.md Phase 1.2a bypass predicate has drifted (missing mode/cli/ENOENT signature, or re-introduced cx_auth)"
+fi
+
+# CR-16b — commands/codex-review.md bypass mirrors the fragment shape.
+# Same narrow predicate, same drop of the redundant `cx_auth` check.
+# Regression guard against the two probes drifting apart.
+CR16B_COMMAND="$REPO/commands/codex-review.md"
+if grep -qE '"\$cx_mode" == "shared"' "$CR16B_COMMAND" \
+   && grep -qE '"\$cx_cli" == "true"' "$CR16B_COMMAND" \
+   && grep -qE '\*"ENOENT"\*"broker\.sock"\*' "$CR16B_COMMAND" \
+   && ! grep -qE '"\$cx_auth" == "true"' "$CR16B_COMMAND"; then
+    pass "CR-16b: commands/codex-review.md readiness-gate bypass mirrors fragment shape (mode=shared + cli=true + ENOENT+broker.sock; no cx_auth cargo-cult)"
+else
+    fail "CR-16b: commands/codex-review.md readiness-gate bypass predicate has drifted from fragment shape (missing mode/cli/ENOENT signature, or re-introduced cx_auth)"
+fi
+
+# CR-16c — commands/codex-review.md must retain its fatal `exit 1` on
+# the non-bypass not-ready path. Regression guard against accidentally
+# defaulting the readiness gate to bypass when the cold-start
+# signature doesn't match (which would swallow real auth/CLI failures
+# silently). Uses an awk range bounded by the closing `fi` of the
+# bypass `if !` block so future growth of the block can't silently
+# push the `exit 1` outside a fixed-line window.
+CR16C_COMMAND="$REPO/commands/codex-review.md"
+if awk '/if ! \[\[ "\$cx_mode" == "shared"/,/^[[:space:]]*fi[[:space:]]*$/' "$CR16C_COMMAND" \
+     | grep -qE '^[[:space:]]*exit 1[[:space:]]*$'; then
+    pass "CR-16c: commands/codex-review.md retains fatal exit 1 on non-bypass not-ready (cold-start bypass cannot accidentally swallow real failures)"
+else
+    fail "CR-16c: commands/codex-review.md readiness gate missing fatal exit 1 in non-bypass branch — cold-start bypass may be swallowing real not-ready failures"
 fi
 
 echo

@@ -39,7 +39,10 @@ CLAUDE.md keeps a one-paragraph summary per command; this file is the reference.
 
 ```
 ├── Codex readiness gate (find codex-companion.mjs; `setup --json` ready?
-│     fail-fast — no Claude fallback; suggest /codex:setup on missing/not-ready)
+│     fail-fast on missing/not-ready — no Claude fallback; suggest /codex:setup —
+│     EXCEPT the documented shared-mode cold-start broker-ENOENT shape, which is
+│     bypassed because `auth.loggedIn` requires the broker socket and that only
+│     exists once a task runs; first lens dispatch warms it)
 ├── Phase 0 — Pre-flight (same fragment as :review; passes `--reviewer-sources
 │              internal-codex` to artifact-seed.sh so the seeded artifact
 │              carries reviewer_sources: ["internal-codex"])
