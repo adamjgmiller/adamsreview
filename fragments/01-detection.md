@@ -163,11 +163,35 @@ else
     # The older `ready` subcommand does not exist — parse the JSON's
     # `.ready` boolean instead of grep-matching a literal string.
     codex_setup_json=$(node "$CODEX_COMPANION" setup --json 2>&1)
-    if [[ "$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)" == "true" ]]; then
+    codex_ready=$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)
+    if [[ "$codex_ready" == "true" ]]; then
         codex_available=true
     else
-        codex_available=false
-        codex_reason="setup --json reported not-ready — run /codex:setup to diagnose"
+        # Cold-start false-negative bypass (shared session mode):
+        # `.ready` rolls up `.auth.loggedIn`, which is verified through
+        # the broker socket. The broker only materializes once a task is
+        # running, so a fresh probe sees ENOENT on /tmp/cxc-*/broker.sock
+        # and reports not-ready even though the durable checks
+        # (`.codex.available` = CLI binary present, `.auth.available` =
+        # credentials file present) are both true. Treat that exact
+        # shape as ready; the first lens dispatch warms the broker.
+        # Any other not-ready reason (missing CLI, missing auth file,
+        # exclusive-mode failure, malformed payload) falls through to
+        # the AskUserQuestion prompt below.
+        cx_mode=$(jq -r '.sessionRuntime.mode // ""' <<<"$codex_setup_json" 2>/dev/null)
+        cx_cli=$(jq -r '.codex.available // false' <<<"$codex_setup_json" 2>/dev/null)
+        cx_auth=$(jq -r '.auth.available // false' <<<"$codex_setup_json" 2>/dev/null)
+        cx_auth_detail=$(jq -r '.auth.detail // ""' <<<"$codex_setup_json" 2>/dev/null)
+        if [[ "$cx_mode" == "shared" && "$cx_cli" == "true" \
+              && "$cx_auth" == "true" \
+              && "$cx_auth_detail" == *"ENOENT"*"broker.sock"* ]]; then
+            codex_available=true
+            printf '%s\n' "Phase 1 readiness: shared-mode cold-start broker ENOENT — bypassed (first lens warms the broker)" \
+                >> "$review_dir/trace.md"
+        else
+            codex_available=false
+            codex_reason="setup --json reported not-ready — run /codex:setup to diagnose"
+        fi
     fi
 fi
 ```
