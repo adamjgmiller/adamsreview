@@ -158,19 +158,21 @@ codex_setup_json=$(node "$CODEX_COMPANION" setup --json 2>&1)
 codex_ready=$(jq -r '.ready // false' <<<"$codex_setup_json" 2>/dev/null)
 if [[ "$codex_ready" != "true" ]]; then
     # Cold-start false-negative bypass (shared session mode) — see
-    # `fragments/01-detection.md` step 1.2a for the shape rationale.
-    # In sessionRuntime.mode == "shared", a fresh probe sees ENOENT on
+    # `fragments/01-detection.md` step 1.2a for the full shape
+    # rationale and edge-case discussion. Summary: in
+    # sessionRuntime.mode == "shared", a fresh probe sees ENOENT on
     # /tmp/cxc-*/broker.sock because the broker only materializes once
-    # a task is running. Durable checks (.codex.available CLI binary,
-    # .auth.available credentials file) are both true in that case;
-    # the first lens dispatch warms the broker. Any other not-ready
-    # shape stays fatal.
+    # a task is running. `.codex.available` (CLI binary present) is
+    # true in that case; the first lens dispatch warms the broker.
+    # `.auth.available` is intentionally NOT checked — it's hardcoded
+    # true in the companion's auth-status builder. A stale saved
+    # broker-session file from a logged-out user also matches this
+    # shape; the first lens dispatch surfaces the auth failure with
+    # an actionable error. Any other not-ready shape stays fatal.
     cx_mode=$(jq -r '.sessionRuntime.mode // ""' <<<"$codex_setup_json" 2>/dev/null)
     cx_cli=$(jq -r '.codex.available // false' <<<"$codex_setup_json" 2>/dev/null)
-    cx_auth=$(jq -r '.auth.available // false' <<<"$codex_setup_json" 2>/dev/null)
     cx_auth_detail=$(jq -r '.auth.detail // ""' <<<"$codex_setup_json" 2>/dev/null)
     if ! [[ "$cx_mode" == "shared" && "$cx_cli" == "true" \
-            && "$cx_auth" == "true" \
             && "$cx_auth_detail" == *"ENOENT"*"broker.sock"* ]]; then
         echo "ERROR: codex-companion setup --json reports not-ready." >&2
         echo "Action: run /codex:setup to diagnose." >&2

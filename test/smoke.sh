@@ -6392,6 +6392,48 @@ else
     fail "CR-14: fragments/00-preflight.md missing the working-context-effort gate around --effort skip"
 fi
 
+# CR-16a — fragments/01-detection.md Phase 1.2a cold-start bypass
+# predicate must stay narrow: requires sessionRuntime.mode == "shared"
+# AND the ENOENT+broker.sock failure signature, and must NOT
+# re-introduce the redundant `cx_auth` check (`.auth.available` is
+# hardcoded true in the companion's auth-status builder regardless of
+# credential state — gating on it is cargo-cult that masks the actual
+# bypass shape).
+CR16A_FRAGMENT="$REPO/fragments/01-detection.md"
+if grep -qE '"\$cx_mode" == "shared"' "$CR16A_FRAGMENT" \
+   && grep -qE '\*"ENOENT"\*"broker\.sock"\*' "$CR16A_FRAGMENT" \
+   && ! grep -qE '"\$cx_auth" == "true"' "$CR16A_FRAGMENT"; then
+    pass "CR-16a: fragments/01-detection.md Phase 1.2a bypass predicate stays narrow (mode=shared + ENOENT+broker.sock; no cx_auth cargo-cult)"
+else
+    fail "CR-16a: fragments/01-detection.md Phase 1.2a bypass predicate has drifted (missing mode/ENOENT signature, or re-introduced cx_auth)"
+fi
+
+# CR-16b — commands/codex-review.md bypass mirrors the fragment shape.
+# Same narrow predicate, same drop of the redundant `cx_auth` check.
+# Regression guard against the two probes drifting apart.
+CR16B_COMMAND="$REPO/commands/codex-review.md"
+if grep -qE '"\$cx_mode" == "shared"' "$CR16B_COMMAND" \
+   && grep -qE '\*"ENOENT"\*"broker\.sock"\*' "$CR16B_COMMAND" \
+   && ! grep -qE '"\$cx_auth" == "true"' "$CR16B_COMMAND"; then
+    pass "CR-16b: commands/codex-review.md readiness-gate bypass mirrors fragment shape (mode=shared + ENOENT+broker.sock; no cx_auth cargo-cult)"
+else
+    fail "CR-16b: commands/codex-review.md readiness-gate bypass predicate has drifted from fragment shape"
+fi
+
+# CR-16c — commands/codex-review.md must retain its fatal `exit 1` on
+# the non-bypass not-ready path. Regression guard against accidentally
+# defaulting the readiness gate to bypass when the cold-start
+# signature doesn't match (which would swallow real auth/CLI failures
+# silently). Looks within the 15 lines immediately following the
+# bypass `if !` predicate for the literal `exit 1`.
+CR16C_COMMAND="$REPO/commands/codex-review.md"
+if grep -A 15 'if ! \[\[ "\$cx_mode" == "shared"' "$CR16C_COMMAND" \
+     | grep -qE '^[[:space:]]*exit 1[[:space:]]*$'; then
+    pass "CR-16c: commands/codex-review.md retains fatal exit 1 on non-bypass not-ready (cold-start bypass cannot accidentally swallow real failures)"
+else
+    fail "CR-16c: commands/codex-review.md readiness gate missing fatal exit 1 in non-bypass branch — cold-start bypass may be swallowing real not-ready failures"
+fi
+
 echo
 echo "smoke: PASS ($N assertions)"
 exit 0
